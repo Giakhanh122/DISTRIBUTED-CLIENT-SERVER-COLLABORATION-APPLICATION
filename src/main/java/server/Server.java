@@ -8,7 +8,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
-
     public void start(int portNumber) {
         try (var serverSocket = new ServerSocket(portNumber);) {
 
@@ -38,5 +37,7 @@ public class Server {
             System.out.println(e.getMessage());
         }
     }
-
+    
+    private void broadcast(){
+    }
 }

@@ -1,18 +1,22 @@
 import client.Client;
 import java.util.Scanner;
 import server.Server;
+
 public class Main {
-   public static void main(String[] args) {
-        try (var scanner = new Scanner(System.in)){
-            System.out.println("Choose service to run, server(s) or client(c):");          
-            if(scanner.nextLine().equalsIgnoreCase("s")){
+    public static void main(String[] args) {
+        run();
+    }
+
+    private static void run() {
+        try (var scanner = new Scanner(System.in)) {
+            System.out.println("Choose service to run, server(s) or client(c):");
+            if (scanner.nextLine().equalsIgnoreCase("s")) {
                 // start server
                 new Server().start(80);
-            }else{
+            } else {
                 new Client().start("localhost", 80);
                 // start client
-            } 
-        } 
-   } 
+            }
+        }
+    }
 }
-
