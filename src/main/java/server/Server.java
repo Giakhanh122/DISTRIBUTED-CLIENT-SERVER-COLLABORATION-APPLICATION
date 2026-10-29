@@ -1,42 +1,62 @@
 package server;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.net.ServerSocket;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import protocols.OpCode;
+import protocols.Packet;
+import protocols.PacketCodec;
 
 public class Server {
+    private static final int MAX_CHAT_BYTES = 64 * 1024;
 
     public void start(int portNumber) {
-        try (var serverSocket = new ServerSocket(portNumber);) {
+        try (ServerSocket listener = new ServerSocket(portNumber)) {
+            System.out.println("Server started on port " + portNumber);
 
-            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                while (true) {
-                    var socket = serverSocket.accept();
-
-                    executor.submit(() -> {
-                        String clientIP = socket.getInetAddress().getHostAddress();
-                        int clientPort = socket.getPort();
-                        System.out.printf("Client (%s:%d) connected%n", clientIP, clientPort);
-
-                        try (BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream()));) {
-                            for (String content; (content = input.readLine()) != null;) {
-                                System.out.printf("Client (%s:%d): %s%n", clientIP, clientPort, content);
-                            }
-                        } catch (Exception e) {
-                            System.out.println(e.getMessage());
-                        }
-
-                    });
-                }
-
+            while (true) {
+                Socket socket = listener.accept();
+                Thread.startVirtualThread(() -> handleClient(socket));
             }
-
         } catch (IOException e) {
-            System.out.println(e.getMessage());
+            System.err.println("Server error: " + e.getMessage());
         }
     }
 
+    private void handleClient(Socket socket) {
+        String address = socket.getRemoteSocketAddress().toString();
+
+        try (socket) {
+            socket.setSoTimeout(5000); 
+            InputStream input = socket.getInputStream();
+            Packet hello = PacketCodec.read(input);
+
+            if (hello == null || hello.op() != OpCode.HELLO || hello.payloadLength() != 0) {
+                System.err.println("Invalid or missing HELLO from " + address);
+                return;
+            }
+
+            PacketCodec.write(
+                socket.getOutputStream(),
+                new Packet(OpCode.HELLO_ACK, hello.requestId(), new byte[0])
+            );
+            System.out.println("Handshake successful with " + address);
+            socket.setSoTimeout(0);
+
+            Packet packet;
+            while ((packet = PacketCodec.read(input)) != null) {
+                if (packet.op() != OpCode.CHAT_MESSAGE || packet.payloadLength() > MAX_CHAT_BYTES) {
+                    System.err.println("Unexpected packet from " + address + ": " + packet.op());
+                    return;
+                }
+                System.out.println(address + ": " + new String(packet.data(), StandardCharsets.UTF_8));
+            }
+        } catch (IOException e) {
+            System.err.println("Client " + address + " error: " + e.getMessage());
+        } finally {
+            System.out.println("Client " + address + " disconnected");
+        }
+    }
 }
