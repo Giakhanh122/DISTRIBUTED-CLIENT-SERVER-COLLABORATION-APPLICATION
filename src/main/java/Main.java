@@ -4,6 +4,7 @@ import server.Server;
 
 public class Main {
     private static final int PORT = 8080;
+    private static final String ServerIP = "localhost";
 
     public static void main(String[] args) {
         try (Scanner scanner = new Scanner(System.in)) {
@@ -16,10 +17,17 @@ public class Main {
             if (choice.equalsIgnoreCase("s")) {
                 new Server().start(PORT);
             } else if (choice.equalsIgnoreCase("c")) {
-                new Client().start("localhost", PORT, scanner);
+                new Client().connectToServer(ServerIP, PORT, scanner);
             } else {
                 System.out.println("Invalid choice!");
             }
         }
+    }
+
+    void localRun() {
+    }
+
+    // all device in the same wifi network, using DHCP
+    void lanRun() {
     }
 }

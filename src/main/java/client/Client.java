@@ -3,6 +3,7 @@ package client;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
@@ -11,11 +12,15 @@ import protocols.Packet;
 import protocols.PacketCodec;
 
 public class Client {
+
+    private String ipAddress;
+    private int portNumber;
+
     private static final int MAX_CHAT_BYTES = 64 * 1024;
 
-    public void start(String host, int portNumber, Scanner scanner) {
+    public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (Socket socket = new Socket(host, portNumber)) {
-            socket.setSoTimeout(5000); 
+            socket.setSoTimeout(5000);
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
 
@@ -24,9 +29,9 @@ public class Client {
 
             Packet response = PacketCodec.read(input);
             if (response == null
-                || response.op() != OpCode.HELLO_ACK
-                || response.requestId() != requestId
-                || response.payloadLength() != 0) {
+                    || response.op() != OpCode.HELLO_ACK
+                    || response.requestId() != requestId
+                    || response.payloadLength() != 0) {
                 System.err.println("Invalid or missing HELLO_ACK");
                 return;
             }
@@ -54,5 +59,31 @@ public class Client {
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());
         }
+    }
+
+    // serverConnect
+
+    // PEER CONNECT
+    void openSocket(int PeerPortNumber) {
+        try (ServerSocket listener = new ServerSocket(PeerPortNumber)) {
+            while (true) {
+                Socket socket = listener.accept();
+                Thread.startVirtualThread(() -> PeerHandler(socket));
+            }
+        } catch (IOException e) {
+            System.err.println(e.getMessage());
+        }
+    }
+
+    boolean connectTo(String PeerIPAddress, int PeerPortNumber) {
+        try (Socket connect = new Socket(PeerIPAddress, PeerPortNumber)) {
+        } catch (IOException e) {
+            System.err.println(e.getMessage());
+        }
+
+        return false;
+    }
+
+    void PeerHandler(Socket socket) {
     }
 }

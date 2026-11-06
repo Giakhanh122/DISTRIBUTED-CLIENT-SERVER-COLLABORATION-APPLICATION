@@ -12,6 +12,9 @@ import protocols.PacketCodec;
 public class Server {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
 
+    // private String ipAddress;
+    // private int portNumber;
+
     public void start(int portNumber) {
         try (ServerSocket listener = new ServerSocket(portNumber)) {
             System.out.println("Server started on port " + portNumber);
@@ -29,7 +32,7 @@ public class Server {
         String address = socket.getRemoteSocketAddress().toString();
 
         try (socket) {
-            socket.setSoTimeout(5000); 
+            socket.setSoTimeout(5000);
             InputStream input = socket.getInputStream();
             Packet hello = PacketCodec.read(input);
 
@@ -39,9 +42,7 @@ public class Server {
             }
 
             PacketCodec.write(
-                socket.getOutputStream(),
-                new Packet(OpCode.HELLO_ACK, hello.requestId(), new byte[0])
-            );
+                    socket.getOutputStream(), new Packet(OpCode.HELLO_ACK, hello.requestId(), new byte[0]));
             System.out.println("Handshake successful with " + address);
             socket.setSoTimeout(0);
 
