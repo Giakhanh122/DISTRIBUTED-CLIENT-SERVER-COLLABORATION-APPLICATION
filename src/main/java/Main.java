@@ -1,7 +1,6 @@
 import client.Client;
 import java.util.Scanner;
 import server.Server;
-
 public class Main {
     private static final int PORT = 8080;
 
