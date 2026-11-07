@@ -12,9 +12,13 @@ import protocols.Packet;
 import protocols.PacketCodec;
 
 public class Client {
+
+    private String ipAddress;
+    private int portNumber;
+
     private static final int MAX_CHAT_BYTES = 64 * 1024;
 
-    public void start(String host, int portNumber, Scanner scanner) {
+    public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (Socket socket = new Socket(host, portNumber)) {
             ServerSocket peerListener = new ServerSocket();
             socket.setSoTimeout(10000);
@@ -40,15 +44,16 @@ public class Client {
         }
     }
 
-    private boolean handshake(InputStream input, OutputStream output, int requestId) throws IOException {
+    private boolean handshake(InputStream input, OutputStream output, int requestId)
+            throws IOException {
         Packet hello = new Packet(OpCode.HELLO, requestId, new byte[0]);
         PacketCodec.write(output, hello);
 
         Packet response = PacketCodec.read(input);
         if (response == null
-            || response.op() != OpCode.HELLO_ACK
-            || response.requestId() != requestId
-            || response.payloadLength() != 0) {
+                || response.op() != OpCode.HELLO_ACK
+                || response.requestId() != requestId
+                || response.payloadLength() != 0) {
             System.err.println("Invalid or missing HELLO_ACK");
             return false;
         }
@@ -57,22 +62,18 @@ public class Client {
         return true;
     }
 
-    private void readConsole(
-        InputStream input,
-        OutputStream output,
-        Scanner scanner,
-        int requestId
-    ) throws IOException {
-        System.out.println(
-            "Type a message, /users to list online users, or logout to disconnect."
-        );
+    private void readConsole(InputStream input, OutputStream output, Scanner scanner, int requestId)
+            throws IOException {
+        System.out.println("Type a message, /users to list online users, or /logout to disconnect.");
 
         while (scanner.hasNextLine()) {
             String message = scanner.nextLine();
             String command = message.trim();
 
-            if (command.equalsIgnoreCase("logout")) return;
-            if (message.isBlank()) continue;
+            if (command.equalsIgnoreCase("/logout"))
+                return;
+            if (message.isBlank())
+                continue;
 
             if (command.equalsIgnoreCase("/users")) {
                 requestUserList(input, output, ++requestId);
@@ -91,23 +92,16 @@ public class Client {
         }
     }
 
-    private void requestUserList(
-        InputStream input,
-        OutputStream output,
-        int requestId
-    ) throws IOException {
-        Packet request = new Packet(
-            OpCode.USER_LIST_REQUEST,
-            requestId,
-            new byte[0]
-        );
+    private void requestUserList(InputStream input, OutputStream output, int requestId)
+            throws IOException {
+        Packet request = new Packet(OpCode.USER_LIST_REQUEST, requestId, new byte[0]);
 
         PacketCodec.write(output, request);
 
         Packet response = PacketCodec.read(input);
         if (response == null
-            || response.op() != OpCode.USER_LIST_RESPONSE
-            || response.requestId() != requestId) {
+                || response.op() != OpCode.USER_LIST_RESPONSE
+                || response.requestId() != requestId) {
             throw new IOException("Invalid or missing USER_LIST_RESPONSE");
         }
 
@@ -126,11 +120,13 @@ public class Client {
 
     private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId, int peerPort) throws IOException {
         System.out.print("Username: ");
-        if (!scanner.hasNextLine()) return false;
+        if (!scanner.hasNextLine())
+            return false;
         String username = scanner.nextLine().trim();
 
         System.out.print("Password: ");
-        if (!scanner.hasNextLine()) return false;
+        if (!scanner.hasNextLine())
+            return false;
         String password = scanner.nextLine();
 
         if (username.isEmpty() || password.isEmpty()) {
@@ -144,8 +140,8 @@ public class Client {
 
         Packet auth_response = PacketCodec.read(input);
         if (auth_response == null
-            || auth_response.op() != OpCode.AUTH_RESPONSE
-            || auth_response.requestId() != requestId) {
+                || auth_response.op() != OpCode.AUTH_RESPONSE
+                || auth_response.requestId() != requestId) {
             System.err.println("Invalid or missing AUTH_RESPONSE");
             return false;
         }

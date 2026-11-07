@@ -3,13 +3,16 @@ package server;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import server.auth.AuthService;
 import server.connection.CilentHandler;
 import server.session.SessionRegistry;
-import server.auth.AuthService;
 
 public class Server {
     private final SessionRegistry sessions = new SessionRegistry();
     private final AuthService authService = new AuthService();
+
+    // private String ipAddress;
+    // private int portNumber;
 
     public void start(int portNumber) {
         try (ServerSocket listener = new ServerSocket(portNumber)) {
