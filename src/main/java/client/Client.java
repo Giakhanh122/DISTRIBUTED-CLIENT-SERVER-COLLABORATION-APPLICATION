@@ -61,13 +61,13 @@ public class Client {
 
     private void readConsole(InputStream input, OutputStream output, Scanner scanner, int requestId)
             throws IOException {
-        System.out.println("Type a message, /users to list online users, or /logout to disconnect.");
+        System.out.println("Type a message, /users to list online users, or logout to disconnect.");
 
         while (scanner.hasNextLine()) {
             String message = scanner.nextLine();
             String command = message.trim();
 
-            if (command.equalsIgnoreCase("/logout"))
+            if (command.equalsIgnoreCase("logout"))
                 return;
             if (message.isBlank())
                 continue;

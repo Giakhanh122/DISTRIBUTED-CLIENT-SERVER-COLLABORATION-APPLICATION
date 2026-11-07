@@ -153,6 +153,15 @@ public class CilentHandler implements Runnable {
 
                 case USER_LIST_REQUEST -> handleUserList(packet, output);
 
+                case FILE_OFFER -> handleFileOffer(packet, output);
+                case FILE_DECISION -> handleFileDecision(packet, output);
+                case FILE_CHUNK -> handleFileChunk(packet, output);
+                case FILE_END -> handleFileEnd(packet, output);
+                case FILE_RESULT -> handleFileResult(packet, output);
+                case FILE_CANCEL -> handleFileCancel(packet, output);
+
+                case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet, output); // cần confirm lại với Phúc cái p2p này
+
                 default -> throw new IOException("Unexpected packet: " + packet.op());
             }
         }
