@@ -1,5 +1,8 @@
 package protocols;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.Objects;
 
 public final class Packet {
@@ -28,5 +31,24 @@ public final class Packet {
 
     public byte[] data() {
         return data.clone();
+    }
+
+    public byte[] toBytes() {
+        try {
+            ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+            DataOutputStream writer = new DataOutputStream(byteStream);
+
+            writer.writeByte(op.getCode());
+            writer.writeInt(requestId);
+            writer.writeInt(data.length);
+            writer.write(data);
+
+            writer.flush();
+
+            return byteStream.toByteArray();
+
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot serialize packet", e);
+        }
     }
 }

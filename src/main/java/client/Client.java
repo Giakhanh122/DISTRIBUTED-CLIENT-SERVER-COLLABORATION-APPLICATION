@@ -3,7 +3,11 @@ package client;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 import protocols.OpCode;
@@ -152,5 +156,64 @@ public class Client {
 
         System.out.println("Login successful!");
         return true;
+    }
+
+    // DHCPDatagramPacket
+
+    class ServerInfo {
+        private String address;
+        private int port;
+
+        public ServerInfo(String address, int port) {
+            this.address = address;
+            this.port = port;
+        }
+
+        public String getAddress() {
+            return address;
+        }
+
+        public int getPort() {
+            return port;
+        }
+    }
+
+    public ServerInfo discover() {
+        String BROADCAST_ADDRESS = "255.255.255.255";
+        int BROADCAST_PORT = 41234;
+
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setBroadcast(true);
+            InetAddress broadcastAddress = InetAddress.getByName(BROADCAST_ADDRESS);
+
+            byte[] message = "Who's server ?".getBytes(StandardCharsets.UTF_8);
+            Packet packet = new Packet(OpCode.DISCOVER_REQUEST, 1, message);
+
+            PacketCodec.sendUDP(socket, broadcastAddress, BROADCAST_PORT, packet);
+
+            System.out.println("Discover message has been sent via port " + BROADCAST_PORT);
+
+            byte[] buffer = new byte[4096];
+            DatagramPacket UDPPacket = new DatagramPacket(buffer, buffer.length);
+            while (true) {
+                socket.receive(UDPPacket);
+                Packet reponsePacket = PacketCodec.fromBytes(UDPPacket.getData());
+                String hostAddress = UDPPacket.getAddress().getHostAddress();
+                int hostPort = UDPPacket.getPort();
+                System.out.printf("From %s:%d: %s%n", hostAddress, hostPort, packet.data());
+
+                // convert byte[] to int
+                int serverPort = ByteBuffer.allocate(4).put(PacketCodec.fromBytes(UDPPacket.getData()).data())
+                        .getInt(0);
+
+                System.out.printf("ServerAddress : %s%nServerPort : %d%n", hostAddress, serverPort);
+
+                return new ServerInfo(hostAddress, serverPort);
+            }
+
+        } catch (Exception e) {
+            System.err.print(e.getMessage());
+            return null;
+        }
     }
 }
