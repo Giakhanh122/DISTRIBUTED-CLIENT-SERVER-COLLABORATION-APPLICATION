@@ -4,26 +4,31 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.net.ServerSocket;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
+import client.PeerListener;
 
 public class Client {
-
-    private String ipAddress;
-    private int portNumber;
-
     private static final int MAX_CHAT_BYTES = 64 * 1024;
+    private String username;
+    private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
+    private volatile String selectedPeerUsername;
+    private boolean closingPeers;
 
     public void connectToServer(String host, int portNumber, Scanner scanner) {
-        try (Socket socket = new Socket(host, portNumber)) {
-            ServerSocket peerListener = new ServerSocket();
+        try (
+            Socket socket = new Socket(host, portNumber);
+            PeerListener peerListener = new PeerListener(this::registerPeer);
+        ) {
             socket.setSoTimeout(10000);
 
-            int peerPort = peerListener.getLocalPort();
+            int peerPort = peerListener.getPort();
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
 
@@ -37,6 +42,7 @@ public class Client {
                 return;
             }
 
+            Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
             readConsole(input, output, scanner, requestId);
         } catch (IOException e) {
@@ -62,9 +68,10 @@ public class Client {
         return true;
     }
 
-    private void readConsole(InputStream input, OutputStream output, Scanner scanner, int requestId)
-            throws IOException {
-        System.out.println("Type a message, /users to list online users, or /logout to disconnect.");
+    private void readConsole(InputStream input, OutputStream output, Scanner scanner, int requestId) throws IOException {
+        System.out.println(
+            "Commands: /users, /lookup <username>, /logout"
+        );
 
         while (scanner.hasNextLine()) {
             String message = scanner.nextLine();
@@ -80,15 +87,53 @@ public class Client {
                 continue;
             }
 
-            byte[] data = message.getBytes(StandardCharsets.UTF_8);
+            String[] arguments = command.split("\\s+", 2);
+            if (arguments[0].equalsIgnoreCase("/lookup")) {
+                if (arguments.length != 2) {
+                    System.out.println("Usage: /lookup <username>");
+                    continue;
+                }
 
+                String targetUsername = arguments[1];
+                if (targetUsername.equals(username)) {
+                    System.out.println("Cannot connect to yourself");
+                    continue;
+                }
+
+                Optional<InetSocketAddress> result = requestPeerLookup(
+                    input,
+                    output,
+                    targetUsername,
+                    ++requestId
+                );
+
+                if (result.isEmpty()) {
+                    System.out.println(targetUsername + " is offline");
+                } else {
+                    connectToPeer(targetUsername, result.get());
+                }
+                continue;
+            }
+
+            byte[]data = message.getBytes(StandardCharsets.UTF_8);
             if (data.length > MAX_CHAT_BYTES) {
                 System.err.println("Message exceeds limit: " + MAX_CHAT_BYTES);
                 continue;
             }
 
-            Packet chatMessage = new Packet(OpCode.CHAT_MESSAGE, ++requestId, data);
-            PacketCodec.write(output, chatMessage);
+            String targetUsername = selectedPeerUsername;
+            PeerConnection connection = targetUsername == null ? null : peers.get(targetUsername);
+            if (connection == null) {
+                System.out.println("Connect to a peer before sending messages.");
+                continue;
+            }
+
+            try {
+                connection.sendMessage(message);
+            } catch (IOException e) {
+                System.err.println("Cannot send message: " + e.getMessage());
+                closePeer(connection);
+            }
         }
     }
 
@@ -153,6 +198,118 @@ public class Client {
         }
 
         System.out.println("Login successful!");
+        this.username = username;
         return true;
+    }
+
+    private Optional<InetSocketAddress> requestPeerLookup(InputStream input, OutputStream output, String targetUsername, int requestId) throws IOException {
+        Packet request = new Packet(OpCode.PEER_LOOKUP_REQUEST, requestId, targetUsername.getBytes(StandardCharsets.UTF_8));
+        PacketCodec.write(output, request);
+        Packet response = PacketCodec.read(input);
+        if (response == null
+            || response.op() != OpCode.PEER_LOOKUP_RESPONSE
+            || response.requestId() != requestId) {
+            throw new IOException("Invalid or missing PEER_LOOKUP_RESPONSE");
+        }
+
+        String payload = new String(response.data(), StandardCharsets.UTF_8);
+        if (payload.equals("USER_OFFLINE")) return Optional.empty();
+        
+        String[] parts = payload.split("\n", -1);
+        if (parts.length != 3
+            || !parts[0].equals("OK")
+            || parts[1].isBlank()) {
+            throw new IOException("Invalid peer address payload");
+        }
+
+        int peerPort;
+        try {
+            peerPort = Integer.parseInt(parts[2]);
+        } catch (NumberFormatException e) {
+            throw new IOException("Invalid peer port", e);
+        }
+
+        if (peerPort < 1 || peerPort > 65535) {
+            throw new IOException("Peer port is out of range");
+        }
+
+        InetSocketAddress address = new InetSocketAddress(
+            parts[1],
+            peerPort
+        );
+        return Optional.of(address);
+    }
+
+    private void connectToPeer(String targetUsername, InetSocketAddress address) {
+        Socket peerSocket = new Socket();
+        PeerConnection connection = new PeerConnection(peerSocket); 
+
+        try {
+            peerSocket.connect(address, 10000);
+            connection.initiateHandshake(username, 1);
+
+            registerPeer(targetUsername, connection);
+            selectedPeerUsername = targetUsername;
+
+            System.out.println("Now chatting with " + targetUsername);
+        } catch (IOException e) {
+            closePeer(connection);
+
+            System.err.println(
+                "Cannot connect to " + targetUsername
+                    + ": " + e.getMessage()
+            );
+        }
+    }
+
+    private synchronized void registerPeer(String peerUsername, PeerConnection connection) {
+        if (closingPeers) {
+            closePeer(connection);
+            return;
+        }
+        
+        PeerConnection previous = peers.put(peerUsername, connection);
+        if (previous != null) {
+            closePeer(previous);
+        }
+        if (selectedPeerUsername == null) {
+            selectedPeerUsername = peerUsername;
+        }
+
+        Thread.startVirtualThread(() -> {
+            try {
+                connection.readMessages(peerUsername);
+            } catch (IOException e) {
+                System.err.println("Peer " + peerUsername + ": " + e.getMessage());
+            } finally {
+                synchronized (Client.this) {
+                    if (peers.remove(peerUsername, connection)
+                        && peerUsername.equals(selectedPeerUsername)) {
+                        selectedPeerUsername = null;
+                    }
+                }
+
+                closePeer(connection);
+            }
+        });
+    }
+
+    private void closePeer(PeerConnection connection) {
+        try {
+            connection.close();
+        } catch (IOException e) {
+            System.err.println("Cannot close peer: " + e.getMessage());
+        }
+    }
+
+    private synchronized void closePeers() {
+        closingPeers = true;
+
+        for (PeerConnection connection : peers.values()) {
+            closePeer(connection);
+        }
+
+        peers.clear();
+        selectedPeerUsername = null;
     }
 }

@@ -6,6 +6,10 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
+
+import logic.User;
+
+import java.util.Optional;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -77,6 +81,29 @@ public class CilentHandler implements Runnable {
         return true;
     }
 
+        private void readPackets(InputStream input, OutputStream output) throws IOException {
+        Packet packet;
+        while ((packet = PacketCodec.read(input)) != null) {
+            switch (packet.op()) {
+                case CHAT_MESSAGE -> {
+                    if (packet.payloadLength() > MAX_CHAT_BYTES) {
+                        throw new IOException("Message exceeds limit");
+                    }
+
+                    String message = new String(packet.data(), StandardCharsets.UTF_8);
+
+                    System.out.println(session.username() + ": " + message);
+                }
+
+                case USER_LIST_REQUEST -> handleUserList(packet, output);
+
+                case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet, output);
+
+                default -> throw new IOException("Unexpected packet: " + packet.op());
+            }
+        }
+    }
+
     private boolean handleAuth(InputStream input, OutputStream output) throws IOException {
         Packet request = PacketCodec.read(input);
 
@@ -91,8 +118,19 @@ public class CilentHandler implements Runnable {
         String[] parts = credentials.split("\n", -1);
 
         String status;
+        int peerPort = 0;
 
-        if (parts.length != 2 || parts[0].isBlank() || parts[1].isEmpty()) {
+        if (parts.length == 3) {
+            try {
+                peerPort = Integer.parseInt(parts[2]);
+            } catch (NumberFormatException e) {}
+        }
+
+        if (parts.length != 3
+            || parts[0].isBlank() 
+            || parts[1].isEmpty()
+            || peerPort < 1
+            || peerPort > 65535) {
             status = "INVALID_AUTH_REQUEST";
         } else if (!authService.authenticate(parts[0], parts[1])) {
             status = "INVALID_CREDENTIALS";
@@ -100,7 +138,7 @@ public class CilentHandler implements Runnable {
             UserSession candidate = new UserSession(
                     parts[0],
                     socket.getInetAddress().getHostAddress(),
-                    0 // Chưa triển khai cổng lắng nghe peer.
+                    peerPort
             );
 
             if (sessions.register(candidate)) {
@@ -137,24 +175,27 @@ public class CilentHandler implements Runnable {
         PacketCodec.write(output, response);
     }
 
-    private void readPackets(InputStream input, OutputStream output) throws IOException {
-        Packet packet;
-        while ((packet = PacketCodec.read(input)) != null) {
-            switch (packet.op()) {
-                case CHAT_MESSAGE -> {
-                    if (packet.payloadLength() > MAX_CHAT_BYTES) {
-                        throw new IOException("Message exceeds limit");
-                    }
-
-                    String message = new String(packet.data(), StandardCharsets.UTF_8);
-
-                    System.out.println(session.username() + ": " + message);
-                }
-
-                case USER_LIST_REQUEST -> handleUserList(packet, output);
-
-                default -> throw new IOException("Unexpected packet: " + packet.op());
-            }
+    private void handlePeerLookup(Packet request, OutputStream output) throws IOException {
+        if (request.requestId() <= 0 || request.payloadLength() == 0) {
+            throw new IOException("Invalid PEER_LOOKUP_REQUEST");
         }
+
+        String targetUsername = new String(request.data(), StandardCharsets.UTF_8);
+        if (targetUsername.isEmpty()) {
+            throw new IOException("Target username must not be empty");
+        }
+
+        Optional<UserSession> target = sessions.find(targetUsername);
+        String payload;
+        if (target.isEmpty()) {
+            payload = "USER_OFFLINE";
+        }
+        else {
+            UserSession targetUser = target.get();
+            payload = "OK\n" + targetUser.ip() + "\n" + targetUser.port();
+        }
+
+        Packet response = new Packet(OpCode.PEER_LOOKUP_RESPONSE, request.requestId(), payload.getBytes(StandardCharsets.UTF_8));
+        PacketCodec.write(output, response);
     }
 }
