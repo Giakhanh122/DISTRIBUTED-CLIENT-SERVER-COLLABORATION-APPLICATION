@@ -5,7 +5,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -16,12 +18,14 @@ import server.session.UserSession;
 public class CilentHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
+    private static final ConcurrentHashMap<String, CilentHandler> HANDLERS = new ConcurrentHashMap<>();
 
     private final Socket socket;
     private final SessionRegistry sessions;
     private final AuthService authService;
 
     private UserSession session;
+    private OutputStream output;
 
     public CilentHandler(Socket socket, SessionRegistry sessions, AuthService authService) {
         this.socket = socket;
@@ -37,7 +41,7 @@ public class CilentHandler implements Runnable {
             socket.setSoTimeout(10000);
 
             InputStream input = socket.getInputStream();
-            OutputStream output = socket.getOutputStream();
+            this.output = socket.getOutputStream();
 
             if (!handshake(input, output)) {
                 return;
@@ -55,9 +59,15 @@ public class CilentHandler implements Runnable {
         } finally {
             if (session != null) {
                 sessions.remove(session);
+                HANDLERS.remove(session.username());
             }
-
             System.out.println("Client " + address + " disconnected");
+        }
+    }
+
+    public synchronized void sendPacket(Packet packet) throws IOException {
+        if (output != null) {
+            PacketCodec.write(output, packet);
         }
     }
 
@@ -70,7 +80,6 @@ public class CilentHandler implements Runnable {
         }
 
         Packet response = new Packet(OpCode.HELLO_ACK, hello.requestId(), new byte[0]);
-
         PacketCodec.write(output, response);
 
         System.out.println("Handshake successful with " + socket.getRemoteSocketAddress());
@@ -100,11 +109,12 @@ public class CilentHandler implements Runnable {
             UserSession candidate = new UserSession(
                     parts[0],
                     socket.getInetAddress().getHostAddress(),
-                    0 // Chưa triển khai cổng lắng nghe peer.
+                    0
             );
 
             if (sessions.register(candidate)) {
                 session = candidate;
+                HANDLERS.put(candidate.username(), this);
                 status = "OK";
             } else {
                 status = "ALREADY_LOGGED_IN";
@@ -113,7 +123,6 @@ public class CilentHandler implements Runnable {
 
         Packet response = new Packet(
                 OpCode.AUTH_RESPONSE, request.requestId(), status.getBytes(StandardCharsets.UTF_8));
-
         PacketCodec.write(output, response);
 
         return status.equals("OK");
@@ -137,6 +146,61 @@ public class CilentHandler implements Runnable {
         PacketCodec.write(output, response);
     }
 
+    private void handleFileOffer(Packet packet, OutputStream output) throws IOException {
+        FileTransferMeta meta = FileTransferMeta.fromBytes(packet.data());
+        CilentHandler receiver = HANDLERS.get(meta.receiver());
+        if (receiver != null) {
+            receiver.sendPacket(new Packet(OpCode.FILE_OFFER, packet.requestId(), packet.data()));
+        } else {
+            String reject = meta.transferId() + "\n" + meta.sender() + "\nREJECT\nUser is offline";
+            sendPacket(new Packet(OpCode.FILE_DECISION, packet.requestId(), reject.getBytes(StandardCharsets.UTF_8)));
+        }
+    }
+
+    private void handleFileDecision(Packet packet, OutputStream output) throws IOException {
+        String payload = new String(packet.data(), StandardCharsets.UTF_8);
+        String[] parts = payload.split("\n", -1);
+        if (parts.length >= 3) {
+            CilentHandler sender = HANDLERS.get(parts[1]);
+            if (sender != null) {
+                String forwarded = parts[2].equalsIgnoreCase("ACCEPT")
+                        ? parts[0] + "\n" + parts[1] + "\nACCEPT\n" + socket.getInetAddress().getHostAddress() + "\n" + (parts.length > 3 ? parts[3] : "0")
+                        : payload;
+                sender.sendPacket(new Packet(OpCode.FILE_DECISION, packet.requestId(), forwarded.getBytes(StandardCharsets.UTF_8)));
+            }
+        }
+    }
+
+    private void handleFileChunk(Packet packet, OutputStream output) throws IOException {
+        throw new IOException("File chunks must be transmitted directly via P2P");
+    }
+
+    private void handleFileEnd(Packet packet, OutputStream output) throws IOException {
+        throw new IOException("File end packet must be transmitted directly via P2P");
+    }
+
+    private void handleFileResult(Packet packet, OutputStream output) throws IOException {
+        throw new IOException("File result packet must be transmitted directly via P2P");
+    }
+
+    private void handleFileCancel(Packet packet, OutputStream output) throws IOException {
+        String[] parts = new String(packet.data(), StandardCharsets.UTF_8).split("\n", -1);
+        if (parts.length >= 2) {
+            CilentHandler target = HANDLERS.get(parts[1]);
+            if (target != null) {
+                target.sendPacket(new Packet(OpCode.FILE_CANCEL, packet.requestId(), packet.data()));
+            }
+        }
+    }
+
+    private void handlePeerLookup(Packet packet, OutputStream output) throws IOException {
+        String targetUser = new String(packet.data(), StandardCharsets.UTF_8).trim();
+        var targetSession = sessions.find(targetUser);
+        String res = targetSession.map(s -> "OK\n" + s.ip() + "\n" + s.port()).orElse("NOT_FOUND");
+        Packet response = new Packet(OpCode.PEER_LOOKUP_RESPONSE, packet.requestId(), res.getBytes(StandardCharsets.UTF_8));
+        PacketCodec.write(output, response);
+    }
+
     private void readPackets(InputStream input, OutputStream output) throws IOException {
         Packet packet;
         while ((packet = PacketCodec.read(input)) != null) {
@@ -145,23 +209,17 @@ public class CilentHandler implements Runnable {
                     if (packet.payloadLength() > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds limit");
                     }
-
                     String message = new String(packet.data(), StandardCharsets.UTF_8);
-
                     System.out.println(session.username() + ": " + message);
                 }
-
                 case USER_LIST_REQUEST -> handleUserList(packet, output);
-
                 case FILE_OFFER -> handleFileOffer(packet, output);
                 case FILE_DECISION -> handleFileDecision(packet, output);
                 case FILE_CHUNK -> handleFileChunk(packet, output);
                 case FILE_END -> handleFileEnd(packet, output);
                 case FILE_RESULT -> handleFileResult(packet, output);
                 case FILE_CANCEL -> handleFileCancel(packet, output);
-
-                case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet, output); // cần confirm lại với Phúc cái p2p này
-
+                case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet, output);
                 default -> throw new IOException("Unexpected packet: " + packet.op());
             }
         }
