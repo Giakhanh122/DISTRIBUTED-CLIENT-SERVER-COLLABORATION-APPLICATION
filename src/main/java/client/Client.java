@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 import protocols.OpCode;
@@ -15,8 +16,10 @@ public class Client {
 
     public void start(String host, int portNumber, Scanner scanner) {
         try (Socket socket = new Socket(host, portNumber)) {
+            ServerSocket peerListener = new ServerSocket();
             socket.setSoTimeout(10000);
 
+            int peerPort = peerListener.getLocalPort();
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
 
@@ -26,7 +29,7 @@ public class Client {
                 return;
             }
 
-            if (!login(input, output, scanner, ++requestId)) {
+            if (!login(input, output, scanner, ++requestId, peerPort)) {
                 return;
             }
 
@@ -121,7 +124,7 @@ public class Client {
         }
     }
 
-    private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId) throws IOException {
+    private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId, int peerPort) throws IOException {
         System.out.print("Username: ");
         if (!scanner.hasNextLine()) return false;
         String username = scanner.nextLine().trim();
@@ -135,7 +138,7 @@ public class Client {
             return false;
         }
 
-        byte[] credentials = (username + "\n" + password).getBytes(StandardCharsets.UTF_8);
+        byte[] credentials = (username + "\n" + password + "\n" + peerPort).getBytes(StandardCharsets.UTF_8);
         Packet auth_request = new Packet(OpCode.AUTH_REQUEST, requestId, credentials);
         PacketCodec.write(output, auth_request);
 

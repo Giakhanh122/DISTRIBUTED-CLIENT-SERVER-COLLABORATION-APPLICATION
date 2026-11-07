@@ -3,6 +3,7 @@ package protocols;
 import java.util.Objects;
 
 public final class Packet {
+    
     private final OpCode op;
     private final int requestId;
     private final byte[] data;

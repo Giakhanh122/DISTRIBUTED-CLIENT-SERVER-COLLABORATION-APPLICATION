@@ -15,7 +15,7 @@ public class Main {
             if (choice.equalsIgnoreCase("s")) {
                 new Server().start(PORT);
             } else if (choice.equalsIgnoreCase("c")) {
-                new Client().start("localhost", PORT, scanner);
+                new Client().start("10.127.20.101", PORT, scanner);
             } else {
                 System.out.println("Invalid choice!");
             }
