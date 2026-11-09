@@ -17,7 +17,7 @@ import server.auth.AuthService;
 import server.session.SessionRegistry;
 import server.session.UserSession;
 
-public class CilentHandler implements Runnable {
+public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
 
@@ -27,7 +27,7 @@ public class CilentHandler implements Runnable {
 
     private UserSession session;
 
-    public CilentHandler(Socket socket, SessionRegistry sessions, AuthService authService) {
+    public ClientHandler(Socket socket, SessionRegistry sessions, AuthService authService) {
         this.socket = socket;
         this.sessions = sessions;
         this.authService = authService;
@@ -81,7 +81,7 @@ public class CilentHandler implements Runnable {
         return true;
     }
 
-        private void readPackets(InputStream input, OutputStream output) throws IOException {
+    private void readPackets(InputStream input, OutputStream output) throws IOException {
         Packet packet;
         while ((packet = PacketCodec.read(input)) != null) {
             switch (packet.op()) {

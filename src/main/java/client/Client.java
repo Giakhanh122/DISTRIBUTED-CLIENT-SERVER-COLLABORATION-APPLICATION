@@ -1,9 +1,15 @@
 package client;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
@@ -20,6 +26,34 @@ public class Client {
     private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
     private volatile String selectedPeerUsername;
     private boolean closingPeers;
+    private int requestSequence = 0;
+
+    public record ServerInfo(String address, int port) {}
+
+    private int nextRequestId() {
+        return ++requestSequence;
+    }
+
+    public void start(String serverHost, int serverPort, Scanner scanner) {
+        try {
+            if (serverHost == null || serverHost.isBlank()) {
+                ServerInfo info = discover();
+
+                if (info == null) {
+                    System.out.println("No server found");
+                    return;
+                }
+
+                serverHost = info.address();
+                serverPort = info.port();
+
+                System.out.println("Server found: " + serverHost + ":" + serverPort);
+            }
+            connectToServer(serverHost, serverPort, scanner);
+        } catch (IOException e) {
+            System.err.println("Dicovery failed: " + e.getMessage());
+        }
+    }
 
     public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (
@@ -32,21 +66,21 @@ public class Client {
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
 
-            int requestId = 1;
-
-            if (!handshake(input, output, requestId)) {
+            if (!handshake(input, output, nextRequestId())) {
                 return;
             }
 
-            if (!login(input, output, scanner, ++requestId, peerPort)) {
+            if (!login(input, output, scanner, nextRequestId(), peerPort)) {
                 return;
             }
 
             Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
-            readConsole(input, output, scanner, requestId);
+            readConsole(input, output, scanner);
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());
+        } finally {
+            closePeers();
         }
     }
 
@@ -68,7 +102,7 @@ public class Client {
         return true;
     }
 
-    private void readConsole(InputStream input, OutputStream output, Scanner scanner, int requestId) throws IOException {
+    private void readConsole(InputStream input, OutputStream output, Scanner scanner) throws IOException {
         System.out.println(
             "Commands: /users, /lookup <username>, /logout"
         );
@@ -83,7 +117,7 @@ public class Client {
                 continue;
 
             if (command.equalsIgnoreCase("/users")) {
-                requestUserList(input, output, ++requestId);
+                requestUserList(input, output, nextRequestId());
                 continue;
             }
 
@@ -104,7 +138,7 @@ public class Client {
                     input,
                     output,
                     targetUsername,
-                    ++requestId
+                    nextRequestId()
                 );
 
                 if (result.isEmpty()) {
@@ -311,5 +345,69 @@ public class Client {
 
         peers.clear();
         selectedPeerUsername = null;
+    }
+
+    public ServerInfo discover() throws IOException {
+        final int DISCOVERY_PORT = 41234;
+        final int maxAttemps = 5;
+
+        InetAddress broadcastAddress = InetAddress.getByName("255.255.255.255");
+        int requestId = nextRequestId();
+        Packet request = new Packet(OpCode.DISCOVER_REQUEST, requestId, new byte[0]);
+
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        PacketCodec.write(encoded, request);
+        byte[] requestBytes = encoded.toByteArray();
+
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setBroadcast(true);
+            socket.setSoTimeout(3000);
+
+            DatagramPacket outgoing = new DatagramPacket(
+                requestBytes,
+                requestBytes.length,
+                broadcastAddress,
+                DISCOVERY_PORT
+            );
+
+            byte[] buffer = new byte[4096];
+            for (int attemp = 1; attemp <= maxAttemps; attemp++) {
+                socket.send(outgoing);
+                System.out.println("Finding server: " + attemp + "/" + maxAttemps);
+
+                DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
+
+                try {
+                    socket.receive(incoming);
+                } catch (SocketTimeoutException e) {
+                    break;
+                }
+
+                try {
+                    ByteArrayInputStream input = new ByteArrayInputStream(
+                        incoming.getData(),
+                        incoming.getOffset(),
+                        incoming.getLength()
+                    );
+
+                    Packet response = PacketCodec.read(input);
+                    if (response == null
+                        || input.available() != 0
+                        || response.op() != OpCode.DISCOVER_RESPONSE
+                        || response.requestId() != requestId
+                        || incoming.getPort() != DISCOVERY_PORT) {
+                        continue;
+                    }
+
+                    int tcpPort = Integer.parseInt(new String(response.data(), StandardCharsets.UTF_8));
+                    if (tcpPort < 1 || tcpPort > 65535) continue;
+
+                    return new ServerInfo(incoming.getAddress().getHostAddress(), tcpPort);
+                } catch (IOException | NumberFormatException e) {
+                    continue;
+                }
+            }
+        }
+        return null;
     }
 }

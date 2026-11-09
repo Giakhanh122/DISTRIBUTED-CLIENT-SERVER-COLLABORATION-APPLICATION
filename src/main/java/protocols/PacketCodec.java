@@ -1,13 +1,19 @@
 package protocols;
 
+import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 
-/** Wire format: OP:u8 | RequestID:i32 | PayloadLength:i32 | Data:N bytes.
- * All multibyte numbers use big-endian byte order.
+/**
+ * Wire format: OP:u8 | RequestID:i32 | PayloadLength:i32 | Data:N bytes. All
+ * multibyte numbers use
+ * big-endian byte order.
  */
 public final class PacketCodec {
     public static final int HEADER_LENGTH = 9;
@@ -43,6 +49,7 @@ public final class PacketCodec {
         writer.writeInt(packet.requestId());
         writer.writeInt(packet.payloadLength());
         writer.write(packet.data());
+
         writer.flush();
     }
 }
