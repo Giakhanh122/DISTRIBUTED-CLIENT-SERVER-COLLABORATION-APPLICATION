@@ -31,7 +31,6 @@ public enum OpCode {
     FILE_CHUNK(0x42),
     FILE_END(0x43),
     FILE_RESULT(0x44),
-    FILE_CANCEL(0x45),
     //UDP control protocol
     DISCOVER_REQUEST(0x50),
     DISCOVER_RESPONSE(0x51),

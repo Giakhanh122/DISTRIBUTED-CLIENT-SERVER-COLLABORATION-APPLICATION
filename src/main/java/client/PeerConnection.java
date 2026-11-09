@@ -2,27 +2,28 @@ package client;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.Socket;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Consumer;
 import protocols.*;
 
 public class PeerConnection implements AutoCloseable {
     private final Socket socket;
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private int messageRequestId = 1;
+    private InetSocketAddress peerAddress;
 
     public PeerConnection(Socket socket) {
         this.socket = socket;
     }
 
-    public void initiateHandshake(String username, int requestId) throws IOException {
+    public void initiateHandshake(String username, int requestId, int listeningPort) throws IOException {
         socket.setSoTimeout(10000);
         InputStream input = socket.getInputStream();
-        OutputStream output = socket.getOutputStream();
-
-        Packet hello = new Packet(OpCode.PEER_HELLO, requestId, username.getBytes(StandardCharsets.UTF_8));
-        PacketCodec.write(output, hello);
+        Packet hello = new Packet(OpCode.PEER_HELLO, requestId,
+                (username + "\n" + listeningPort).getBytes(StandardCharsets.UTF_8));
+        sendPacket(hello);
         Packet hello_ack = PacketCodec.read(input);
         if (hello_ack == null
             || hello_ack.op() != OpCode.PEER_HELLO_ACK
@@ -30,14 +31,11 @@ public class PeerConnection implements AutoCloseable {
             || hello_ack.payloadLength() != 0) {
             throw new IOException("Invalid or missing PEER_HELLO_ACK");
         }
+        peerAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
         socket.setSoTimeout(0);
     }
 
-    public String acceptHandshake() throws IOException {
-        socket.setSoTimeout(10000);
-        InputStream input = socket.getInputStream();
-        OutputStream output = socket.getOutputStream();
-        Packet hello = PacketCodec.read(input);
+    public String acceptHandshake(Packet hello) throws IOException {
         if (hello == null
             || hello.op() != OpCode.PEER_HELLO
             || hello.requestId() <= 0
@@ -46,23 +44,30 @@ public class PeerConnection implements AutoCloseable {
             throw new IOException("Invalid or missing PEER_HELLO");
         }
 
-        String peerUsername = new String(
-            hello.data(),
-            StandardCharsets.UTF_8
-        );
-        if (peerUsername.isBlank()) {
-            throw new IOException("Peer username must not be blank");
+        String[] identity = new String(hello.data(), StandardCharsets.UTF_8).split("\n", -1);
+        if (identity.length != 2 || identity[0].isBlank()) {
+            throw new IOException("Invalid peer identity");
         }
+        int port;
+        try {
+            port = Integer.parseInt(identity[1]);
+        } catch (NumberFormatException e) {
+            throw new IOException("Invalid peer listening port", e);
+        }
+        if (port < 1 || port > 65535) {
+            throw new IOException("Peer listening port is out of range");
+        }
+        peerAddress = new InetSocketAddress(socket.getInetAddress(), port);
 
         Packet response = new Packet(
             OpCode.PEER_HELLO_ACK,
             hello.requestId(),
             new byte[0]
         );
-        PacketCodec.write(output, response);
+        sendPacket(response);
 
         socket.setSoTimeout(0);
-        return peerUsername;
+        return identity[0];
     }
 
     public synchronized void sendMessage(String message) throws IOException {
@@ -72,25 +77,36 @@ public class PeerConnection implements AutoCloseable {
         }
 
         Packet chat_message = new Packet(OpCode.CHAT_MESSAGE, ++messageRequestId, data);
-        PacketCodec.write(socket.getOutputStream(), chat_message);
+        sendPacket(chat_message);
     }
 
-    public void readMessages(String peerUsername) throws IOException {
+    public synchronized void sendPacket(Packet packet) throws IOException {
+        PacketCodec.write(socket.getOutputStream(), packet);
+    }
+
+    public InetSocketAddress peerAddress() {
+        return peerAddress;
+    }
+
+    public boolean isClosed() {
+        return socket.isClosed();
+    }
+
+    public void readMessages(String peerUsername, Consumer<Packet> onFilePacket) throws IOException {
         InputStream input = socket.getInputStream();
         Packet packet;
 
         while ((packet = PacketCodec.read(input)) != null) {
-            if (packet.op() != OpCode.CHAT_MESSAGE
-                || packet.payloadLength() > MAX_CHAT_BYTES) {
-                throw new IOException("Invalid peer chat packet");
+            switch (packet.op()) {
+                case CHAT_MESSAGE -> {
+                    if (packet.payloadLength() > MAX_CHAT_BYTES) {
+                        throw new IOException("Message exceeds chat limit");
+                    }
+                    System.out.println(peerUsername + ": " + new String(packet.data(), StandardCharsets.UTF_8));
+                }
+                case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
+                default -> throw new IOException("Unexpected peer chat packet: " + packet.op());
             }
-
-            String message = new String(
-                packet.data(),
-                StandardCharsets.UTF_8
-            );
-
-            System.out.println(peerUsername + ": " + message);
         }
     }
 
