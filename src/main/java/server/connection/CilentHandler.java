@@ -61,6 +61,7 @@ public class CilentHandler implements Runnable {
                 sessions.remove(session);
                 HANDLERS.remove(session.username());
             }
+
             System.out.println("Client " + address + " disconnected");
         }
     }
@@ -146,18 +147,18 @@ public class CilentHandler implements Runnable {
         PacketCodec.write(output, response);
     }
 
-    private void handleFileOffer(Packet packet, OutputStream output) throws IOException {
+    private void handleFileOffer(Packet packet) throws IOException {
         FileTransferMeta meta = FileTransferMeta.fromBytes(packet.data());
         CilentHandler receiver = HANDLERS.get(meta.receiver());
         if (receiver != null) {
             receiver.sendPacket(new Packet(OpCode.FILE_OFFER, packet.requestId(), packet.data()));
         } else {
-            String reject = meta.transferId() + "\n" + meta.sender() + "\nREJECT\nUser is offline";
+            String reject = meta.transferId() + "\n" + meta.sender() + "\nREJECT\nUser offline";
             sendPacket(new Packet(OpCode.FILE_DECISION, packet.requestId(), reject.getBytes(StandardCharsets.UTF_8)));
         }
     }
 
-    private void handleFileDecision(Packet packet, OutputStream output) throws IOException {
+    private void handleFileDecision(Packet packet) throws IOException {
         String payload = new String(packet.data(), StandardCharsets.UTF_8);
         String[] parts = payload.split("\n", -1);
         if (parts.length >= 3) {
@@ -171,34 +172,11 @@ public class CilentHandler implements Runnable {
         }
     }
 
-    private void handleFileChunk(Packet packet, OutputStream output) throws IOException {
-        throw new IOException("File chunks must be transmitted directly via P2P");
-    }
-
-    private void handleFileEnd(Packet packet, OutputStream output) throws IOException {
-        throw new IOException("File end packet must be transmitted directly via P2P");
-    }
-
-    private void handleFileResult(Packet packet, OutputStream output) throws IOException {
-        throw new IOException("File result packet must be transmitted directly via P2P");
-    }
-
-    private void handleFileCancel(Packet packet, OutputStream output) throws IOException {
-        String[] parts = new String(packet.data(), StandardCharsets.UTF_8).split("\n", -1);
-        if (parts.length >= 2) {
-            CilentHandler target = HANDLERS.get(parts[1]);
-            if (target != null) {
-                target.sendPacket(new Packet(OpCode.FILE_CANCEL, packet.requestId(), packet.data()));
-            }
-        }
-    }
-
     private void handlePeerLookup(Packet packet, OutputStream output) throws IOException {
-        String targetUser = new String(packet.data(), StandardCharsets.UTF_8).trim();
-        var targetSession = sessions.find(targetUser);
-        String res = targetSession.map(s -> "OK\n" + s.ip() + "\n" + s.port()).orElse("NOT_FOUND");
-        Packet response = new Packet(OpCode.PEER_LOOKUP_RESPONSE, packet.requestId(), res.getBytes(StandardCharsets.UTF_8));
-        PacketCodec.write(output, response);
+        String target = new String(packet.data(), StandardCharsets.UTF_8).trim();
+        var user = sessions.find(target);
+        String res = user.map(u -> "OK\n" + u.ip() + "\n" + u.port()).orElse("NOT_FOUND");
+        PacketCodec.write(output, new Packet(OpCode.PEER_LOOKUP_RESPONSE, packet.requestId(), res.getBytes(StandardCharsets.UTF_8)));
     }
 
     private void readPackets(InputStream input, OutputStream output) throws IOException {
@@ -213,12 +191,8 @@ public class CilentHandler implements Runnable {
                     System.out.println(session.username() + ": " + message);
                 }
                 case USER_LIST_REQUEST -> handleUserList(packet, output);
-                case FILE_OFFER -> handleFileOffer(packet, output);
-                case FILE_DECISION -> handleFileDecision(packet, output);
-                case FILE_CHUNK -> handleFileChunk(packet, output);
-                case FILE_END -> handleFileEnd(packet, output);
-                case FILE_RESULT -> handleFileResult(packet, output);
-                case FILE_CANCEL -> handleFileCancel(packet, output);
+                case FILE_OFFER -> handleFileOffer(packet);
+                case FILE_DECISION -> handleFileDecision(packet);
                 case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet, output);
                 default -> throw new IOException("Unexpected packet: " + packet.op());
             }

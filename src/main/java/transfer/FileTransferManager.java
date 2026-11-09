@@ -2,24 +2,19 @@ package transfer;
 
 import java.io.File;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class FileTransferManager {
-    private final ConcurrentHashMap<String, FileTransferSession> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, FileTransferSession> sessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, File> outboundFiles = new ConcurrentHashMap<>();
 
     public void registerSession(FileTransferSession session) {
-        if (session != null) {
-            activeSessions.put(session.transferId(), session);
-        }
+        sessions.put(session.transferId(), session);
     }
 
     public void registerOutboundFile(String transferId, File file) {
-        if (transferId != null && file != null) {
-            outboundFiles.put(transferId, file);
-        }
+        outboundFiles.put(transferId, file);
     }
 
     public File getOutboundFile(String transferId) {
@@ -27,20 +22,30 @@ public class FileTransferManager {
     }
 
     public Optional<FileTransferSession> getSession(String transferId) {
-        if (transferId == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(activeSessions.get(transferId));
+        return Optional.ofNullable(sessions.get(transferId));
     }
 
-    public void removeSession(String transferId) {
-        if (transferId != null) {
-            activeSessions.remove(transferId);
-            outboundFiles.remove(transferId);
+    public Optional<FileTransferSession> findPending(String query) {
+        if (query == null || query.isBlank()) {
+            return sessions.values().stream().filter(s -> s.state() == FileTransferSession.State.OFFERED).findFirst();
         }
+        String q = query.trim().toLowerCase();
+        for (FileTransferSession s : sessions.values()) {
+            if (s.state() == FileTransferSession.State.OFFERED) {
+                if (s.transferId().toLowerCase().startsWith(q) || s.meta().fileName().toLowerCase().contains(q)) {
+                    return Optional.of(s);
+                }
+            }
+        }
+        return Optional.empty();
     }
 
-    public Collection<FileTransferSession> getActiveSessions() {
-        return Collections.unmodifiableCollection(activeSessions.values());
+    public boolean hasOngoingTransfer() {
+        return sessions.values().stream().anyMatch(s ->
+                s.state() == FileTransferSession.State.ACCEPTED || s.state() == FileTransferSession.State.TRANSFERRING);
+    }
+
+    public Collection<FileTransferSession> getSessions() {
+        return sessions.values();
     }
 }

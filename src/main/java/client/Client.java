@@ -23,7 +23,8 @@ public class Client {
 
     private String currentUsername;
     private final FileTransferManager transferManager = new FileTransferManager();
-    private final File downloadDir = new File("downloads");
+    private String downloadDir = "downloads";
+    private File downloadUserDir;
 
     public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (Socket socket = new Socket(host, portNumber)) {
@@ -82,19 +83,20 @@ public class Client {
         }
 
         this.currentUsername = username;
+        this.downloadUserDir = new File(downloadDir, username);
         byte[] credentials = (username + "\n" + password).getBytes(StandardCharsets.UTF_8);
-        Packet authRequest = new Packet(OpCode.AUTH_REQUEST, requestId, credentials);
-        PacketCodec.write(output, authRequest);
+        Packet auth_request = new Packet(OpCode.AUTH_REQUEST, requestId, credentials);
+        PacketCodec.write(output, auth_request);
 
-        Packet authResponse = PacketCodec.read(input);
-        if (authResponse == null
-                || authResponse.op() != OpCode.AUTH_RESPONSE
-                || authResponse.requestId() != requestId) {
+        Packet auth_response = PacketCodec.read(input);
+        if (auth_response == null
+                || auth_response.op() != OpCode.AUTH_RESPONSE
+                || auth_response.requestId() != requestId) {
             System.err.println("Invalid or missing AUTH_RESPONSE");
             return false;
         }
 
-        String status = new String(authResponse.data(), StandardCharsets.UTF_8);
+        String status = new String(auth_response.data(), StandardCharsets.UTF_8);
         if (!status.equals("OK")) {
             System.err.println("Login failed: " + status);
             return false;
@@ -116,7 +118,7 @@ public class Client {
                     default -> {}
                 }
             }
-        } catch (IOException ignored) {
+        } catch (Exception ignored) {
         }
     }
 
@@ -125,23 +127,22 @@ public class Client {
         System.out.println("Online users:");
         if (usernames.isEmpty()) {
             System.out.println("(none)");
-        } else {
-            for (String username : usernames.split("\n")) {
-                System.out.println("- " + username);
-            }
+            return;
+        }
+        for (String username : usernames.split("\n")) {
+            System.out.println("- " + username);
         }
     }
 
     private void handleIncomingOffer(byte[] data) {
         try {
             FileTransferMeta meta = FileTransferMeta.fromBytes(data);
-            FileTransferSession session = new FileTransferSession(meta);
-            transferManager.registerSession(session);
-            System.out.println("\n[FILE OFFER] " + meta.sender() + " wants to send '" + meta.fileName()
-                    + "' (" + meta.fileSize() + " bytes). ID: " + meta.transferId());
-            System.out.println("Type '/accept " + meta.transferId() + "' or '/reject " + meta.transferId() + "'");
+            transferManager.registerSession(new FileTransferSession(meta));
+            System.out.printf("%n[FILE OFFER] %s wants to send '%s' (%d bytes). ID: %s%n",
+                    meta.sender(), meta.fileName(), meta.fileSize(), meta.transferId());
+            System.out.println("Type '/accept' or '/accept " + meta.fileName() + "' or '/reject'");
         } catch (Exception e) {
-            System.err.println("Failed to read FILE_OFFER: " + e.getMessage());
+            System.err.println("Failed to parse file offer: " + e.getMessage());
         }
     }
 
@@ -149,36 +150,40 @@ public class Client {
         String payload = new String(data, StandardCharsets.UTF_8);
         String[] parts = payload.split("\n", -1);
         String transferId = parts[0];
-        String action = parts.length > 2 ? parts[2] : parts[1];
+        String action = parts[2];
 
         if ("ACCEPT".equalsIgnoreCase(action)) {
             String ip = parts.length > 3 ? parts[3] : "127.0.0.1";
             int port = parts.length > 4 ? Integer.parseInt(parts[4]) : 0;
-            System.out.println("\n[FILE] Transfer " + transferId + " was ACCEPTED. Starting P2P send to " + ip + ":" + port + "...");
-            transferManager.getSession(transferId).ifPresent(FileTransferSession::accept);
-            File outboundFile = transferManager.getOutboundFile(transferId);
-            if (outboundFile != null && port > 0) {
-                Thread.startVirtualThread(() -> runP2PSend(outboundFile, transferId, ip, port));
+            System.out.printf("%n[FILE] Transfer %s ACCEPTED. Sending P2P to %s:%d...%n", transferId, ip, port);
+            File file = transferManager.getOutboundFile(transferId);
+            if (file != null && port > 0) {
+                Thread.startVirtualThread(() -> sendP2P(file, transferId, ip, port));
             }
         } else {
             String reason = parts.length > 3 ? parts[3] : "Declined";
-            System.out.println("\n[FILE] Transfer " + transferId + " was REJECTED: " + reason);
+            System.out.printf("%n[FILE] Transfer %s REJECTED: %s%n", transferId, reason);
             transferManager.getSession(transferId).ifPresent(FileTransferSession::reject);
         }
     }
 
-    private void runP2PSend(File file, String transferId, String host, int port) {
+    private void sendP2P(File file, String transferId, String host, int port) {
         try (Socket socket = new Socket(host, port)) {
             FileSender sender = new FileSender(file, transferId, socket.getOutputStream());
             String checksum = sender.send();
-            System.out.println("\n[P2P SENT] " + file.getName() + " completed! SHA-256: " + checksum);
+            System.out.printf("%n[P2P SENT] %s sent! SHA-256: %s%n", file.getName(), checksum);
+
+            Packet result = PacketCodec.read(socket.getInputStream());
+            if (result != null && result.op() == OpCode.FILE_RESULT) {
+                System.out.println("[P2P RESULT] " + new String(result.data(), StandardCharsets.UTF_8));
+            }
         } catch (Exception e) {
             System.err.println("\n[P2P SEND ERROR] " + e.getMessage());
         }
     }
 
     private void readConsole(OutputStream output, Scanner scanner, int requestId) throws IOException {
-        System.out.println("Type a message, or commands.\nCommands: /users to list online users \n/sendfile <receiver> <filepath> \n/accept <transfer_id> to accept file \n/reject <transfer_id> to reject file \n/logout to disconnect");
+        System.out.println("Type a message, /users, /sendfile <user> <path>, /accept [name], /reject [name], or /logout");
 
         while (scanner.hasNextLine()) {
             String message = scanner.nextLine();
@@ -189,12 +194,12 @@ public class Client {
 
             if (command.equalsIgnoreCase("/users")) {
                 PacketCodec.write(output, new Packet(OpCode.USER_LIST_REQUEST, ++requestId, new byte[0]));
-            } else if (command.startsWith("/sendfile ")) {
-                sendFileOffer(output, command.substring(10).trim(), ++requestId);
-            } else if (command.startsWith("/accept ")) {
-                acceptFileOffer(output, command.substring(8).trim(), ++requestId);
-            } else if (command.startsWith("/reject ")) {
-                sendDecision(output, command.substring(8).trim(), "REJECT", 0, ++requestId);
+            } else if (command.startsWith("/sendfile")) {
+                sendFileOffer(output, command.length() > 9 ? command.substring(9).trim() : "", ++requestId);
+            } else if (command.startsWith("/accept")) {
+                acceptOffer(output, command.length() > 7 ? command.substring(7).trim() : "", ++requestId);
+            } else if (command.startsWith("/reject")) {
+                rejectOffer(output, command.length() > 7 ? command.substring(7).trim() : "", ++requestId);
             } else {
                 byte[] data = message.getBytes(StandardCharsets.UTF_8);
                 if (data.length > MAX_CHAT_BYTES) {
@@ -207,6 +212,11 @@ public class Client {
     }
 
     private void sendFileOffer(OutputStream output, String args, int reqId) throws IOException {
+        if (transferManager.hasOngoingTransfer()) {
+            System.out.println("Another transfer is ongoing. Please wait.");
+            return;
+        }
+
         String[] parts = args.split("\\s+", 2);
         if (parts.length < 2) {
             System.out.println("Usage: /sendfile <user> <path>");
@@ -220,54 +230,54 @@ public class Client {
         }
 
         FileTransferMeta meta = FileTransferMeta.create(currentUsername, parts[0], file.getName(), file.length());
-        FileTransferSession session = new FileTransferSession(meta);
-        transferManager.registerSession(session);
+        transferManager.registerSession(new FileTransferSession(meta));
         transferManager.registerOutboundFile(meta.transferId(), file);
 
         PacketCodec.write(output, new Packet(OpCode.FILE_OFFER, reqId, meta.toBytes()));
-        System.out.println("[FILE] Offer sent. Transfer ID: " + meta.transferId());
+        System.out.println("[FILE] Offer sent. ID: " + meta.transferId());
     }
 
-    private void acceptFileOffer(OutputStream output, String transferId, int reqId) throws IOException {
-        var optSession = transferManager.getSession(transferId);
-        if (optSession.isEmpty()) {
-            System.out.println("Session not found: " + transferId);
+    private void acceptOffer(OutputStream output, String query, int reqId) throws IOException {
+        var opt = transferManager.findPending(query);
+        if (opt.isEmpty()) {
+            System.out.println("No matching pending file offer found.");
             return;
         }
 
-        FileTransferSession session = optSession.get();
+        FileTransferSession session = opt.get();
         session.accept();
 
-        ServerSocket p2pListener = new ServerSocket(0);
-        int localPort = p2pListener.getLocalPort();
+        ServerSocket listener = new ServerSocket(0);
+        int localPort = listener.getLocalPort();
 
+        File targetDir = downloadUserDir != null ? downloadUserDir : new File(downloadDir);
         Thread.startVirtualThread(() -> {
-            try (ServerSocket listener = p2pListener; Socket peerSocket = listener.accept()) {
-                FileReceiver receiver = new FileReceiver(peerSocket.getInputStream(), peerSocket.getOutputStream(), downloadDir, session.meta(), session, null);
-                File savedFile = receiver.receive();
-                System.out.println("\n[P2P RECEIVED] Saved to: " + savedFile.getAbsolutePath());
+            try (listener; Socket socket = listener.accept()) {
+                FileReceiver receiver = new FileReceiver(socket.getInputStream(), socket.getOutputStream(), targetDir, session.meta());
+                File saved = receiver.receive();
+                System.out.println("\n[P2P RECEIVED] Saved: " + saved.getAbsolutePath());
             } catch (Exception e) {
                 System.err.println("\n[P2P RECEIVE ERROR] " + e.getMessage());
             }
         });
 
-        sendDecision(output, transferId, "ACCEPT", localPort, reqId);
-        System.out.println("[FILE] Accepted transfer. Waiting for P2P connection on port " + localPort + "...");
+        String payload = session.transferId() + "\n" + session.meta().sender() + "\nACCEPT\n" + localPort;
+        PacketCodec.write(output, new Packet(OpCode.FILE_DECISION, reqId, payload.getBytes(StandardCharsets.UTF_8)));
+        System.out.println("[FILE] Accepted '" + session.meta().fileName() + "'. Waiting for sender on port " + localPort + "...");
     }
 
-    private void sendDecision(OutputStream output, String transferId, String decision, int p2pPort, int reqId) throws IOException {
-        var optSession = transferManager.getSession(transferId);
-        if (optSession.isEmpty()) {
-            System.out.println("Session not found: " + transferId);
+    private void rejectOffer(OutputStream output, String query, int reqId) throws IOException {
+        var opt = transferManager.findPending(query);
+        if (opt.isEmpty()) {
+            System.out.println("No matching pending file offer found.");
             return;
         }
 
-        FileTransferSession session = optSession.get();
-        if ("REJECT".equals(decision)) {
-            session.reject();
-        }
+        FileTransferSession session = opt.get();
+        session.reject();
 
-        String payload = transferId + "\n" + session.meta().sender() + "\n" + decision + "\n" + p2pPort;
+        String payload = session.transferId() + "\n" + session.meta().sender() + "\nREJECT\nDeclined by user";
         PacketCodec.write(output, new Packet(OpCode.FILE_DECISION, reqId, payload.getBytes(StandardCharsets.UTF_8)));
+        System.out.println("[FILE] Rejected '" + session.meta().fileName() + "'");
     }
 }
