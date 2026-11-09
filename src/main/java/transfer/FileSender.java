@@ -5,7 +5,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -14,10 +13,11 @@ import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
+import protocols.PacketValidator;
 
 public class FileSender {
 
-    public static final int CHUNK_SIZE = 64 * 1024; 
+    public static final int CHUNK_SIZE = 64 * 1024;
 
     @FunctionalInterface
     public interface ProgressListener {
@@ -55,19 +55,14 @@ public class FileSender {
     }
 
     private String sendFile() throws IOException {
-        //validateFile();
+        validateFile(file);
 
         long fileSize = file.length();
         if (session != null && (!transferId.equals(session.transferId())
                 || fileSize != session.meta().fileSize())) {
             throw new IOException("Source file does not match the accepted offer");
         }
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 algorithm not available in JVM", e);
-        }
+        MessageDigest digest = sha256();
 
         if (session != null) {
             session.startTransfer();
@@ -108,17 +103,9 @@ public class FileSender {
                     listener.onProgress(totalBytesSent, fileSize, percent);
                 }
             }
-        } catch (IOException e) {
-            if (session != null && !session.isTerminal()) {
-                session.fail();
-            }
-            throw e;
         }
 
         if (totalBytesSent != fileSize) {
-            if (session != null && !session.isTerminal()) {
-                session.fail();
-            }
             throw new IOException("File size changed during transfer: expected "
                     + fileSize + " bytes, sent " + totalBytesSent + " bytes");
         }
@@ -129,8 +116,7 @@ public class FileSender {
             throw new IOException("Source file changed since the offer was created");
         }
 
-        byte[] endPayload = checksumHex.getBytes(StandardCharsets.UTF_8);
-        Packet endPacket = new Packet(OpCode.FILE_END, chunkIndex, endPayload);
+        Packet endPacket = Packet.text(OpCode.FILE_END, chunkIndex, checksumHex);
         PacketCodec.write(output, endPacket);
 
         return checksumHex;
@@ -138,11 +124,8 @@ public class FileSender {
 
     public void awaitResult(InputStream input) throws IOException {
         try {
-            Packet result = PacketCodec.read(input);
-            if (result == null || result.op() != OpCode.FILE_RESULT || result.requestId() != 0) {
-                throw new IOException("Missing or invalid FILE_RESULT");
-            }
-            String status = new String(result.data(), StandardCharsets.UTF_8);
+            Packet result = PacketValidator.validateResponse(PacketCodec.read(input), OpCode.FILE_RESULT, 0);
+            String status = result.text();
             if (!status.equals("OK")) {
                 throw new IOException("Receiver rejected file: " + status);
             }
@@ -161,23 +144,27 @@ public class FileSender {
         validateFile(file);
         long size = file.length();
         long read = 0;
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (FileInputStream input = new FileInputStream(file)) {
-                byte[] buffer = new byte[CHUNK_SIZE];
-                int length;
-                while ((length = input.read(buffer)) != -1) {
-                    read += length;
-                    if (read > size) {
-                        throw new IOException("File grew while computing checksum");
-                    }
-                    digest.update(buffer, 0, length);
+        MessageDigest digest = sha256();
+        try (FileInputStream input = new FileInputStream(file)) {
+            byte[] buffer = new byte[CHUNK_SIZE];
+            int length;
+            while ((length = input.read(buffer)) != -1) {
+                read += length;
+                if (read > size) {
+                    throw new IOException("File grew while computing checksum");
                 }
+                digest.update(buffer, 0, length);
             }
-            if (read != size || file.length() != size) {
-                throw new IOException("File size changed while computing checksum");
-            }
-            return HexFormat.of().formatHex(digest.digest());
+        }
+        if (read != size || file.length() != size) {
+            throw new IOException("File size changed while computing checksum");
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }

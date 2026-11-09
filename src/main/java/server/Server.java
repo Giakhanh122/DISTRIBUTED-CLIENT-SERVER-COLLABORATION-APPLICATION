@@ -7,13 +7,11 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-
-import javax.xml.crypto.Data;
 
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
+import protocols.PacketValidator;
 import server.auth.AuthService;
 import server.connection.ClientHandler;
 import server.session.SessionRegistry;
@@ -45,7 +43,7 @@ public class Server {
 
     private void listenDiscovery(DatagramSocket socket, int tcpPort) {
         byte[] buffer = new byte[4096];
-        byte[] portData = Integer.toString(tcpPort).getBytes(StandardCharsets.UTF_8);
+        String portData = Integer.toString(tcpPort);
 
         while (!socket.isClosed()) {
             DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
@@ -68,10 +66,8 @@ public class Server {
                 );
 
                 request = PacketCodec.read(input);
-                if (request == null
-                    || input.available() != 0
-                    || request.op() != OpCode.DISCOVER_REQUEST
-                    || request.requestId() <= 0) {
+                PacketValidator.validateRequest(request, OpCode.DISCOVER_REQUEST, 0, PacketCodec.MAX_PAYLOAD_LENGTH);
+                if (input.available() != 0) {
                     continue;
                 }
             } catch (IOException e) {
@@ -79,7 +75,7 @@ public class Server {
             }
 
             try {
-                Packet response = new Packet(OpCode.DISCOVER_RESPONSE, request.requestId(), portData);
+                Packet response = Packet.text(OpCode.DISCOVER_RESPONSE, request.requestId(), portData);
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 PacketCodec.write(output, response);
                 byte[] bytes = output.toByteArray();

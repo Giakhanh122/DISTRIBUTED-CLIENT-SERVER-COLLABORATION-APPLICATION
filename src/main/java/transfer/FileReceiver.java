@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -104,7 +103,7 @@ public class FileReceiver {
                         if (packet.requestId() != expectedIndex) {
                             throw new IOException("FILE_END chunk count mismatch");
                         }
-                        remoteChecksum = new String(packet.data(), StandardCharsets.UTF_8);
+                        remoteChecksum = packet.text();
                         break;
                     } else {
                         throw new IOException("Unexpected file packet: " + packet.op());
@@ -112,11 +111,11 @@ public class FileReceiver {
                 }
             }
 
+            String checksum = HexFormat.of().formatHex(digest.digest());
             if (received != meta.fileSize()) {
                 throw new IOException("File size mismatch: expected " + meta.fileSize()
                         + ", received " + received);
             }
-            String checksum = HexFormat.of().formatHex(digest.digest());
             if (!checksum.equals(meta.checksum()) || !checksum.equalsIgnoreCase(remoteChecksum)) {
                 throw new IOException("Checksum mismatch");
             }
@@ -193,8 +192,7 @@ public class FileReceiver {
 
     private void sendResult(String status) throws IOException {
         if (output != null) {
-            PacketCodec.write(output, new Packet(OpCode.FILE_RESULT, 0,
-                    status.getBytes(StandardCharsets.UTF_8)));
+            PacketCodec.write(output, Packet.text(OpCode.FILE_RESULT, 0, status));
         }
     }
 

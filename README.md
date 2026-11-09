@@ -43,12 +43,15 @@ Sau `/lookup bob`, nhập nội dung để chat với Bob; Bob có thể trả l
 /sendfile bob /đường/dẫn/tệp dữ liệu.bin
 ```
 
-Bob nhận được transfer ID và chọn một trong hai lệnh:
+Bob nhận được số thứ tự ngắn, ví dụ `[FILE OFFER #1]`, và chọn một trong hai lệnh:
 
 ```text
-/accept <transfer_id>
-/reject <transfer_id>
+/accept 1
+/reject 1
 ```
+
+Số thứ tự tăng dần trong mỗi phiên đăng nhập và không dùng lại khi offer kết thúc.
+UUID vẫn được dùng trong giao thức để nhận diện lần truyền giữa hai máy.
 
 File được lưu vào `downloads/` trong thư mục làm việc của receiver. File trùng tên
 được thêm hậu tố `(1)`, `(2)`, …; giới hạn mỗi file là 100 MiB. Bob có thể gửi
@@ -68,27 +71,29 @@ tham số cho `Main`. Script cũng chạy được khi được gọi bằng đ�
 Yêu cầu thêm Python 3, không cần thư viện ngoài:
 
 ```bash
-python3 scripts/test.py
+python3 scripts/test-network-resilience.py
 ```
 
-Lệnh biên dịch vào thư mục tạm, kiểm tra lỗi truyền file và chạy server cùng hai
-client qua TCP/UDP thật: đăng nhập, lookup, chat hai chiều, file nhị phân hơn 8 MiB,
-file rỗng, trùng tên, từ chối, gián đoạn, kết nối sai session, hai file đồng thời,
-truyền ngược chiều và gửi file khi server đã tắt. Cần cổng
-TCP `8080`, UDP `41234` đang trống và quyền mở socket cục bộ.
+Lệnh tự biên dịch source hiện tại với Java 21 vào thư mục tạm và chạy `Client`,
+`ClientHandler` qua TCP cục bộ trên các cổng động. Không chiếm cổng `8080`/`41234`
+và không kiểm thử UDP discovery. Cần quyền mở socket cục bộ.
 
-Để chỉ chạy kiểm thử không mở socket:
+Test in 11 nhóm kết quả với mục mong đợi, thực tế và PASS/FAIL: đăng nhập sai,
+chat hai chiều, timeout handshake/đăng nhập, client reset TCP, truyền file nhị phân,
+file rỗng, trùng tên, từ chối, đồng thời, gián đoạn, session không hợp lệ, timeout
+`/users` và `/lookup`, mất kết nối server, truyền P2P sau lỗi và logout giữa lúc nhận file.
+Thời gian thường khoảng 30–50 giây do kiểm tra timeout thật 10 giây.
+
+Mặc định test in trực tiếp output thật của ứng dụng với nhãn `[server]`, `[alice]`,
+`[bob]`, cùng các lệnh test đang gửi như `[bob >] /accept 1`. Các dòng output bao gồm
+cả `System.out` và `System.err`. Báo cáo và transcript đầy đủ của từng tiến trình
+được lưu trong một thư mục tạm; đường dẫn được in ở cuối. Để chọn chỗ lưu:
 
 ```bash
-python3 scripts/test.py --unit-only
+python3 scripts/test-network-resilience.py --log-dir /tmp/collaboration-network-results
 ```
 
-Nếu ứng dụng đang chiếm cổng `8080`/`41234`, chạy test TCP độc lập trên cổng động
-bằng production `ClientHandler` (bỏ qua phần UDP discovery, không dừng ứng dụng):
-
-```bash
-python3 scripts/test.py --isolated
-```
+Dùng `--quiet` nếu chỉ muốn xem báo cáo PASS/FAIL; log ứng dụng vẫn được lưu đầy đủ.
 
 Metadata offer hiện chứa SHA-256; `PEER_HELLO` chứa cả username và cổng listener.
 Các peer cần cùng phiên bản giao thức này; header packet 9 byte vẫn giữ nguyên.

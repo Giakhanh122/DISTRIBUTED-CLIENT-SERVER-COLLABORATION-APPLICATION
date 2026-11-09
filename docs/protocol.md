@@ -57,7 +57,9 @@ UUID dùng dạng canonical, kích thước file từ 0 tới 100 MiB. Checksum 
 64 ký tự thường, được tính bằng cách đọc file theo buffer trước khi gửi offer.
 Việc hash chạy ở worker để không chặn console/chat. Receiver kiểm tra sender khớp
 với peer chat, receiver khớp user hiện tại, rồi gắn session với chính connection đó.
-Người nhận nhập `/accept <id>` hoặc `/reject <id>`.
+CLI gán số thứ tự cục bộ tăng dần cho mỗi incoming offer, ví dụ `[FILE OFFER #1]`.
+Người nhận nhập `/accept 1` hoặc `/reject 1`; số này được ánh xạ về UUID trước khi
+gửi packet. Số không dùng lại trong phiên đăng nhập và được dọn khi transfer kết thúc.
 
 `FILE_DECISION` gửi lại qua cùng chat connection:
 

@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
 import protocols.*;
 
@@ -21,30 +20,20 @@ public class PeerConnection implements AutoCloseable {
     public void initiateHandshake(String username, int requestId, int listeningPort) throws IOException {
         socket.setSoTimeout(10000);
         InputStream input = socket.getInputStream();
-        Packet hello = new Packet(OpCode.PEER_HELLO, requestId,
-                (username + "\n" + listeningPort).getBytes(StandardCharsets.UTF_8));
+        Packet hello = Packet.text(OpCode.PEER_HELLO, requestId, username + "\n" + listeningPort);
         sendPacket(hello);
-        Packet hello_ack = PacketCodec.read(input);
-        if (hello_ack == null
-            || hello_ack.op() != OpCode.PEER_HELLO_ACK
-            || hello_ack.requestId() != requestId
-            || hello_ack.payloadLength() != 0) {
-            throw new IOException("Invalid or missing PEER_HELLO_ACK");
+        Packet response = PacketValidator.validateResponse(PacketCodec.read(input), OpCode.PEER_HELLO_ACK, requestId);
+        if (response.payloadLength() != 0) {
+            throw new IOException("PEER_HELLO_ACK payload must be empty");
         }
         peerAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
         socket.setSoTimeout(0);
     }
 
     public String acceptHandshake(Packet hello) throws IOException {
-        if (hello == null
-            || hello.op() != OpCode.PEER_HELLO
-            || hello.requestId() <= 0
-            || hello.payloadLength() == 0
-            || hello.payloadLength() > 4096) {
-            throw new IOException("Invalid or missing PEER_HELLO");
-        }
+        PacketValidator.validateRequest(hello, OpCode.PEER_HELLO, 1, 4096);
 
-        String[] identity = new String(hello.data(), StandardCharsets.UTF_8).split("\n", -1);
+        String[] identity = hello.text().split("\n", -1);
         if (identity.length != 2 || identity[0].isBlank()) {
             throw new IOException("Invalid peer identity");
         }
@@ -71,13 +60,12 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public synchronized void sendMessage(String message) throws IOException {
-        byte[] data = message.getBytes(StandardCharsets.UTF_8);
-        if (data.length > MAX_CHAT_BYTES) {
+        Packet chatMessage = Packet.text(OpCode.CHAT_MESSAGE, messageRequestId + 1, message);
+        if (chatMessage.payloadLength() > MAX_CHAT_BYTES) {
             throw new IOException("Message exceeds limit: " + MAX_CHAT_BYTES);
         }
-
-        Packet chat_message = new Packet(OpCode.CHAT_MESSAGE, ++messageRequestId, data);
-        sendPacket(chat_message);
+        messageRequestId++;
+        sendPacket(chatMessage);
     }
 
     public synchronized void sendPacket(Packet packet) throws IOException {
@@ -102,7 +90,7 @@ public class PeerConnection implements AutoCloseable {
                     if (packet.payloadLength() > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
-                    System.out.println(peerUsername + ": " + new String(packet.data(), StandardCharsets.UTF_8));
+                    System.out.println(peerUsername + ": " + packet.text());
                 }
                 case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
                 default -> throw new IOException("Unexpected peer chat packet: " + packet.op());

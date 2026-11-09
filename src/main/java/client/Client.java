@@ -2,7 +2,6 @@ package client;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,7 +13,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.concurrent.CompletableFuture;
@@ -23,31 +21,23 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
-import transfer.FileReceiver;
-import transfer.FileSender;
-import transfer.FileTransferManager;
-import transfer.FileTransferSession;
+import protocols.PacketValidator;
 
 public class Client {
 
     private static final int MAX_CHAT_BYTES = 64 * 1024;
-    private static final int TRANSFER_TIMEOUT_MS = 30000;
     private String username;
     private int peerPort;
     private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
     private volatile String selectedPeerUsername;
     private boolean closingPeers;
     private int requestSequence = 0;
-    private final FileTransferManager transferManager = new FileTransferManager();
-    private final File downloadDir = new File("downloads");
     private final ConcurrentHashMap<Integer, CompletableFuture<Packet>> pendingResponses = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Closeable> transferConnections = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, PeerConnection> transferPeers = new ConcurrentHashMap<>();
-    private volatile boolean closingTransfers;
+
+    private FileTransferController fileTransfers;
 
     public record ServerInfo(String address, int port) {}
 
@@ -79,7 +69,8 @@ public class Client {
     public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (
             Socket socket = new Socket(host, portNumber);
-            PeerListener peerListener = new PeerListener(this::registerPeer, this::receiveFileConnection);
+            PeerListener peerListener = new PeerListener(this::registerPeer,
+                    (fileSocket, hello) -> fileTransfers.receiveFileConnection(fileSocket, hello));
         ) {
             socket.setSoTimeout(10000);
 
@@ -95,6 +86,7 @@ public class Client {
                 return;
             }
 
+            fileTransfers = new FileTransferController(username, peerPort, new File("downloads"), peers);
             Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
             Thread.startVirtualThread(() -> receivePackets(input));
@@ -102,7 +94,9 @@ public class Client {
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());
         } finally {
-            closeTransfers();
+            if (fileTransfers != null) {
+                fileTransfers.close();
+            }
             closePeers();
         }
     }
@@ -112,10 +106,12 @@ public class Client {
         PacketCodec.write(output, hello);
 
         Packet response = PacketCodec.read(input);
-        if (response == null
-                || response.op() != OpCode.HELLO_ACK
-                || response.requestId() != requestId
-                || response.payloadLength() != 0) {
+        try {
+            PacketValidator.validateResponse(response, OpCode.HELLO_ACK, requestId);
+            if (response.payloadLength() != 0) {
+                throw new IOException("HELLO_ACK payload must be empty");
+            }
+        } catch (IOException e) {
             System.err.println("Invalid or missing HELLO_ACK");
             return false;
         }
@@ -124,10 +120,10 @@ public class Client {
         return true;
     }
 
-    private void readConsole(OutputStream output, Scanner scanner) throws IOException {
+    private void readConsole(OutputStream output, Scanner scanner) {
         System.out.println(
             "Commands: /users, /lookup <username>, /sendfile <receiver> <filepath>, "
-                + "/accept <transfer_id>, /reject <transfer_id>, /logout"
+                + "/accept <offer_number>, /reject <offer_number>, /logout"
         );
 
         while (scanner.hasNextLine()) {
@@ -139,7 +135,11 @@ public class Client {
                 continue;
 
             if (command.equalsIgnoreCase("/users")) {
-                requestUserList(output, nextRequestId());
+                try {
+                    requestUserList(output, nextRequestId());
+                } catch (IOException e) {
+                    System.err.println("Server command: " + e.getMessage());
+                }
                 continue;
             }
 
@@ -149,11 +149,11 @@ public class Client {
                     continue;
                 }
                 if (command.startsWith("/accept ")) {
-                    sendDecision(command.substring(8).trim(), "ACCEPT", nextRequestId());
+                    fileTransfers.sendDecision(command.substring(8).trim(), "ACCEPT", nextRequestId());
                     continue;
                 }
                 if (command.startsWith("/reject ")) {
-                    sendDecision(command.substring(8).trim(), "REJECT", nextRequestId());
+                    fileTransfers.sendDecision(command.substring(8).trim(), "REJECT", nextRequestId());
                     continue;
                 }
             } catch (IOException | IllegalArgumentException | IllegalStateException e) {
@@ -174,16 +174,20 @@ public class Client {
                     continue;
                 }
 
-                Optional<InetSocketAddress> result = requestPeerLookup(
-                    output,
-                    targetUsername,
-                    nextRequestId()
-                );
+                try {
+                    Optional<InetSocketAddress> result = requestPeerLookup(
+                        output,
+                        targetUsername,
+                        nextRequestId()
+                    );
 
-                if (result.isEmpty()) {
-                    System.out.println(targetUsername + " is offline");
-                } else {
-                    connectToPeer(targetUsername, result.get());
+                    if (result.isEmpty()) {
+                        System.out.println(targetUsername + " is offline");
+                    } else {
+                        connectToPeer(targetUsername, result.get());
+                    }
+                } catch (IOException e) {
+                    System.err.println("Server command: " + e.getMessage());
                 }
                 continue;
             }
@@ -214,7 +218,7 @@ public class Client {
             throws IOException {
         Packet request = new Packet(OpCode.USER_LIST_REQUEST, requestId, new byte[0]);
         Packet response = awaitResponse(output, request, OpCode.USER_LIST_RESPONSE);
-        printUserList(response.data());
+        printUserList(response.text());
     }
 
     private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId, int peerPort) throws IOException {
@@ -231,19 +235,19 @@ public class Client {
             return false;
         }
 
-        byte[] credentials = (username + "\n" + password + "\n" + peerPort).getBytes(StandardCharsets.UTF_8);
-        Packet auth_request = new Packet(OpCode.AUTH_REQUEST, requestId, credentials);
+        Packet auth_request = Packet.text(
+                OpCode.AUTH_REQUEST, requestId, username + "\n" + password + "\n" + peerPort);
         PacketCodec.write(output, auth_request);
 
         Packet authResponse = PacketCodec.read(input);
-        if (authResponse == null
-                || authResponse.op() != OpCode.AUTH_RESPONSE
-                || authResponse.requestId() != requestId) {
+        try {
+            PacketValidator.validateResponse(authResponse, OpCode.AUTH_RESPONSE, requestId);
+        } catch (IOException e) {
             System.err.println("Invalid or missing AUTH_RESPONSE");
             return false;
         }
 
-        String status = new String(authResponse.data(), StandardCharsets.UTF_8);
+        String status = authResponse.text();
         if (!status.equals("OK")) {
             System.err.println("Login failed: " + status);
             return false;
@@ -255,12 +259,16 @@ public class Client {
     }
 
     private Optional<InetSocketAddress> requestPeerLookup(OutputStream output, String targetUsername, int requestId) throws IOException {
-        Packet request = new Packet(OpCode.PEER_LOOKUP_REQUEST, requestId, targetUsername.getBytes(StandardCharsets.UTF_8));
+        Packet request = Packet.text(OpCode.PEER_LOOKUP_REQUEST, requestId, targetUsername);
         Packet response = awaitResponse(output, request, OpCode.PEER_LOOKUP_RESPONSE);
 
-        String payload = new String(response.data(), StandardCharsets.UTF_8);
+        String payload = response.text();
         if (payload.equals("USER_OFFLINE")) return Optional.empty();
-        
+
+        return Optional.of(parsePeerAddress(payload));
+    }
+
+    private InetSocketAddress parsePeerAddress(String payload) throws IOException {
         String[] parts = payload.split("\n", -1);
         if (parts.length != 3
             || !parts[0].equals("OK")
@@ -279,11 +287,7 @@ public class Client {
             throw new IOException("Peer port is out of range");
         }
 
-        InetSocketAddress address = new InetSocketAddress(
-            parts[1],
-            peerPort
-        );
-        return Optional.of(address);
+        return new InetSocketAddress(parts[1], peerPort);
     }
 
     private void connectToPeer(String targetUsername, InetSocketAddress address) {
@@ -327,9 +331,9 @@ public class Client {
                 connection.readMessages(peerUsername, packet -> {
                     try {
                         if (packet.op() == OpCode.FILE_OFFER) {
-                            handleIncomingOffer(peerUsername, connection, packet.data());
+                            fileTransfers.handleIncomingOffer(peerUsername, connection, packet);
                         } else {
-                            handleIncomingDecision(connection, packet.data());
+                            fileTransfers.handleIncomingDecision(connection, packet);
                         }
                     } catch (IOException | RuntimeException e) {
                         System.err.println("Invalid peer file packet: " + e.getMessage());
@@ -338,7 +342,7 @@ public class Client {
             } catch (IOException e) {
                 System.err.println("Peer " + peerUsername + ": " + e.getMessage());
             } finally {
-                closeTransfersForPeer(connection);
+                fileTransfers.closeForPeer(connection);
                 synchronized (Client.this) {
                     if (peers.remove(peerUsername, connection)
                         && peerUsername.equals(selectedPeerUsername)) {
@@ -414,15 +418,12 @@ public class Client {
                     );
 
                     Packet response = PacketCodec.read(input);
-                    if (response == null
-                        || input.available() != 0
-                        || response.op() != OpCode.DISCOVER_RESPONSE
-                        || response.requestId() != requestId
-                        || incoming.getPort() != DISCOVERY_PORT) {
+                    PacketValidator.validateResponse(response, OpCode.DISCOVER_RESPONSE, requestId);
+                    if (input.available() != 0 || incoming.getPort() != DISCOVERY_PORT) {
                         continue;
                     }
 
-                    int tcpPort = Integer.parseInt(new String(response.data(), StandardCharsets.UTF_8));
+                    int tcpPort = Integer.parseInt(response.text());
                     if (tcpPort < 1 || tcpPort > 65535) continue;
 
                     return new ServerInfo(incoming.getAddress().getHostAddress(), tcpPort);
@@ -440,10 +441,7 @@ public class Client {
         try {
             PacketCodec.write(output, request);
             Packet response = responseFuture.get(10, TimeUnit.SECONDS);
-            if (response.op() != expectedOp) {
-                throw new IOException("Expected " + expectedOp + ", got " + response.op());
-            }
-            return response;
+            return PacketValidator.validateResponse(response, expectedOp, request.requestId());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while waiting for " + expectedOp, e);
@@ -461,7 +459,7 @@ public class Client {
             Packet packet;
             while ((packet = PacketCodec.read(input)) != null) {
                 switch (packet.op()) {
-                    case CHAT_MESSAGE -> System.out.println(new String(packet.data(), StandardCharsets.UTF_8));
+                    case CHAT_MESSAGE -> System.out.println(packet.text());
                     case USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE -> {
                         CompletableFuture<Packet> responseFuture = pendingResponses.get(packet.requestId());
                         if (responseFuture != null) {
@@ -479,8 +477,7 @@ public class Client {
         }
     }
 
-    private void printUserList(byte[] data) {
-        String usernames = new String(data, StandardCharsets.UTF_8);
+    private void printUserList(String usernames) {
         System.out.println("Online users:");
         if (usernames.isEmpty()) {
             System.out.println("(none)");
@@ -491,230 +488,13 @@ public class Client {
         }
     }
 
-    private void handleIncomingOffer(String peerUsername, PeerConnection peer, byte[] data) throws IOException {
-        FileTransferMeta meta = FileTransferMeta.fromBytes(data);
-        if (!meta.receiver().equals(username) || !meta.sender().equals(peerUsername)
-                || meta.sender().equals(username)) {
-            throw new IOException("File offer has invalid participants");
-        }
-        FileTransferSession session = new FileTransferSession(meta);
-        registerTransfer(session, peer, null);
-        System.out.println("\n[FILE OFFER] " + meta.sender() + " wants to send '" + meta.fileName()
-                + "' (" + meta.fileSize() + " bytes). ID: " + meta.transferId());
-        System.out.println("SHA-256: " + meta.checksum());
-        System.out.println("Type '/accept " + meta.transferId() + "' or '/reject " + meta.transferId() + "'");
-    }
-
-    private synchronized void handleIncomingDecision(PeerConnection peer, byte[] data) throws IOException {
-        String[] parts = new String(data, StandardCharsets.UTF_8).split("\n", -1);
-        if (parts.length != 2 || !(parts[1].equals("ACCEPT") || parts[1].equals("REJECT"))) {
-            throw new IOException("Invalid FILE_DECISION payload");
-        }
-        FileTransferSession session = transferManager.getSession(parts[0]).orElse(null);
-        if (session == null || transferPeers.get(parts[0]) != peer
-                || !session.meta().sender().equals(username)
-                || session.state() != FileTransferSession.State.OFFERED) {
-            throw new IOException("Decision does not match an outgoing offer on this chat connection");
-        }
-        if (parts[1].equals("ACCEPT")) {
-            File file = transferManager.getOutboundFile(session.transferId());
-            session.accept();
-            System.out.println("\n[FILE] Transfer " + session.transferId() + " was ACCEPTED.");
-            Thread.startVirtualThread(() -> runP2PSend(file, session, peer));
-        } else {
-            session.reject();
-            finishTransfer(session);
-            System.out.println("\n[FILE] Transfer " + session.transferId() + " was REJECTED: Declined");
-        }
-    }
-
-    private void runP2PSend(File file, FileTransferSession session, PeerConnection peer) {
-        try (Socket socket = new Socket()) {
-            trackTransfer(session, socket);
-            socket.connect(peer.peerAddress(), 10000);
-            socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
-            PacketCodec.write(socket.getOutputStream(), new Packet(OpCode.FILE_OFFER, 0, session.meta().toBytes()));
-            FileSender sender = new FileSender(file, session.transferId(), socket.getOutputStream(), session, null);
-            String checksum = sender.send();
-            sender.awaitResult(socket.getInputStream());
-            System.out.println("\n[P2P SENT] " + file.getName() + " completed! SHA-256: " + checksum);
-        } catch (IOException | RuntimeException e) {
-            session.fail();
-            System.err.println("\n[P2P SEND ERROR] " + e.getMessage());
-        } finally {
-            finishTransfer(session);
-        }
-    }
-
     private void sendFileOffer(String args, int requestId) {
         String[] parts = args.split("\\s+", 2);
         if (parts.length != 2) {
             System.out.println("Usage: /sendfile <user> <path>");
             return;
         }
-        if (parts[0].equals(username)) {
-            throw new IllegalArgumentException("Cannot send a file to yourself");
-        }
         PeerConnection peer = peers.get(parts[0]);
-        if (peer == null || peer.isClosed()) {
-            System.out.println("Connect to " + parts[0] + " with /lookup first");
-            return;
-        }
-        File file = new File(parts[1]);
-        // Hashing can take time; keep both the console and the chat reader responsive.
-        Thread.startVirtualThread(() -> {
-            FileTransferSession session = null;
-            try {
-                long size = file.length();
-                String checksum = FileSender.checksum(file);
-                if (file.length() != size) {
-                    throw new IOException("File changed while preparing offer");
-                }
-                FileTransferMeta meta = FileTransferMeta.create(username, parts[0], file.getName(), size, checksum);
-                session = new FileTransferSession(meta);
-                registerTransfer(session, peer, file);
-                peer.sendPacket(new Packet(OpCode.FILE_OFFER, requestId, meta.toBytes()));
-                System.out.println("[FILE] Offer sent. Transfer ID: " + meta.transferId());
-            } catch (IOException | RuntimeException e) {
-                if (session != null) {
-                    session.fail();
-                    finishTransfer(session);
-                }
-                System.err.println("[FILE OFFER ERROR] " + e.getMessage());
-            }
-        });
-    }
-
-    private synchronized void sendDecision(String transferId, String decision, int requestId) throws IOException {
-        FileTransferSession session = transferManager.getSession(transferId).orElse(null);
-        if (session == null) {
-            System.out.println("Session not found: " + transferId);
-            return;
-        }
-        if (!session.meta().receiver().equals(username) || session.state() != FileTransferSession.State.OFFERED) {
-            throw new IllegalStateException("This is not a pending incoming offer");
-        }
-        PeerConnection peer = transferPeers.get(transferId);
-        try {
-            if (decision.equals("ACCEPT")) {
-                session.accept();
-            } else {
-                session.reject();
-            }
-            peer.sendPacket(new Packet(OpCode.FILE_DECISION, requestId,
-                    (transferId + "\n" + decision).getBytes(StandardCharsets.UTF_8)));
-        } catch (IOException | RuntimeException e) {
-            session.fail();
-            finishTransfer(session);
-            throw e;
-        }
-        if (decision.equals("REJECT")) {
-            finishTransfer(session);
-        } else {
-            CompletableFuture.delayedExecutor(TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS).execute(() -> {
-                synchronized (Client.this) {
-                    if (session.state() == FileTransferSession.State.ACCEPTED) {
-                        session.fail();
-                        finishTransfer(session);
-                        System.err.println("[FILE] Accepted offer expired: " + transferId);
-                    }
-                }
-            });
-            System.out.println("[FILE] Accepted transfer " + transferId + ". Waiting on peer port " + peerPort);
-        }
-    }
-
-    private void receiveFileConnection(Socket socket, Packet hello) {
-        FileTransferSession session = null;
-        boolean claimed = false;
-        try {
-            socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
-            FileTransferMeta meta = FileTransferMeta.fromBytes(hello.data());
-            session = transferManager.getSession(meta.transferId()).orElseThrow(
-                    () -> new IOException("Unknown file transfer"));
-            claimIncomingTransfer(session, meta, socket);
-            claimed = true;
-            File saved = new FileReceiver(socket.getInputStream(), socket.getOutputStream(),
-                    downloadDir, session.meta(), session, null).receive();
-            System.out.println("\n[P2P RECEIVED] Saved to: " + saved.getAbsolutePath());
-        } catch (IOException | RuntimeException e) {
-            if (claimed) {
-                session.fail();
-            } else {
-                try {
-                    PacketCodec.write(socket.getOutputStream(), new Packet(OpCode.FILE_RESULT, 0,
-                            ("FAIL: " + e.getMessage()).getBytes(StandardCharsets.UTF_8)));
-                } catch (IOException ignored) {
-                }
-            }
-            System.err.println("\n[P2P RECEIVE ERROR] " + e.getMessage());
-        } finally {
-            if (claimed) {
-                finishTransfer(session);
-            }
-        }
-    }
-
-    private synchronized void claimIncomingTransfer(FileTransferSession session, FileTransferMeta meta,
-                                                     Socket socket) throws IOException {
-        PeerConnection peer = transferPeers.get(session.transferId());
-        if (peer == null || peer.isClosed() || peers.get(meta.sender()) != peer
-                || !meta.receiver().equals(username)
-                || !socket.getInetAddress().equals(peer.peerAddress().getAddress())
-                || !Arrays.equals(meta.toBytes(), session.meta().toBytes())
-                || session.state() != FileTransferSession.State.ACCEPTED) {
-            throw new IOException("Connection does not match an accepted file session");
-        }
-        trackTransfer(session, socket);
-        // Claim atomically, so replayed connections cannot receive into this session twice.
-        session.startTransfer();
-    }
-
-    private synchronized void registerTransfer(FileTransferSession session, PeerConnection peer, File file)
-            throws IOException {
-        if (closingTransfers || peer.isClosed() || !peers.containsValue(peer)) {
-            throw new IOException("Peer chat connection is closed");
-        }
-        transferManager.registerSession(session);
-        transferPeers.put(session.transferId(), peer);
-        if (file != null) {
-            transferManager.registerOutboundFile(session.transferId(), file);
-        }
-    }
-
-    private synchronized void trackTransfer(FileTransferSession session, Socket socket) throws IOException {
-        if (closingTransfers || session.isTerminal()
-                || transferManager.getSession(session.transferId()).orElse(null) != session
-                || transferConnections.putIfAbsent(session.transferId(), socket) != null) {
-            throw new IOException("File session is closed or already has a connection");
-        }
-    }
-
-    private synchronized void finishTransfer(FileTransferSession session) {
-        if (transferManager.removeSession(session)) {
-            transferConnections.remove(session.transferId());
-            transferPeers.remove(session.transferId());
-        }
-    }
-
-    private synchronized void closeTransfersForPeer(PeerConnection peer) {
-        for (FileTransferSession session : transferManager.getActiveSessions()) {
-            if (peer == null || transferPeers.get(session.transferId()) == peer) {
-                session.cancel();
-                Closeable connection = transferConnections.get(session.transferId());
-                if (connection != null) {
-                    try {
-                        connection.close();
-                    } catch (IOException ignored) {
-                    }
-                }
-                finishTransfer(session);
-            }
-        }
-    }
-
-    private synchronized void closeTransfers() {
-        closingTransfers = true;
-        closeTransfersForPeer(null);
+        fileTransfers.offer(peer, parts[0], new File(parts[1]), requestId);
     }
 }
