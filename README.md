@@ -11,20 +11,28 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
 
 ## Chạy chương trình
 
-Từ thư mục gốc repository:
+Yêu cầu JDK 21 trở lên. Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
 
 ```bash
-mkdir -p out
-javac -d out src/main/java/Main.java src/main/java/client/Client.java src/main/java/server/Server.java src/main/java/protocols/*.java
-java -cp out Main
+./run.sh
 ```
 
-Chọn `s` ở terminal thứ nhất để chạy server, chạy lại lệnh `java -cp out Main` tại
-terminal khác và chọn `c` để chạy client. Server dùng cổng `8080`, client kết nối `localhost`.
-Mở ít nhất hai client trong các terminal khác nhau. Sau khi nhận HELLO_ACK, nhập văn bản
-để gửi tới các client còn lại; nhập `logout` để thoát. Tin nhận hiển thị địa chỉ người gửi.
-Dòng rỗng được bỏ qua; EOF console cũng gửi logout. Mỗi tin tối đa 64 KiB UTF-8.
-Dùng Ctrl+C tại terminal server để yêu cầu dừng qua shutdown hook.
+Chọn `s` ở terminal thứ nhất để chạy server. Mở terminal khác, chạy lại script và
+chọn `c` để chạy client. Khi không truyền địa chỉ, client dùng UDP discovery để tìm server.
+
+Để chỉ định server và bỏ qua discovery:
+
+```bash
+./run.sh localhost
+./run.sh 192.168.1.10
+```
+
+Thay IP ví dụ bằng IP thật của máy server. Sau khi chọn `c`, đăng nhập bằng tài khoản
+trong `AuthService`. Dùng `/users` để xem danh sách online, `/lookup bob` để tìm và
+kết nối peer Bob, `/logout` để thoát. Dùng Ctrl+C tại terminal server để dừng.
+
+Script biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
+tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
 
 ## Tài liệu
 

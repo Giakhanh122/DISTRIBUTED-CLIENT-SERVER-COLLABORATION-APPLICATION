@@ -1,8 +1,12 @@
 package protocols;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.Objects;
 
 public final class Packet {
+    
     private final OpCode op;
     private final int requestId;
     private final byte[] data;
