@@ -86,7 +86,7 @@ public class Client {
                 return;
             }
 
-            fileTransfers = new FileTransferController(username, peerPort, new File("downloads"), peers);
+            fileTransfers = new FileTransferController(username, peerPort, new File("downloads/" + username), peers);
             Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
             Thread.startVirtualThread(() -> receivePackets(input));
