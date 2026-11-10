@@ -66,6 +66,20 @@ Script biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên d�
 tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
 `out/`, `target/`, file `.class` và `downloads/` được Git bỏ qua.
 
+## Khởi động giao diện UI
+
+1. Chạy server qua lệnh
+
+```bash
+./run.sh
+```
+
+Sau đó chọn tùy chọn "s" (server) 2. Khởi động giao diện đồ họa qua lệnh
+
+```bash
+./run_ui.sh
+```
+
 ## Kiểm thử
 
 Yêu cầu thêm Python 3, không cần thư viện ngoài:
