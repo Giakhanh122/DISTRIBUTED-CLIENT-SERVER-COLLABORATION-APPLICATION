@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.PasswordField?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<StackPane stylesheets="@../css/dark-theme.css"
+           styleClass="window-root"
+           prefWidth="850.0" prefHeight="600.0"
+           xmlns="http://javafx.com/javafx/21"
+           xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="ui.controller.LoginController">
+
+    <VBox alignment="CENTER" maxWidth="420.0" spacing="22.0">
+        <padding>
+            <Insets top="32.0" right="32.0" bottom="32.0" left="32.0"/>
+        </padding>
+
+        <!-- Brand / Header -->
+        <VBox alignment="CENTER" spacing="8.0">
+            <StackPane fx:id="logoContainer" prefWidth="48.0" prefHeight="48.0"/>
+            <Label text="PulseChat" style="-fx-font-size: 26px; -fx-font-weight: bold; -fx-text-fill: #F1F3F8;"/>
+            <Label text="Distributed P2P Collaboration Messenger" style="-fx-font-size: 13px; -fx-text-fill: #9299A8;"/>
+        </VBox>
+
+        <!-- Login Card -->
+        <VBox spacing="16.0" style="-fx-background-color: #181B22; -fx-background-radius: 14px; -fx-border-color: #262B37; -fx-border-radius: 14px; -fx-padding: 24px;">
+
+            <!-- Server Connection Row -->
+            <VBox spacing="6.0">
+                <Label text="SERVER ADDRESS" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
+                <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <TextField fx:id="hostField" promptText="localhost" text="localhost" HBox.hgrow="ALWAYS" styleClass="text-input"/>
+                    <TextField fx:id="portField" promptText="8080" text="8080" prefWidth="76.0" styleClass="text-input"/>
+                    <Button fx:id="discoverBtn" text="Discover" onAction="#handleDiscover" styleClass="btn-secondary" style="-fx-padding: 9px 12px;"/>
+                </HBox>
+            </VBox>
+
+            <!-- Username Row -->
+            <VBox spacing="6.0">
+                <Label text="USERNAME" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
+                <TextField fx:id="usernameField" promptText="e.g. alice, bob, admin1" styleClass="text-input" onAction="#handleLogin"/>
+            </VBox>
+
+            <!-- Password Row -->
+            <VBox spacing="6.0">
+                <Label text="PASSWORD" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
+                <PasswordField fx:id="passwordField" promptText="••••••••" styleClass="text-input" onAction="#handleLogin"/>
+            </VBox>
+
+            <!-- Error Notification Banner -->
+            <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
+                   style="-fx-background-color: rgba(241, 107, 117, 0.15); -fx-text-fill: #F16B75; -fx-padding: 8px 12px; -fx-background-radius: 6px; -fx-font-size: 12px;"/>
+
+            <!-- Status Indicator -->
+            <Label fx:id="statusLabel" visible="false" managed="false" wrapText="true"
+                   style="-fx-text-fill: #35C98A; -fx-font-size: 12px;"/>
+
+            <!-- Login Button & Progress -->
+            <HBox spacing="10.0" alignment="CENTER">
+                <Button fx:id="loginBtn" text="Sign In" onAction="#handleLogin" HBox.hgrow="ALWAYS" maxWidth="Infinity" styleClass="btn-primary" style="-fx-padding: 11px; -fx-font-size: 14px;"/>
+                <ProgressIndicator fx:id="loadingIndicator" visible="false" managed="false" prefWidth="26.0" prefHeight="26.0"/>
+            </HBox>
+
+            <!-- Demo Hint -->
+            <Label text="Demo Accounts: alice / alice123  •  bob / bob123"
+                   style="-fx-font-size: 11px; -fx-text-fill: #5E6678;" alignment="CENTER" maxWidth="Infinity"/>
+        </VBox>
+    </VBox>
+
+</StackPane>

@@ -1,0 +1,353 @@
+/* ==========================================================================
+   MODERN DARK THEME (Inspired by Discord & Telegram)
+   ========================================================================== */
+
+.root {
+    -fx-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -fx-font-size: 13px;
+    -fx-background-color: #111318;
+    -fx-text-fill: #F1F3F8;
+}
+
+/* --- Common Text Styles --- */
+.text-primary {
+    -fx-text-fill: #F1F3F8;
+    -fx-font-weight: bold;
+}
+
+.text-secondary {
+    -fx-text-fill: #9299A8;
+}
+
+.text-accent {
+    -fx-text-fill: #6C8CFF;
+}
+
+.text-success {
+    -fx-text-fill: #35C98A;
+}
+
+.text-error {
+    -fx-text-fill: #F16B75;
+}
+
+/* --- Panels & Containers --- */
+.window-root {
+    -fx-background-color: #111318;
+}
+
+.sidebar-panel {
+    -fx-background-color: #181B22;
+    -fx-border-color: #20242D;
+    -fx-border-width: 0 1 0 0;
+}
+
+.chat-panel {
+    -fx-background-color: #111318;
+}
+
+.chat-header {
+    -fx-background-color: #181B22;
+    -fx-border-color: #20242D;
+    -fx-border-width: 0 0 1 0;
+}
+
+.chat-input-area {
+    -fx-background-color: #181B22;
+    -fx-border-color: #20242D;
+    -fx-border-width: 1 0 0 0;
+}
+
+/* --- Buttons --- */
+.btn-primary {
+    -fx-background-color: #6C8CFF;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+    -fx-background-radius: 8px;
+    -fx-padding: 8px 16px;
+    -fx-cursor: hand;
+    -fx-font-size: 13px;
+}
+
+.btn-primary:hover {
+    -fx-background-color: #5A7BEF;
+}
+
+.btn-primary:pressed {
+    -fx-background-color: #4969DE;
+}
+
+.btn-secondary {
+    -fx-background-color: #20242D;
+    -fx-text-fill: #F1F3F8;
+    -fx-background-radius: 8px;
+    -fx-padding: 8px 14px;
+    -fx-cursor: hand;
+    -fx-border-color: #2A303E;
+    -fx-border-radius: 8px;
+}
+
+.btn-secondary:hover {
+    -fx-background-color: #282E3B;
+    -fx-border-color: #384052;
+}
+
+.btn-icon {
+    -fx-background-color: transparent;
+    -fx-text-fill: #9299A8;
+    -fx-background-radius: 8px;
+    -fx-cursor: hand;
+    -fx-padding: 6px;
+}
+
+.btn-icon:hover {
+    -fx-background-color: #20242D;
+    -fx-text-fill: #F1F3F8;
+}
+
+.btn-icon:pressed {
+    -fx-background-color: #282E3B;
+}
+
+.btn-success {
+    -fx-background-color: #35C98A;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+    -fx-background-radius: 6px;
+    -fx-padding: 6px 12px;
+    -fx-cursor: hand;
+}
+
+.btn-success:hover {
+    -fx-background-color: #2EB67D;
+}
+
+.btn-danger {
+    -fx-background-color: #F16B75;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+    -fx-background-radius: 6px;
+    -fx-padding: 6px 12px;
+    -fx-cursor: hand;
+}
+
+.btn-danger:hover {
+    -fx-background-color: #D85660;
+}
+
+/* --- Text Fields & Inputs --- */
+.text-input {
+    -fx-background-color: #181B22;
+    -fx-text-fill: #F1F3F8;
+    -fx-highlight-fill: #6C8CFF;
+    -fx-highlight-text-fill: #FFFFFF;
+    -fx-border-color: #262B37;
+    -fx-border-radius: 8px;
+    -fx-background-radius: 8px;
+    -fx-padding: 9px 12px;
+    -fx-font-size: 13px;
+    -fx-prompt-text-fill: #5E6678;
+}
+
+.text-input:focused {
+    -fx-border-color: #6C8CFF;
+    -fx-background-color: #1C2029;
+}
+
+.search-input {
+    -fx-background-color: #111318;
+    -fx-text-fill: #F1F3F8;
+    -fx-border-color: #222733;
+    -fx-border-radius: 20px;
+    -fx-background-radius: 20px;
+    -fx-padding: 7px 14px;
+    -fx-font-size: 12px;
+    -fx-prompt-text-fill: #5E6678;
+}
+
+.search-input:focused {
+    -fx-border-color: #6C8CFF;
+}
+
+/* --- List Views & User Items --- */
+.list-view {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 4px;
+}
+
+.list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #F1F3F8;
+    -fx-padding: 4px 6px;
+    -fx-background-radius: 8px;
+}
+
+.list-cell:empty {
+    -fx-background-color: transparent;
+}
+
+.list-cell:filled:hover {
+    -fx-background-color: #20242D;
+}
+
+.list-cell:filled:selected {
+    -fx-background-color: #262C3A;
+    -fx-text-fill: #FFFFFF;
+}
+
+.user-item {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8px;
+    -fx-padding: 8px 10px;
+    -fx-cursor: hand;
+}
+
+.user-item:hover {
+    -fx-background-color: #20242D;
+}
+
+.user-item-selected {
+    -fx-background-color: #262C3A;
+}
+
+/* --- Badges & Indicators --- */
+.status-dot-online {
+    -fx-fill: #35C98A;
+}
+
+.status-dot-offline {
+    -fx-fill: #5E6678;
+}
+
+.unread-badge {
+    -fx-background-color: #6C8CFF;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 10px;
+    -fx-padding: 2px 6px;
+}
+
+.avatar-circle {
+    -fx-background-radius: 50%;
+    -fx-min-width: 36px;
+    -fx-min-height: 36px;
+    -fx-max-width: 36px;
+    -fx-max-height: 36px;
+    -fx-alignment: center;
+}
+
+.avatar-text {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+}
+
+/* --- Message Bubbles --- */
+.bubble-sent {
+    -fx-background-color: #6C8CFF;
+    -fx-background-radius: 16px 16px 4px 16px;
+    -fx-padding: 10px 14px;
+}
+
+.bubble-sent-text {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 13px;
+}
+
+.bubble-received {
+    -fx-background-color: #20242D;
+    -fx-background-radius: 16px 16px 16px 4px;
+    -fx-padding: 10px 14px;
+}
+
+.bubble-received-text {
+    -fx-text-fill: #F1F3F8;
+    -fx-font-size: 13px;
+}
+
+.bubble-timestamp {
+    -fx-font-size: 10px;
+    -fx-text-fill: #9299A8;
+}
+
+.bubble-system {
+    -fx-background-color: #181B22;
+    -fx-background-radius: 12px;
+    -fx-padding: 6px 14px;
+}
+
+.bubble-system-text {
+    -fx-text-fill: #9299A8;
+    -fx-font-size: 11px;
+    -fx-font-style: italic;
+}
+
+/* --- File Offer / Transfer Card --- */
+.file-card {
+    -fx-background-color: #181B22;
+    -fx-border-color: #2A303E;
+    -fx-border-radius: 12px;
+    -fx-background-radius: 12px;
+    -fx-padding: 14px;
+}
+
+.file-card-title {
+    -fx-text-fill: #F1F3F8;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+}
+
+.file-card-meta {
+    -fx-text-fill: #9299A8;
+    -fx-font-size: 11px;
+}
+
+/* --- ScrollBars --- */
+.scroll-bar:vertical {
+    -fx-background-color: transparent;
+    -fx-pref-width: 8px;
+}
+
+.scroll-bar:vertical .thumb {
+    -fx-background-color: #262B37;
+    -fx-background-radius: 4px;
+}
+
+.scroll-bar:vertical .thumb:hover {
+    -fx-background-color: #384052;
+}
+
+.scroll-bar:vertical .track,
+.scroll-bar:vertical .track-background,
+.scroll-bar:vertical .increment-button,
+.scroll-bar:vertical .decrement-button {
+    -fx-background-color: transparent;
+    -fx-pref-height: 0;
+}
+
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* --- Progress Bar --- */
+.progress-bar {
+    -fx-pref-height: 4px;
+}
+
+.progress-bar > .track {
+    -fx-background-color: #20242D;
+    -fx-background-radius: 2px;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: #6C8CFF;
+    -fx-background-radius: 2px;
+}

@@ -1,4 +1,5 @@
 {
     "java.project.sourcePaths": ["src/main/java"],
-    "java.project.outputPath": "out"
+    "java.project.outputPath": "out",
+    "java.configuration.updateBuildConfiguration": "interactive"
 }

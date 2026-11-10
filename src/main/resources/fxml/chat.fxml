@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.shape.Circle?>
+
+<BorderPane stylesheets="@../css/dark-theme.css"
+            styleClass="window-root"
+            prefWidth="1080.0" prefHeight="700.0"
+            xmlns="http://javafx.com/javafx/21"
+            xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="ui.controller.ChatController">
+
+    <!-- ==================== LEFT SIDEBAR ==================== -->
+    <left>
+        <VBox prefWidth="280.0" minWidth="240.0" maxWidth="320.0" styleClass="sidebar-panel">
+
+            <!-- App Logo & Branding -->
+            <HBox alignment="CENTER_LEFT" spacing="10.0" style="-fx-padding: 16px 18px 12px 18px;">
+                <StackPane fx:id="brandLogoContainer" prefWidth="32.0" prefHeight="32.0"/>
+                <VBox alignment="CENTER_LEFT">
+                    <Label text="PulseChat" style="-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #F1F3F8;"/>
+                    <Label text="P2P Collaboration" style="-fx-font-size: 11px; -fx-text-fill: #9299A8;"/>
+                </VBox>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="refreshUsersBtn" onAction="#handleRefreshUsers" styleClass="btn-icon" />
+            </HBox>
+
+            <!-- Current User Profile Card -->
+            <HBox alignment="CENTER_LEFT" spacing="12.0"
+                  style="-fx-background-color: #111318; -fx-background-radius: 10px; -fx-padding: 10px 14px; -fx-margin: 0 14px 12px 14px;">
+                <StackPane fx:id="currentUserAvatar" prefWidth="36.0" prefHeight="36.0" styleClass="avatar-circle">
+                    <Label fx:id="currentUserInitials" text="ME" styleClass="avatar-text"/>
+                </StackPane>
+                <VBox alignment="CENTER_LEFT" spacing="2.0" HBox.hgrow="ALWAYS">
+                    <Label fx:id="currentUsernameLabel" text="Username" style="-fx-font-weight: bold; -fx-text-fill: #F1F3F8; -fx-font-size: 13px;"/>
+                    <HBox alignment="CENTER_LEFT" spacing="5.0">
+                        <Circle radius="3.5" styleClass="status-dot-online"/>
+                        <Label fx:id="connectionStatusLabel" text="Connected" style="-fx-font-size: 11px; -fx-text-fill: #35C98A;"/>
+                    </HBox>
+                </VBox>
+            </HBox>
+
+            <!-- Search Users Input -->
+            <VBox style="-fx-padding: 0 14px 10px 14px;">
+                <TextField fx:id="searchField" promptText="Search users..." styleClass="search-input"/>
+            </VBox>
+
+            <!-- Online Users Header -->
+            <HBox alignment="CENTER_LEFT" style="-fx-padding: 6px 18px 6px 18px;">
+                <Label fx:id="userSectionTitle" text="ONLINE USERS (0)" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #5E6678;"/>
+            </HBox>
+
+            <!-- Online Users List -->
+            <ListView fx:id="usersListView" VBox.vgrow="ALWAYS" styleClass="list-view"/>
+
+            <!-- Bottom Action Bar / Logout -->
+            <HBox alignment="CENTER_LEFT" spacing="8.0" style="-fx-padding: 12px 16px; -fx-border-color: #20242D; -fx-border-width: 1 0 0 0;">
+                <Button fx:id="logoutBtn" text="Log Out" onAction="#handleLogout" styleClass="btn-secondary" style="-fx-font-size: 12px;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="serverAddressLabel" text="127.0.0.1:8080" style="-fx-font-size: 10px; -fx-text-fill: #5E6678;"/>
+            </HBox>
+
+        </VBox>
+    </left>
+
+    <!-- ==================== MAIN CHAT AREA ==================== -->
+    <center>
+        <VBox styleClass="chat-panel">
+
+            <!-- Chat Header -->
+            <HBox fx:id="chatHeader" alignment="CENTER_LEFT" spacing="12.0" prefHeight="60.0" styleClass="chat-header">
+                <padding>
+                    <Insets left="20.0" right="20.0" top="10.0" bottom="10.0"/>
+                </padding>
+
+                <!-- Peer Avatar & Info -->
+                <StackPane fx:id="peerAvatar" prefWidth="38.0" prefHeight="38.0" styleClass="avatar-circle">
+                    <Label fx:id="peerInitials" text="?" styleClass="avatar-text"/>
+                </StackPane>
+
+                <VBox alignment="CENTER_LEFT" spacing="2.0">
+                    <HBox alignment="CENTER_LEFT" spacing="8.0">
+                        <Label fx:id="peerUsernameLabel" text="Select a conversation" style="-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: #F1F3F8;"/>
+                        <Circle fx:id="peerStatusDot" radius="4.0" styleClass="status-dot-offline" visible="false"/>
+                    </HBox>
+                    <Label fx:id="peerInfoLabel" text="No active peer selected" style="-fx-font-size: 11px; -fx-text-fill: #9299A8;"/>
+                </VBox>
+
+                <Region HBox.hgrow="ALWAYS"/>
+
+                <!-- Header Action Buttons -->
+                <HBox alignment="CENTER_RIGHT" spacing="10.0">
+                    <Button fx:id="sendFileHeaderBtn" text="Send File" onAction="#handleAttachFile" styleClass="btn-secondary" visible="false" managed="false"/>
+                </HBox>
+            </HBox>
+
+            <!-- Message Area Container (Empty state or Message ScrollPane) -->
+            <StackPane VBox.vgrow="ALWAYS">
+
+                <!-- Empty State View -->
+                <VBox fx:id="emptyStateView" alignment="CENTER" spacing="14.0" style="-fx-padding: 40px;">
+                    <StackPane fx:id="emptyStateIconContainer" prefWidth="64.0" prefHeight="64.0"/>
+                    <Label text="No Conversation Selected" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #F1F3F8;"/>
+                    <Label text="Choose an online user from the sidebar to establish a direct peer-to-peer chat session."
+                           style="-fx-font-size: 13px; -fx-text-fill: #9299A8; -fx-text-alignment: center;" wrapText="true" maxWidth="380.0"/>
+                </VBox>
+
+                <!-- Chat Messages ScrollPane -->
+                <ScrollPane fx:id="messageScrollPane" fitToWidth="true" styleClass="scroll-pane" visible="false" managed="false">
+                    <VBox fx:id="messagesContainer" spacing="14.0">
+                        <padding>
+                            <Insets top="18.0" right="24.0" bottom="18.0" left="24.0"/>
+                        </padding>
+                    </VBox>
+                </ScrollPane>
+
+            </StackPane>
+
+            <!-- Message Input Area -->
+            <HBox fx:id="inputContainer" alignment="CENTER_LEFT" spacing="10.0" styleClass="chat-input-area" disable="true">
+                <padding>
+                    <Insets top="12.0" right="20.0" bottom="14.0" left="20.0"/>
+                </padding>
+
+                <!-- File Attachment Button -->
+                <Button fx:id="attachBtn" onAction="#handleAttachFile" styleClass="btn-icon"/>
+
+                <!-- Text Message Input -->
+                <TextField fx:id="messageInput" promptText="Select a user to message..." HBox.hgrow="ALWAYS"
+                           styleClass="text-input" style="-fx-background-color: #111318; -fx-border-color: #262B37;" onAction="#handleSendMessage"/>
+
+                <!-- Send Button -->
+                <Button fx:id="sendBtn" onAction="#handleSendMessage" styleClass="btn-primary" style="-fx-padding: 8px 16px;"/>
+            </HBox>
+
+        </VBox>
+    </center>
+
+</BorderPane>
