@@ -3,7 +3,6 @@ package client;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -14,9 +13,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Scanner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,8 +27,8 @@ import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
-import transfer.FileSender;
 import transfer.FileReceiver;
+import transfer.FileSender;
 
 public class Client {
 
@@ -112,7 +108,7 @@ public class Client {
                 return;
             }
 
-            fileTransfers = new FileTransferController(username, peerPort, new File("downloads"), peers);
+            fileTransfers = new FileTransferController(username, peerPort, new File("downloads/" + username), peers);
             serverOutput = output;
             Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
@@ -316,7 +312,7 @@ public class Client {
                         }
                         try {
                             broadcastMessage(serverOutput,
-                                    activeCommunityId + "\n" + "(broadcast) " + username + " : " + content);
+                                    activeCommunityId + "\n" + String.format("(%s:broadcast) ", activeCommunityName) + username + " : " + content);
                         } catch (Exception e) {
                             System.err.println("Broadcast failed: " + e.getMessage());
                         }
@@ -698,7 +694,7 @@ public class Client {
                     FileTransferMeta meta = new FileTransferMeta(
                             offer.fileId(), offer.sender(), username,
                             offer.fileName(), offer.fileSize(), offer.checksum());
-                    FileReceiver receiver = new FileReceiver(dataIn, dataOut, new File("downloads"), meta);
+                    FileReceiver receiver = new FileReceiver(dataIn, dataOut, new File("downloads/" + username), meta);
                     File saved = receiver.receive();
                     System.out.println("[BROADCAST RECEIVED] Saved to: " + saved.getAbsolutePath());
                 }
