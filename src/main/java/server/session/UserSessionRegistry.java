@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class SessionRegistry {
+public class UserSessionRegistry {
     private final ConcurrentHashMap<String, UserSession> onlineUsers =
         new ConcurrentHashMap<>();
 

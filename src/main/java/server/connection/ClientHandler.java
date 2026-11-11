@@ -5,13 +5,16 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
 import server.auth.AuthService;
-import server.session.SessionRegistry;
+import server.session.ChatSession;
+import server.session.ChatSessionRegistry;
+import server.session.UserSessionRegistry;
 import server.session.UserSession;
 
 public class ClientHandler implements Runnable {
@@ -19,15 +22,18 @@ public class ClientHandler implements Runnable {
     private static final int MAX_AUTH_BYTES = 4096;
 
     private final Socket socket;
-    private final SessionRegistry sessions;
+    private final UserSessionRegistry userSessions;
+    private final ChatSessionRegistry chatSessions;
     private final AuthService authService;
 
     private UserSession session;
     private OutputStream output;
 
-    public ClientHandler(Socket socket, SessionRegistry sessions, AuthService authService) {
+    public ClientHandler(Socket socket, UserSessionRegistry userSessions,
+                         ChatSessionRegistry chatSessions, AuthService authService) {
         this.socket = socket;
-        this.sessions = sessions;
+        this.userSessions = userSessions;
+        this.chatSessions = chatSessions;
         this.authService = authService;
     }
 
@@ -55,7 +61,10 @@ public class ClientHandler implements Runnable {
             System.err.println("Client " + address + " error: " + e.getMessage());
         } finally {
             if (session != null) {
-                sessions.remove(session);
+                synchronized (userSessions) {
+                    userSessions.remove(session);
+                    chatSessions.userDisconnected(session);
+                }
             }
             System.out.println("Client " + address + " disconnected");
         }
@@ -100,6 +109,16 @@ public class ClientHandler implements Runnable {
 
                 case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
 
+                case CHAT_SESSION_REPORT -> handleChatSessionReport(packet);
+
+                case CHAT_SESSION_LIST_REQUEST -> handleChatSessionList(packet);
+
+                case LOGOUT_REQUEST -> {
+                    PacketValidator.validateRequest(packet, OpCode.LOGOUT_REQUEST, 0, 0);
+                    sendPacket(Packet.text(OpCode.LOGOUT_RESPONSE, packet.requestId(), ""));
+                    return;
+                }
+
                 default -> throw new IOException("Unexpected packet: " + packet.op());
             }
         }
@@ -141,7 +160,7 @@ public class ClientHandler implements Runnable {
                     peerPort
             );
 
-            if (sessions.register(candidate)) {
+            if (userSessions.register(candidate)) {
                 session = candidate;
                 status = "OK";
             } else {
@@ -158,7 +177,7 @@ public class ClientHandler implements Runnable {
     private void handleUserList(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.USER_LIST_REQUEST, 0, 0);
 
-        String usernames = sessions.listOnlineUsers().stream()
+        String usernames = userSessions.listOnlineUsers().stream()
                 .map(UserSession::username)
                 .sorted()
                 .collect(Collectors.joining("\n"));
@@ -173,7 +192,7 @@ public class ClientHandler implements Runnable {
 
         String targetUsername = request.text();
 
-        Optional<UserSession> target = sessions.find(targetUsername);
+        Optional<UserSession> target = userSessions.find(targetUsername);
         String payload;
         if (target.isEmpty()) {
             payload = "USER_OFFLINE";
@@ -185,5 +204,47 @@ public class ClientHandler implements Runnable {
 
         Packet response = Packet.text(OpCode.PEER_LOOKUP_RESPONSE, request.requestId(), payload);
         sendPacket(response);
+    }
+
+    private void handleChatSessionReport(Packet request) throws IOException {
+        PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_REPORT, 1, MAX_AUTH_BYTES);
+        String[] parts = request.text().split("\n", -1);
+        String status = "INVALID_SESSION_REPORT";
+        if (parts.length == 3 && !parts[1].isBlank()
+                && !parts[1].equals(session.username())) {
+            try {
+                UUID id = UUID.fromString(parts[0]);
+                if (id.toString().equals(parts[0])) {
+                    synchronized (userSessions) {
+                        status = applyChatSessionReport(id, parts[1], parts[2]);
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                // Malformed metadata is rejected without closing the management connection.
+            }
+        }
+        sendPacket(Packet.text(OpCode.CHAT_SESSION_REPORT_RESPONSE, request.requestId(), status));
+    }
+
+    private String applyChatSessionReport(UUID id, String peerUsername, String state) {
+        if (state.equals("CONNECTED")) {
+            Optional<UserSession> peer = userSessions.find(peerUsername);
+            if (peer.isEmpty()) return "USER_OFFLINE";
+            return chatSessions.connected(id, session, peer.get()) ? "OK" : "INVALID_SESSION";
+        }
+        if (state.equals("DISCONNECTED")) {
+            return chatSessions.disconnected(id, session, peerUsername) ? "OK" : "INVALID_SESSION";
+        }
+        return "INVALID_SESSION_REPORT";
+    }
+
+    private void handleChatSessionList(Packet request) throws IOException {
+        PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_LIST_REQUEST, 0, 0);
+        String payload = chatSessions.listSessions().stream()
+            .sorted(java.util.Comparator.comparing(ChatSession::sessionId))
+            .map(chat -> chat.sessionId() + "\t" + chat.userA().username() + "\t"
+                + chat.userB().username() + "\t" + chat.state())
+            .collect(Collectors.joining("\n"));
+        sendPacket(Packet.text(OpCode.CHAT_SESSION_LIST_RESPONSE, request.requestId(), payload));
     }
 }
