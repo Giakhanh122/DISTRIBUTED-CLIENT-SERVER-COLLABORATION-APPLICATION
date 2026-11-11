@@ -30,7 +30,7 @@ public class ClientHandler implements Runnable {
     private OutputStream output;
 
     public ClientHandler(Socket socket, UserSessionRegistry userSessions,
-                         ChatSessionRegistry chatSessions, AuthService authService) {
+            ChatSessionRegistry chatSessions, AuthService authService) {
         this.socket = socket;
         this.userSessions = userSessions;
         this.chatSessions = chatSessions;
@@ -142,14 +142,15 @@ public class ClientHandler implements Runnable {
         if (parts.length == 3) {
             try {
                 peerPort = Integer.parseInt(parts[2]);
-            } catch (NumberFormatException e) {}
+            } catch (NumberFormatException e) {
+            }
         }
 
         if (parts.length != 3
-            || parts[0].isBlank()
-            || parts[1].isEmpty()
-            || peerPort < 1
-            || peerPort > 65535) {
+                || parts[0].isBlank()
+                || parts[1].isEmpty()
+                || peerPort < 1
+                || peerPort > 65535) {
             status = "INVALID_AUTH_REQUEST";
         } else if (!authService.authenticate(parts[0], parts[1])) {
             status = "INVALID_CREDENTIALS";
@@ -157,8 +158,7 @@ public class ClientHandler implements Runnable {
             UserSession candidate = new UserSession(
                     parts[0],
                     socket.getInetAddress().getHostAddress(),
-                    peerPort
-            );
+                    peerPort);
 
             if (userSessions.register(candidate)) {
                 session = candidate;
@@ -190,14 +190,20 @@ public class ClientHandler implements Runnable {
     private void handlePeerLookup(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.PEER_LOOKUP_REQUEST, 1, PacketCodec.MAX_PAYLOAD_LENGTH);
 
-        String targetUsername = request.text();
+        String data = request.text();
+
+        String[] parts = data.split("\n");
+
+        String targetUsername = parts[0];
+        String username = parts[1];
 
         Optional<UserSession> target = userSessions.find(targetUsername);
         String payload;
         if (target.isEmpty()) {
             payload = "USER_OFFLINE";
-        }
-        else {
+        } else if (chatSessions.isConnected(username, targetUsername)) {
+            payload = "ALREADY_CONNECTED";
+        } else {
             UserSession targetUser = target.get();
             payload = "OK\n" + targetUser.ip() + "\n" + targetUser.port();
         }
@@ -229,7 +235,8 @@ public class ClientHandler implements Runnable {
     private String applyChatSessionReport(UUID id, String peerUsername, String state) {
         if (state.equals("CONNECTED")) {
             Optional<UserSession> peer = userSessions.find(peerUsername);
-            if (peer.isEmpty()) return "USER_OFFLINE";
+            if (peer.isEmpty())
+                return "USER_OFFLINE";
             return chatSessions.connected(id, session, peer.get()) ? "OK" : "INVALID_SESSION";
         }
         if (state.equals("DISCONNECTED")) {
@@ -241,10 +248,10 @@ public class ClientHandler implements Runnable {
     private void handleChatSessionList(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_LIST_REQUEST, 0, 0);
         String payload = chatSessions.listSessions().stream()
-            .sorted(java.util.Comparator.comparing(ChatSession::sessionId))
-            .map(chat -> chat.sessionId() + "\t" + chat.userA().username() + "\t"
-                + chat.userB().username() + "\t" + chat.state())
-            .collect(Collectors.joining("\n"));
+                .sorted(java.util.Comparator.comparing(ChatSession::sessionId))
+                .map(chat -> chat.sessionId() + "\t" + chat.userA().username() + "\t"
+                        + chat.userB().username() + "\t" + chat.state())
+                .collect(Collectors.joining("\n"));
         sendPacket(Packet.text(OpCode.CHAT_SESSION_LIST_RESPONSE, request.requestId(), payload));
     }
 }

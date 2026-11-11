@@ -9,7 +9,8 @@ public class ChatSessionRegistry {
     private final ConcurrentHashMap<UUID, ChatSession> sessions = new ConcurrentHashMap<>();
 
     public synchronized boolean connected(UUID id, UserSession reporter, UserSession peer) {
-        if (reporter.username().equals(peer.username())) return false;
+        if (reporter.username().equals(peer.username()))
+            return false;
         ChatSession current = sessions.get(id);
         if (current == null) {
             sessions.put(id, new ChatSession(id, reporter, peer, ChatSession.State.CONNECTED));
@@ -30,8 +31,9 @@ public class ChatSessionRegistry {
 
     public synchronized void userDisconnected(UserSession user) {
         sessions.replaceAll((id, session) -> session.hasParticipant(user)
-            && session.state() == ChatSession.State.CONNECTED
-            ? session.withState(ChatSession.State.UNKNOWN) : session);
+                && session.state() == ChatSession.State.CONNECTED
+                        ? session.withState(ChatSession.State.UNKNOWN)
+                        : session);
     }
 
     public Optional<ChatSession> find(UUID id) {
@@ -45,4 +47,14 @@ public class ChatSessionRegistry {
     private boolean matches(ChatSession session, UserSession reporter, UserSession peer) {
         return session.hasParticipant(reporter) && session.otherUser(reporter) == peer;
     }
+
+    public synchronized boolean isConnected(String usernameA, String usernameB) {
+        return sessions.values().stream().anyMatch(session -> session.state() == ChatSession.State.CONNECTED
+                && ((session.userA().username().equals(usernameA)
+                        && session.userB().username().equals(usernameB))
+                        ||
+                        (session.userA().username().equals(usernameB)
+                                && session.userB().username().equals(usernameA))));
+    }
+
 }

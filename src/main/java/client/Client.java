@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.swing.text.html.Option;
+
+import logic.PeerLookupResult;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -42,7 +45,8 @@ public class Client {
 
     private FileTransferController fileTransfers;
 
-    public record ServerInfo(String address, int port) {}
+    public record ServerInfo(String address, int port) {
+    }
 
     private int nextRequestId() {
         return requestSequence.incrementAndGet();
@@ -71,10 +75,9 @@ public class Client {
 
     public void connectToServer(String host, int portNumber, Scanner scanner) {
         try (
-            Socket socket = new Socket(host, portNumber);
-            PeerListener peerListener = new PeerListener(this::registerPeer,
-                    (fileSocket, hello) -> fileTransfers.receiveFileConnection(fileSocket, hello));
-        ) {
+                Socket socket = new Socket(host, portNumber);
+                PeerListener peerListener = new PeerListener(this::registerPeer,
+                        (fileSocket, hello) -> fileTransfers.receiveFileConnection(fileSocket, hello));) {
             socket.setSoTimeout(10000);
 
             peerPort = peerListener.getPort();
@@ -141,9 +144,8 @@ public class Client {
 
     private void readConsole(OutputStream output, Scanner scanner) {
         System.out.println(
-            "Commands: /users, /chats, /lookup <username>, /sendfile <receiver> <filepath>, "
-                + "/accept <offer_number>, /reject <offer_number>, /logout"
-        );
+                "Commands: /users, /chats, /lookup <username>, /sendfile <receiver> <filepath>, "
+                        + "/accept <offer_number>, /reject <offer_number>, /logout");
 
         while (scanner.hasNextLine()) {
             String message = scanner.nextLine();
@@ -205,16 +207,19 @@ public class Client {
                 }
 
                 try {
-                    Optional<InetSocketAddress> result = requestPeerLookup(
-                        output,
-                        targetUsername,
-                        nextRequestId()
-                    );
+                    PeerLookupResult result = requestPeerLookup(
+                            output,
+                            targetUsername,
+                            nextRequestId());
 
-                    if (result.isEmpty()) {
+                    InetSocketAddress address = result.address();
+
+                    if (result.status() == null) {
                         System.out.println(targetUsername + " is offline");
-                    } else {
-                        connectToPeer(targetUsername, result.get());
+                    } else if (result.status() == PeerLookupResult.Status.ALREADY_CONNECTED) {
+                        System.out.println(targetUsername + " is already connected");
+                    } else if (result.status() == PeerLookupResult.Status.SUCCESS) {
+                        connectToPeer(targetUsername, address);
                     }
                 } catch (IOException e) {
                     System.err.println("Server command: " + e.getMessage());
@@ -222,7 +227,7 @@ public class Client {
                 continue;
             }
 
-            byte[]data = message.getBytes(StandardCharsets.UTF_8);
+            byte[] data = message.getBytes(StandardCharsets.UTF_8);
             if (data.length > MAX_CHAT_BYTES) {
                 System.err.println("Message exceeds limit: " + MAX_CHAT_BYTES);
                 continue;
@@ -251,13 +256,16 @@ public class Client {
         printUserList(response.text());
     }
 
-    private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId, int peerPort) throws IOException {
+    private boolean login(InputStream input, OutputStream output, Scanner scanner, int requestId, int peerPort)
+            throws IOException {
         System.out.print("Username: ");
-        if (!scanner.hasNextLine()) return false;
+        if (!scanner.hasNextLine())
+            return false;
         String username = scanner.nextLine().trim();
 
         System.out.print("Password: ");
-        if (!scanner.hasNextLine()) return false;
+        if (!scanner.hasNextLine())
+            return false;
         String password = scanner.nextLine();
 
         if (username.isEmpty() || password.isEmpty()) {
@@ -288,21 +296,34 @@ public class Client {
         return true;
     }
 
-    private Optional<InetSocketAddress> requestPeerLookup(OutputStream output, String targetUsername, int requestId) throws IOException {
-        Packet request = Packet.text(OpCode.PEER_LOOKUP_REQUEST, requestId, targetUsername);
+    private PeerLookupResult requestPeerLookup(OutputStream output, String targetUsername, int requestId)
+            throws IOException {
+        Packet request = Packet.text(OpCode.PEER_LOOKUP_REQUEST, requestId, targetUsername + "\n" + this.username);
         Packet response = awaitResponse(output, request, OpCode.PEER_LOOKUP_RESPONSE);
 
         String payload = response.text();
-        if (payload.equals("USER_OFFLINE")) return Optional.empty();
+        if (payload.equals("USER_OFFLINE")) {
+            return new PeerLookupResult(
+                    PeerLookupResult.Status.USER_OFFLINE,
+                    null);
+        }
 
-        return Optional.of(parsePeerAddress(payload));
+        if (payload.equals("ALREADY_CONNECTED")) {
+            return new PeerLookupResult(
+                    PeerLookupResult.Status.ALREADY_CONNECTED,
+                    null);
+        }
+
+        return new PeerLookupResult(
+                PeerLookupResult.Status.SUCCESS,
+                parsePeerAddress(payload));
     }
 
     private InetSocketAddress parsePeerAddress(String payload) throws IOException {
         String[] parts = payload.split("\n", -1);
         if (parts.length != 3
-            || !parts[0].equals("OK")
-            || parts[1].isBlank()) {
+                || !parts[0].equals("OK")
+                || parts[1].isBlank()) {
             throw new IOException("Invalid peer address payload");
         }
 
@@ -322,7 +343,7 @@ public class Client {
 
     private void connectToPeer(String targetUsername, InetSocketAddress address) {
         Socket peerSocket = new Socket();
-        PeerConnection connection = new PeerConnection(peerSocket); 
+        PeerConnection connection = new PeerConnection(peerSocket);
 
         try {
             peerSocket.connect(address, 10000);
@@ -336,9 +357,8 @@ public class Client {
             closePeer(connection);
 
             System.err.println(
-                "Cannot connect to " + targetUsername
-                    + ": " + e.getMessage()
-            );
+                    "Cannot connect to " + targetUsername
+                            + ": " + e.getMessage());
         }
     }
 
@@ -347,7 +367,7 @@ public class Client {
             closePeer(connection);
             return;
         }
-        
+
         PeerConnection previous = peers.put(peerUsername, connection);
         if (previous != null) {
             closePeer(previous);
@@ -378,7 +398,7 @@ public class Client {
                 synchronized (Client.this) {
                     reportChatSession(peerUsername, connection, "DISCONNECTED");
                     if (peers.remove(peerUsername, connection)
-                        && peerUsername.equals(selectedPeerUsername)) {
+                            && peerUsername.equals(selectedPeerUsername)) {
                         selectedPeerUsername = null;
                     }
                 }
@@ -411,11 +431,13 @@ public class Client {
 
     private void reportChatSession(String peerUsername, PeerConnection connection, String state) {
         OutputStream output = serverOutput;
-        if (output == null) return;
-        if (state.equals("DISCONNECTED") && !connection.markDisconnectReported()) return;
+        if (output == null)
+            return;
+        if (state.equals("DISCONNECTED") && !connection.markDisconnectReported())
+            return;
         try {
             sendServerPacket(output, Packet.text(OpCode.CHAT_SESSION_REPORT, nextRequestId(),
-                connection.sessionId() + "\n" + peerUsername + "\n" + state));
+                    connection.sessionId() + "\n" + peerUsername + "\n" + state));
         } catch (IOException e) {
             System.err.println("Cannot report chat session: " + e.getMessage());
         }
@@ -444,11 +466,10 @@ public class Client {
             socket.setSoTimeout(3000);
 
             DatagramPacket outgoing = new DatagramPacket(
-                requestBytes,
-                requestBytes.length,
-                broadcastAddress,
-                DISCOVERY_PORT
-            );
+                    requestBytes,
+                    requestBytes.length,
+                    broadcastAddress,
+                    DISCOVERY_PORT);
 
             byte[] buffer = new byte[4096];
             for (int attemp = 1; attemp <= maxAttemps; attemp++) {
@@ -465,10 +486,9 @@ public class Client {
 
                 try {
                     ByteArrayInputStream input = new ByteArrayInputStream(
-                        incoming.getData(),
-                        incoming.getOffset(),
-                        incoming.getLength()
-                    );
+                            incoming.getData(),
+                            incoming.getOffset(),
+                            incoming.getLength());
 
                     Packet response = PacketCodec.read(input);
                     PacketValidator.validateResponse(response, OpCode.DISCOVER_RESPONSE, requestId);
@@ -477,7 +497,8 @@ public class Client {
                     }
 
                     int tcpPort = Integer.parseInt(response.text());
-                    if (tcpPort < 1 || tcpPort > 65535) continue;
+                    if (tcpPort < 1 || tcpPort > 65535)
+                        continue;
 
                     return new ServerInfo(incoming.getAddress().getHostAddress(), tcpPort);
                 } catch (IOException | NumberFormatException e) {
@@ -524,7 +545,8 @@ public class Client {
                             System.err.println("Chat session report rejected: " + packet.text());
                         }
                     }
-                    default -> {}
+                    default -> {
+                    }
                 }
             }
         } catch (IOException e) {
@@ -555,9 +577,10 @@ public class Client {
         }
         for (String line : payload.split("\n")) {
             String[] fields = line.split("\t", -1);
-            if (fields.length != 4) throw new IOException("Invalid chat session list");
+            if (fields.length != 4)
+                throw new IOException("Invalid chat session list");
             System.out.println("- " + fields[1] + " <-> " + fields[2] + ": " + fields[3]
-                + " | id=" + fields[0]);
+                    + " | id=" + fields[0]);
         }
     }
 
