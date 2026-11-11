@@ -7,20 +7,29 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
 import server.auth.AuthService;
+import server.broadcast.BroadcastFileRegistry;
+import server.community.CommunityRegistry;
+import server.community.CommunityService;
 import server.connection.ClientHandler;
 import server.session.ChatSessionRegistry;
 import server.session.UserSessionRegistry;
+import server.storage.FileStorageService;
 
 public class Server {
     private final UserSessionRegistry userSessions = new UserSessionRegistry();
     private final ChatSessionRegistry chatSessions = new ChatSessionRegistry();
     private final AuthService authService = new AuthService();
+    private final CommunityRegistry communityRegistry = new CommunityRegistry();
+    private final CommunityService communityService = new CommunityService(communityRegistry, userSessions);
+    private final BroadcastFileRegistry broadcastFileRegistry = new BroadcastFileRegistry();
+    private final FileStorageService fileStorageService = new FileStorageService(Path.of("server_storage"));
 
     private static final int PORT = 8080;
     private static final int DISCOVERY_PORT = 41234;
@@ -35,7 +44,8 @@ public class Server {
             System.out.println("Server started on port " + portNumber);
             while (true) {
                 Socket socket = listener.accept();
-                ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions, authService);
+                ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions,
+                        authService, communityService, broadcastFileRegistry, fileStorageService);
                 Thread.startVirtualThread(handler);
             }
         } catch (IOException e) {
