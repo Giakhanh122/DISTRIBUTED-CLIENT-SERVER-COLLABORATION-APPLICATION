@@ -20,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import protocols.OpCode;
 import protocols.Packet;
@@ -34,7 +35,9 @@ public class Client {
     private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
     private volatile String selectedPeerUsername;
     private boolean closingPeers;
-    private int requestSequence = 0;
+    private final AtomicInteger requestSequence = new AtomicInteger();
+    private final Object serverWriteLock = new Object();
+    private volatile OutputStream serverOutput;
     private final ConcurrentHashMap<Integer, CompletableFuture<Packet>> pendingResponses = new ConcurrentHashMap<>();
 
     private FileTransferController fileTransfers;
@@ -42,7 +45,7 @@ public class Client {
     public record ServerInfo(String address, int port) {}
 
     private int nextRequestId() {
-        return ++requestSequence;
+        return requestSequence.incrementAndGet();
     }
 
     public void start(String serverHost, int serverPort, Scanner scanner) {
@@ -87,13 +90,29 @@ public class Client {
             }
 
             fileTransfers = new FileTransferController(username, peerPort, new File("downloads"), peers);
+            serverOutput = output;
             Thread.startVirtualThread(peerListener);
             socket.setSoTimeout(0);
             Thread.startVirtualThread(() -> receivePackets(input));
-            readConsole(output, scanner);
+            try {
+                readConsole(output, scanner);
+            } finally {
+                // Report closed P2P connections before the management socket is closed.
+                fileTransfers.close();
+                closePeers();
+                if (serverOutput != null) {
+                    try {
+                        Packet request = Packet.text(OpCode.LOGOUT_REQUEST, nextRequestId(), "");
+                        awaitResponse(output, request, OpCode.LOGOUT_RESPONSE);
+                    } catch (IOException e) {
+                        System.err.println("Logout: " + e.getMessage());
+                    }
+                }
+            }
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());
         } finally {
+            serverOutput = null;
             if (fileTransfers != null) {
                 fileTransfers.close();
             }
@@ -122,7 +141,7 @@ public class Client {
 
     private void readConsole(OutputStream output, Scanner scanner) {
         System.out.println(
-            "Commands: /users, /lookup <username>, /sendfile <receiver> <filepath>, "
+            "Commands: /users, /chats, /lookup <username>, /sendfile <receiver> <filepath>, "
                 + "/accept <offer_number>, /reject <offer_number>, /logout"
         );
 
@@ -137,6 +156,17 @@ public class Client {
             if (command.equalsIgnoreCase("/users")) {
                 try {
                     requestUserList(output, nextRequestId());
+                } catch (IOException e) {
+                    System.err.println("Server command: " + e.getMessage());
+                }
+                continue;
+            }
+
+            if (command.equalsIgnoreCase("/chats")) {
+                try {
+                    Packet request = Packet.text(OpCode.CHAT_SESSION_LIST_REQUEST, nextRequestId(), "");
+                    Packet response = awaitResponse(output, request, OpCode.CHAT_SESSION_LIST_RESPONSE);
+                    printChatSessions(response.text());
                 } catch (IOException e) {
                     System.err.println("Server command: " + e.getMessage());
                 }
@@ -326,6 +356,8 @@ public class Client {
             selectedPeerUsername = peerUsername;
         }
 
+        reportChatSession(peerUsername, connection, "CONNECTED");
+
         Thread.startVirtualThread(() -> {
             try {
                 connection.readMessages(peerUsername, packet -> {
@@ -344,6 +376,7 @@ public class Client {
             } finally {
                 fileTransfers.closeForPeer(connection);
                 synchronized (Client.this) {
+                    reportChatSession(peerUsername, connection, "DISCONNECTED");
                     if (peers.remove(peerUsername, connection)
                         && peerUsername.equals(selectedPeerUsername)) {
                         selectedPeerUsername = null;
@@ -366,12 +399,32 @@ public class Client {
     private synchronized void closePeers() {
         closingPeers = true;
 
-        for (PeerConnection connection : peers.values()) {
+        for (var entry : peers.entrySet()) {
+            PeerConnection connection = entry.getValue();
+            reportChatSession(entry.getKey(), connection, "DISCONNECTED");
             closePeer(connection);
         }
 
         peers.clear();
         selectedPeerUsername = null;
+    }
+
+    private void reportChatSession(String peerUsername, PeerConnection connection, String state) {
+        OutputStream output = serverOutput;
+        if (output == null) return;
+        if (state.equals("DISCONNECTED") && !connection.markDisconnectReported()) return;
+        try {
+            sendServerPacket(output, Packet.text(OpCode.CHAT_SESSION_REPORT, nextRequestId(),
+                connection.sessionId() + "\n" + peerUsername + "\n" + state));
+        } catch (IOException e) {
+            System.err.println("Cannot report chat session: " + e.getMessage());
+        }
+    }
+
+    private void sendServerPacket(OutputStream output, Packet packet) throws IOException {
+        synchronized (serverWriteLock) {
+            PacketCodec.write(output, packet);
+        }
     }
 
     public ServerInfo discover() throws IOException {
@@ -439,7 +492,7 @@ public class Client {
         CompletableFuture<Packet> responseFuture = new CompletableFuture<>();
         pendingResponses.put(request.requestId(), responseFuture);
         try {
-            PacketCodec.write(output, request);
+            sendServerPacket(output, request);
             Packet response = responseFuture.get(10, TimeUnit.SECONDS);
             return PacketValidator.validateResponse(response, expectedOp, request.requestId());
         } catch (InterruptedException e) {
@@ -460,10 +513,15 @@ public class Client {
             while ((packet = PacketCodec.read(input)) != null) {
                 switch (packet.op()) {
                     case CHAT_MESSAGE -> System.out.println(packet.text());
-                    case USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE -> {
+                    case USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE, CHAT_SESSION_LIST_RESPONSE, LOGOUT_RESPONSE -> {
                         CompletableFuture<Packet> responseFuture = pendingResponses.get(packet.requestId());
                         if (responseFuture != null) {
                             responseFuture.complete(packet);
+                        }
+                    }
+                    case CHAT_SESSION_REPORT_RESPONSE -> {
+                        if (!packet.text().equals("OK")) {
+                            System.err.println("Chat session report rejected: " + packet.text());
                         }
                     }
                     default -> {}
@@ -472,6 +530,7 @@ public class Client {
         } catch (IOException e) {
             System.err.println("Server receive error: " + e.getMessage());
         } finally {
+            serverOutput = null;
             IOException closed = new IOException("Server connection closed");
             pendingResponses.values().forEach(future -> future.completeExceptionally(closed));
         }
@@ -485,6 +544,20 @@ public class Client {
             for (String username : usernames.split("\n")) {
                 System.out.println("- " + username);
             }
+        }
+    }
+
+    private void printChatSessions(String payload) throws IOException {
+        System.out.println("Chat sessions:");
+        if (payload.isEmpty()) {
+            System.out.println("(none)");
+            return;
+        }
+        for (String line : payload.split("\n")) {
+            String[] fields = line.split("\t", -1);
+            if (fields.length != 4) throw new IOException("Invalid chat session list");
+            System.out.println("- " + fields[1] + " <-> " + fields[2] + ": " + fields[3]
+                + " | id=" + fields[0]);
         }
     }
 

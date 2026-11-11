@@ -1,7 +1,8 @@
 # Giao thức và kiến trúc hiện tại
 
 Yêu cầu JDK 21+. Server mặc định dùng TCP 8080 và UDP discovery 41234.
-Server giữ registry các user online; chat và dữ liệu file đi trực tiếp giữa peer.
+Server giữ hai registry riêng: `UserSessionRegistry` cho user online và
+`ChatSessionRegistry` cho metadata phiên P2P. Chat và dữ liệu file đi trực tiếp giữa peer.
 
 ## Packet nhị phân
 
@@ -15,6 +16,8 @@ Mỗi connection có một luồng đọc. Sau login, client phân phối phản
 qua request ID. Reader của chat phân phối CHAT_MESSAGE, FILE_OFFER và FILE_DECISION.
 `PeerConnection.sendPacket` khóa cho cả packet, dùng chung với `sendMessage` để
 chat và file control không ghi xen byte. Socket file có reader/worker riêng.
+Các packet quản lý từ console và worker peer dùng chung khóa ghi socket server;
+request ID được cấp bằng `AtomicInteger`.
 
 ## Kết nối server và quản lý user
 
@@ -26,18 +29,64 @@ chat và file control không ghi xen byte. Socket file có reader/worker riêng.
 4. `/users` gửi `USER_LIST_REQUEST` rỗng; `USER_LIST_RESPONSE` chứa username
    sắp xếp, ngăn cách bằng newline. `/lookup <user>` gửi `PEER_LOOKUP_REQUEST`;
    phản hồi là `OK\nip\npeerPort` hoặc `USER_OFFLINE`.
-5. `/logout` đóng các socket. Server nhận EOF và xóa session, user có thể login lại.
+5. `/logout` báo đóng các phiên P2P rồi gửi `LOGOUT_REQUEST` rỗng.
+   Server xử lý các báo cáo trước đó, trả `LOGOUT_RESPONSE` rỗng cùng request ID
+   rồi đóng kết nối, xóa user online. Client có thể login lại.
 
 Peer port được giữ nguyên trong session để phục vụ lookup. Server không xử lý
 hoặc chuyển tiếp opcode file.
 
 ## Peer chat
 
-Client khởi tạo gửi `PEER_HELLO` chứa `username\npeerPort` UTF-8. Peer nhận trả
+Client khởi tạo tạo UUID riêng cho mỗi kết nối, gửi `PEER_HELLO` chứa
+`username\npeerPort\nsessionId` UTF-8. Peer nhận lưu cùng UUID và trả
 `PEER_HELLO_ACK` rỗng, cùng request ID. Hai bên gửi `CHAT_MESSAGE` chứa nội dung
 UTF-8, tối đa 64 KiB. `/lookup` chọn peer để gửi các dòng chat tiếp theo.
 Initiator biết listener của receiver từ địa chỉ kết nối; receiver lấy listener
 của initiator từ PEER_HELLO. Vì vậy cả hai chiều đều gửi file được mà không lookup lại.
+
+## Theo dõi phiên chat trên server
+
+`UserSession(username, ip, port)` chỉ biểu diễn một lần đăng nhập đang online.
+`ChatSession(sessionId, userA, userB, state)` biểu diễn một kết nối P2P với UUID,
+hai `UserSession` tham gia và trạng thái. Không lưu cờ xác nhận hoặc mốc thời gian.
+Server tạo một instance mỗi registry và truyền chung cho tất cả `ClientHandler`.
+Registry chat không giữ socket peer; các socket vẫn ở map `peers` của client.
+
+Sau handshake, mỗi client gửi `CHAT_SESSION_REPORT` tới server:
+
+```text
+sessionId\npeerUsername\nCONNECTED
+sessionId\npeerUsername\nDISCONNECTED
+```
+
+Request ID dương; UUID dùng dạng canonical. Server xác định người báo từ phiên
+đăng nhập, không lấy username người báo từ payload. Peer phải online khi báo
+CONNECTED; UUID đã tồn tại phải thuộc đúng hai lần đăng nhập ban đầu.
+Phản hồi `CHAT_SESSION_REPORT_RESPONSE` cùng request ID là `OK`,
+`INVALID_SESSION_REPORT`, `INVALID_SESSION` hoặc `USER_OFFLINE`.
+Báo cáo chạy độc lập với đọc chat: lỗi báo cáo không đóng P2P.
+
+- Báo CONNECTED đầu tiên sau handshake tạo phiên `CONNECTED`; báo cáo bên còn lại
+  được gộp theo cùng UUID, không cần chờ xác nhận từ cả hai bên.
+- Một bên báo DISCONNECTED chuyển thành `DISCONNECTED`.
+  Báo CONNECTED tới muộn không mở lại phiên đã đóng.
+- Khi mất kết nối client–server, các phiên chưa đóng của lần đăng nhập đó chuyển
+  thành `UNKNOWN`: đường P2P có thể vẫn hoạt động. Không tự đóng socket P2P.
+- Mỗi lần thay kết nối dùng UUID mới; báo đóng của kết nối cũ không thay trạng thái
+  kết nối mới. Logout chủ động gửi báo đóng trước khi đóng socket server.
+
+`/chats` gửi `CHAT_SESSION_LIST_REQUEST` rỗng. Mọi user đã đăng nhập có thể xem
+danh sách chung. `CHAT_SESSION_LIST_RESPONSE` chứa các dòng, sắp xếp theo UUID:
+
+```text
+sessionId<TAB>userA<TAB>userB<TAB>state
+```
+
+Danh sách rỗng là payload rỗng. Các bản ghi phiên đã đóng được giữ trong tiến trình
+server để báo cáo CONNECTED tới muộn không mở lại phiên cũ.
+Hai registry chỉ lưu RAM. Chưa có heartbeat phiên P2P, thống kê byte,
+tự kết nối lại, lưu database hoặc chuyển tiếp chat/file qua server.
 
 ## Truyền file
 
@@ -131,12 +180,15 @@ Truyền host vào `run.sh` bỏ qua discovery.
 | Quản lý | AUTH_REQUEST / AUTH_RESPONSE | 0x10 / 0x11 |
 | Quản lý | USER_LIST_REQUEST / USER_LIST_RESPONSE | 0x12 / 0x13 |
 | Quản lý | PEER_LOOKUP_REQUEST / PEER_LOOKUP_RESPONSE | 0x14 / 0x15 |
+| Quản lý | LOGOUT_REQUEST / LOGOUT_RESPONSE | 0x16 / 0x17 |
 | Peer | PEER_HELLO / PEER_HELLO_ACK | 0x20 / 0x21 |
 | Chat | CHAT_MESSAGE | 0x30 |
 | File | FILE_OFFER / FILE_DECISION | 0x40 / 0x41 |
 | File | FILE_CHUNK / FILE_END | 0x42 / 0x43 |
 | File | FILE_RESULT | 0x44 |
 | Discovery | DISCOVER_REQUEST / DISCOVER_RESPONSE | 0x50 / 0x51 |
+| Theo dõi phiên | CHAT_SESSION_REPORT / CHAT_SESSION_REPORT_RESPONSE | 0x60 / 0x61 |
+| Theo dõi phiên | CHAT_SESSION_LIST_REQUEST / CHAT_SESSION_LIST_RESPONSE | 0x62 / 0x63 |
 
-Các opcode LOGOUT_REQUEST/RESPONSE, PRESENCE_UPDATE, CHAT_RECEIPT, TYPING,
-HEARTBEAT/ACK và ERROR vẫn là phần dự kiến; CLI logout hiện dùng đóng socket.
+Các opcode PRESENCE_UPDATE, CHAT_RECEIPT, TYPING, HEARTBEAT/ACK và ERROR
+vẫn là phần dự kiến.

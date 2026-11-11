@@ -5,6 +5,8 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
 ## Hiện trạng
 
 - Handshake, đăng nhập và tra cứu người dùng qua server TCP.
+- `UserSessionRegistry` quản lý user online; `ChatSessionRegistry` theo dõi
+  các kết nối P2P bằng UUID. `/chats` xem các phiên và trạng thái trên server.
 - Chat trực tiếp giữa hai peer qua TCP; server dùng virtual thread cho mỗi client.
 - Truyền file qua socket TCP riêng: chunk 64 KiB, kiểm tra kích thước và SHA-256,
   chỉ báo thành công sau khi receiver xác nhận đã lưu file.
@@ -33,6 +35,9 @@ chọn `c` để chạy client. Khi không truyền địa chỉ, client dùng U
 Thay IP ví dụ bằng IP thật của máy server. Sau khi chọn `c`, đăng nhập bằng tài khoản
 trong `AuthService`. Dùng `/users` để xem danh sách online, `/lookup bob` để tìm và
 kết nối peer Bob, `/logout` để thoát. Dùng Ctrl+C tại terminal server để dừng.
+`/chats` hiển thị danh sách phiên P2P chung, gồm người tham gia, UUID và trạng thái.
+Cả hai registry lưu RAM; mất kết nối server chuyển metadata phiên
+chưa đóng sang `UNKNOWN`, không đóng đường P2P đang hoạt động.
 
 Tài khoản demo: `alice/alice123`, `bob/bob123`, `admin1/password1`.
 Sau `/lookup bob`, nhập nội dung để chat với Bob; Bob có thể trả lời trực tiếp.
@@ -68,6 +73,17 @@ tham số cho `Main`. Script cũng chạy được khi được gọi bằng đ�
 
 ## Kiểm thử
 
+Kiểm thử hai registry và luồng theo dõi phiên:
+
+```bash
+python3 scripts/test-sessions.py
+```
+
+Lệnh dùng JDK 21+ và Python 3, biên dịch vào thư mục tạm, mở TCP cục bộ ở cổng động.
+Kiểm tra báo cáo sau handshake, báo cáo đồng thời, quyền sở hữu phiên, báo cáo tới
+muộn, thay kết nối, `/chats`, chat hai chiều, truyền file nhị phân, logout và
+P2P tiếp tục hoạt động khi mất server. File kiểm thử được tạo trong thư mục tạm.
+
 Yêu cầu thêm Python 3, không cần thư viện ngoài:
 
 ```bash
@@ -95,7 +111,7 @@ python3 scripts/test-network-resilience.py --log-dir /tmp/collaboration-network-
 
 Dùng `--quiet` nếu chỉ muốn xem báo cáo PASS/FAIL; log ứng dụng vẫn được lưu đầy đủ.
 
-Metadata offer hiện chứa SHA-256; `PEER_HELLO` chứa cả username và cổng listener.
+Metadata offer hiện chứa SHA-256; `PEER_HELLO` chứa username, cổng listener và UUID phiên chat.
 Các peer cần cùng phiên bản giao thức này; header packet 9 byte vẫn giữ nguyên.
 
 ## Tài liệu

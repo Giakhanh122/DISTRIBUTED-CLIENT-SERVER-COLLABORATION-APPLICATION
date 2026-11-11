@@ -4,12 +4,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.net.InetSocketAddress;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import protocols.*;
 
 public class PeerConnection implements AutoCloseable {
     private final Socket socket;
     private static final int MAX_CHAT_BYTES = 64 * 1024;
+    private UUID sessionId = UUID.randomUUID();
+    private final AtomicBoolean disconnectReported = new AtomicBoolean();
     private int messageRequestId = 1;
     private InetSocketAddress peerAddress;
 
@@ -20,7 +24,8 @@ public class PeerConnection implements AutoCloseable {
     public void initiateHandshake(String username, int requestId, int listeningPort) throws IOException {
         socket.setSoTimeout(10000);
         InputStream input = socket.getInputStream();
-        Packet hello = Packet.text(OpCode.PEER_HELLO, requestId, username + "\n" + listeningPort);
+        Packet hello = Packet.text(OpCode.PEER_HELLO, requestId,
+            username + "\n" + listeningPort + "\n" + sessionId);
         sendPacket(hello);
         Packet response = PacketValidator.validateResponse(PacketCodec.read(input), OpCode.PEER_HELLO_ACK, requestId);
         if (response.payloadLength() != 0) {
@@ -34,8 +39,16 @@ public class PeerConnection implements AutoCloseable {
         PacketValidator.validateRequest(hello, OpCode.PEER_HELLO, 1, 4096);
 
         String[] identity = hello.text().split("\n", -1);
-        if (identity.length != 2 || identity[0].isBlank()) {
+        if (identity.length != 3 || identity[0].isBlank()) {
             throw new IOException("Invalid peer identity");
+        }
+        try {
+            sessionId = UUID.fromString(identity[2]);
+            if (!sessionId.toString().equals(identity[2])) {
+                throw new IllegalArgumentException("Non-canonical session ID");
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid chat session ID", e);
         }
         int port;
         try {
@@ -74,6 +87,14 @@ public class PeerConnection implements AutoCloseable {
 
     public InetSocketAddress peerAddress() {
         return peerAddress;
+    }
+
+    public UUID sessionId() {
+        return sessionId;
+    }
+
+    public boolean markDisconnectReported() {
+        return disconnectReported.compareAndSet(false, true);
     }
 
     public boolean isClosed() {

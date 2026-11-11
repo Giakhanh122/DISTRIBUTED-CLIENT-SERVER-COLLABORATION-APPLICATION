@@ -36,6 +36,11 @@ public enum OpCode {
     DISCOVER_RESPONSE(0x51),
     HEARTBEAT(0x52),
     HEARTBEAT_ACK(0x53),
+    // P2P session monitoring (client-server metadata only)
+    CHAT_SESSION_REPORT(0x60),
+    CHAT_SESSION_REPORT_RESPONSE(0x61),
+    CHAT_SESSION_LIST_REQUEST(0x62),
+    CHAT_SESSION_LIST_RESPONSE(0x63),
     //Error protocol
     ERROR(0x7F); //maybe
 

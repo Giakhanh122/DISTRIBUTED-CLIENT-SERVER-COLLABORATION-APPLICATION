@@ -14,10 +14,12 @@ import protocols.PacketCodec;
 import protocols.PacketValidator;
 import server.auth.AuthService;
 import server.connection.ClientHandler;
-import server.session.SessionRegistry;
+import server.session.ChatSessionRegistry;
+import server.session.UserSessionRegistry;
 
 public class Server {
-    private final SessionRegistry sessions = new SessionRegistry();
+    private final UserSessionRegistry userSessions = new UserSessionRegistry();
+    private final ChatSessionRegistry chatSessions = new ChatSessionRegistry();
     private final AuthService authService = new AuthService();
 
     private static final int PORT = 8080;
@@ -33,7 +35,7 @@ public class Server {
             System.out.println("Server started on port " + portNumber);
             while (true) {
                 Socket socket = listener.accept();
-                ClientHandler handler = new ClientHandler(socket, sessions, authService);
+                ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions, authService);
                 Thread.startVirtualThread(handler);
             }
         } catch (IOException e) {
