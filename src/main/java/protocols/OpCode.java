@@ -29,7 +29,7 @@ public enum OpCode {
     // File transfer protocol
     FILE_OFFER(0x40),
     FILE_DECISION(0x41),
-    FILE_CHUNK(0x42),
+    FILE_CHUNK(0x42), // reserved: file data now streams as raw bytes
     FILE_END(0x43),
     FILE_RESULT(0x44),
     // Broadcast file transfer protocol
@@ -80,6 +80,23 @@ public enum OpCode {
 
     OpCode(int code) {
         this.code = code;
+    }
+
+    public boolean requiresStatus() {
+        return switch (this) {
+            case HELLO_ACK, AUTH_RESPONSE, USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE,
+                    LOGOUT_RESPONSE, PEER_HELLO_ACK, FILE_RESULT,
+                    FILE_BROADCAST_UPLOAD_RESPONSE, FILE_BROADCAST_DOWNLOAD_RESPONSE,
+                    DISCOVER_RESPONSE, CHAT_SESSION_REPORT_RESPONSE, CHAT_SESSION_LIST_RESPONSE,
+                    COMMUNITY_LIST_RESPONSE, COMMUNITY_CREATE_RESPONSE, COMMUNITY_JOIN_RESPONSE,
+                    COMMUNITY_LEAVE_RESPONSE, COMMUNITY_MEMBERS_RESPONSE,
+                    COMMUNITY_SELECT_RESPONSE, COMMUNITY_INFO_RESPONSE -> true;
+            default -> false;
+        };
+    }
+
+    public boolean requiresReplyTo() {
+        return requiresStatus() || this == FILE_DECISION;
     }
 
     public int getCode() {

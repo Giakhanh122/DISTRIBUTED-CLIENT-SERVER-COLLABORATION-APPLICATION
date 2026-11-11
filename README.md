@@ -16,7 +16,7 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
 
 ## Chạy chương trình
 
-Yêu cầu JDK 21 trở lên. Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
+Yêu cầu JDK 21 trở lên và curl (nếu cần tải Gson lần đầu). Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
 
 ```bash
 ./run.sh
@@ -42,6 +42,13 @@ chưa đóng sang `UNKNOWN`, không đóng đường P2P đang hoạt động.
 Tài khoản demo: `alice/alice123`, `bob/bob123`, `admin1/password1`.
 Sau `/lookup bob`, nhập nội dung để chat với Bob; Bob có thể trả lời trực tiếp.
 
+Khi đã kết nối nhiều peer, dùng `/chat` để xem danh sách và người đang chọn;
+`/chat bob` chuyển sang Bob trên kết nối có sẵn. `/lookup bob` cũng chọn lại Bob
+nếu đã kết nối, không mở thêm socket hoặc cần server lookup lại. Tin nhắn thường
+chỉ gửi tới peer đang chọn; gửi nhóm dùng `/broadcast -m`.
+Nếu chọn/lookup một peer không khả dụng, lựa chọn hiện tại được bỏ để tin nhắn kế
+tiếp không đi nhầm sang người trước đó. Các kết nối peer khác vẫn được giữ.
+
 Để gửi file từ Alice sang Bob, kết nối chat bằng `/lookup bob` trước, rồi:
 
 ```text
@@ -58,7 +65,7 @@ Bob nhận được số thứ tự ngắn, ví dụ `[FILE OFFER #1]`, và ch�
 Số thứ tự tăng dần trong mỗi phiên đăng nhập và không dùng lại khi offer kết thúc.
 UUID vẫn được dùng trong giao thức để nhận diện lần truyền giữa hai máy.
 
-File được lưu vào `downloads/` trong thư mục làm việc của receiver. File trùng tên
+File được lưu vào `downloads/<username>/` trong thư mục làm việc của receiver. File trùng tên
 được thêm hậu tố `(1)`, `(2)`, …; giới hạn mỗi file là 100 MiB. Bob có thể gửi
 ngược lại Alice trên cùng kết nối chat, không cần lookup lại. Có thể chat và dùng
 `/users` trong lúc truyền (các lệnh quản lý vẫn cần server).
@@ -67,7 +74,7 @@ Offer được accept chờ socket dữ liệu tối đa 30 giây; socket dữ l
 30 giây. Logout hoặc đóng chat peer dọn các transfer liên quan. Mất kết nối server
 không đóng chat/file P2P đã thiết lập.
 
-Script biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
+Script lấy Gson từ Maven cache hoặc tải vào `.deps/` (có thể đặt `GSON_JAR` để dùng jar có sẵn), rồi biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
 tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
 `out/`, `target/`, file `.class` và `downloads/` được Git bỏ qua.
 
@@ -85,50 +92,34 @@ Sau đó chọn tùy chọn "s" (server) 2. Khởi động giao diện đồ h�
 ./run_ui.sh
 ```
 
-## Kiểm thử
+## Protocol hiện tại
 
-Kiểm thử hai registry và luồng theo dõi phiên:
+Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len đếm toàn bộ
+byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
+riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
+Handshake trao đổi protocolVersion 1. Không có magic bytes hoặc header JSON riêng.
 
-```bash
-python3 scripts/test-sessions.py
-```
+Socket file riêng gửi đúng fileSize byte nhị phân rồi FILE_END JSON; receiver
+kiểm tra SHA-256 và trả FILE_RESULT. Không đóng gói từng buffer thành FILE_CHUNK.
+Client/server phải chạy cùng phiên bản mới. Xem docs/protocol.md để biết chi tiết.
 
-Lệnh dùng JDK 21+ và Python 3, biên dịch vào thư mục tạm, mở TCP cục bộ ở cổng động.
-Kiểm tra báo cáo sau handshake, báo cáo đồng thời, quyền sở hữu phiên, báo cáo tới
-muộn, thay kết nối, `/chats`, chat hai chiều, truyền file nhị phân, logout và
-P2P tiếp tục hoạt động khi mất server. File kiểm thử được tạo trong thư mục tạm.
+## Tổ chức client
 
-Yêu cầu thêm Python 3, không cần thư viện ngoài:
+`Client` giữ API khởi chạy, handshake và đăng nhập. Mỗi lần đăng nhập tạo một
+`ClientSession` riêng để quản lý peer và dọn tài nguyên khi logout. `ClientConsole`
+đọc lệnh và hiển thị kết quả; `ServerDiscovery` phụ trách tìm server UDP.
+`ServerConnection` sở hữu reader server, ghép response bằng replyTo và xử lý timeout.
+`CommunityClient` giữ community đang chọn; `BroadcastFileController` xử lý file
+broadcast ở worker, theo dõi socket và hủy khi phiên đóng. File P2P dùng
+`FileTransferController`; cả hai loại offer dùng chung bộ cấp số trong mỗi phiên.
 
-```bash
-python3 scripts/test-network-resilience.py
-```
+## Kiểm thử và UI
 
-Lệnh tự biên dịch source hiện tại với Java 21 vào thư mục tạm và chạy `Client`,
-`ClientHandler` qua TCP cục bộ trên các cổng động. Không chiếm cổng `8080`/`41234`
-và không kiểm thử UDP discovery. Cần quyền mở socket cục bộ.
-
-Test in 11 nhóm kết quả với mục mong đợi, thực tế và PASS/FAIL: đăng nhập sai,
-chat hai chiều, timeout handshake/đăng nhập, client reset TCP, truyền file nhị phân,
-file rỗng, trùng tên, từ chối, đồng thời, gián đoạn, session không hợp lệ, timeout
-`/users` và `/lookup`, mất kết nối server, truyền P2P sau lỗi và logout giữa lúc nhận file.
-Thời gian thường khoảng 30–50 giây do kiểm tra timeout thật 10 giây.
-
-Mặc định test in trực tiếp output thật của ứng dụng với nhãn `[server]`, `[alice]`,
-`[bob]`, cùng các lệnh test đang gửi như `[bob >] /accept 1`. Các dòng output bao gồm
-cả `System.out` và `System.err`. Báo cáo và transcript đầy đủ của từng tiến trình
-được lưu trong một thư mục tạm; đường dẫn được in ở cuối. Để chọn chỗ lưu:
-
-```bash
-python3 scripts/test-network-resilience.py --log-dir /tmp/collaboration-network-results
-```
-
-Dùng `--quiet` nếu chỉ muốn xem báo cáo PASS/FAIL; log ứng dụng vẫn được lưu đầy đủ.
-
-Metadata offer hiện chứa SHA-256; `PEER_HELLO` chứa username, cổng listener và UUID phiên chat.
-Các peer cần cùng phiên bản giao thức này; header packet 9 byte vẫn giữ nguyên.
+Đợt thay đổi protocol này chỉ cập nhật phần protocol và CLI. Bộ test hiện có còn
+tham chiếu schema/API cũ và cần chuyển đổi trước khi chạy; việc này cùng công việc
+UI được để sau. Chưa chạy kiểm thử runtime cho schema sequence mới.
 
 ## Tài liệu
 
-Xem [Giao thức và kiến trúc hiện tại](docs/protocol.md) để biết định dạng packet nhị phân,
+Xem [Giao thức và kiến trúc hiện tại](docs/protocol.md) để biết định dạng frame JSON và binary,
 bảng opcode, sơ đồ trạng thái và các phần chưa triển khai.

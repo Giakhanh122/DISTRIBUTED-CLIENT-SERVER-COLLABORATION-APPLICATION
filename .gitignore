@@ -3,3 +3,5 @@
 /downloads/
 *.class
 __pycache__/
+
+.deps/

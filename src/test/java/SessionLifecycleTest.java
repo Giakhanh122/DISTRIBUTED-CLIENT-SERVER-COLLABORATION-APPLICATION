@@ -20,6 +20,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.function.BooleanSupplier;
 import protocols.OpCode;
 import protocols.Packet;
+import protocols.Json;
+import com.google.gson.JsonObject;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
 import server.auth.AuthService;
@@ -52,12 +54,12 @@ public class SessionLifecycleTest {
     }
 
     private static void registryLifecycle() {
-        UserSession alice = new UserSession("alice", "127.0.0.1", 10001);
-        UserSession bob = new UserSession("bob", "127.0.0.1", 10002);
-        UserSession admin = new UserSession("admin1", "127.0.0.1", 10003);
+        UserSession alice = new UserSession("alice", "127.0.0.1", 10001, null);
+        UserSession bob = new UserSession("bob", "127.0.0.1", 10002, null);
+        UserSession admin = new UserSession("admin1", "127.0.0.1", 10003, null);
         UserSessionRegistry users = new UserSessionRegistry();
         check(users.register(alice) && users.register(bob), "register online users");
-        check(!users.register(new UserSession("alice", "127.0.0.1", 20001)), "reject duplicate login");
+        check(!users.register(new UserSession("alice", "127.0.0.1", 20001, null)), "reject duplicate login");
         ChatSessionRegistry chats = new ChatSessionRegistry();
         UUID first = UUID.randomUUID();
         check(chats.connected(first, alice, bob), "first report accepted");
@@ -91,7 +93,7 @@ public class SessionLifecycleTest {
         chats.userDisconnected(alice);
         check(chats.find(replacement).orElseThrow().state() == ChatSession.State.UNKNOWN,
             "management disconnect does not prove P2P disconnect");
-        UserSession newAlice = new UserSession("alice", "127.0.0.1", 10001);
+        UserSession newAlice = new UserSession("alice", "127.0.0.1", 10001, null);
         users.register(newAlice);
         check(!chats.connected(replacement, newAlice, bob), "new login cannot reuse old session ID");
         UUID newLoginChat = UUID.randomUUID();
@@ -106,8 +108,8 @@ public class SessionLifecycleTest {
 
     private static void concurrentReports() throws Exception {
         ChatSessionRegistry chats = new ChatSessionRegistry();
-        UserSession alice = new UserSession("alice", "127.0.0.1", 10001);
-        UserSession bob = new UserSession("bob", "127.0.0.1", 10002);
+        UserSession alice = new UserSession("alice", "127.0.0.1", 10001, null);
+        UserSession bob = new UserSession("bob", "127.0.0.1", 10002, null);
         UUID id = UUID.randomUUID();
         CountDownLatch start = new CountDownLatch(1);
         List<Thread> reporters = new CopyOnWriteArrayList<>();
@@ -141,10 +143,10 @@ public class SessionLifecycleTest {
                 .anyMatch(chat -> chat.state() == ChatSession.State.CONNECTED), "P2P reports registered");
             check(server.chats.listSessions().size() == 1, "one registry entry for two clients");
             UUID first = server.chats.listSessions().getFirst().sessionId();
-            String listing = admin.request(OpCode.CHAT_SESSION_LIST_REQUEST, "",
-                OpCode.CHAT_SESSION_LIST_RESPONSE).text();
-            check(listing.contains(first.toString()) && listing.endsWith("\tCONNECTED")
-                && listing.split("\t", -1).length == 4, "server returns compact session metadata");
+            var listing = Json.array(admin.request(OpCode.CHAT_SESSION_LIST_REQUEST, "",
+                OpCode.CHAT_SESSION_LIST_RESPONSE).payload(), "sessions");
+            check(listing.size() == 1 && Json.string(listing.get(0).getAsJsonObject(), "sessionId").equals(first.toString())
+                && Json.string(listing.get(0).getAsJsonObject(), "state").equals("CONNECTED"), "server returns JSON session metadata");
             check(admin.report(first + "\nalice\nDISCONNECTED").equals("INVALID_SESSION"),
                 "wire report cannot close another pair's session");
             check(admin.report(first + "\nalice\nCONNECTED").equals("INVALID_SESSION"),
@@ -153,7 +155,7 @@ public class SessionLifecycleTest {
                 "malformed ID rejected without dropping login");
             check(admin.report(UUID.randomUUID() + "\nnobody\nCONNECTED").equals("USER_OFFLINE"),
                 "offline peer rejected");
-            check(admin.request(OpCode.USER_LIST_REQUEST, "", OpCode.USER_LIST_RESPONSE).text().contains("alice"),
+            check(Json.array(admin.request(OpCode.USER_LIST_REQUEST, "", OpCode.USER_LIST_RESPONSE).payload(), "users").contains(new com.google.gson.JsonPrimitive("alice")),
                 "existing user list still works");
 
             alice.command("hello-from-alice");
@@ -171,9 +173,13 @@ public class SessionLifecycleTest {
             await(() -> output().contains("[FILE OFFER #1]"), "P2P file offer received");
             bob.command("/accept 1");
             await(() -> output().contains("[P2P SENT] session-upload.bin completed!"), "P2P file acknowledged");
-            check(Arrays.equals(data, Files.readAllBytes(Path.of("downloads/session-upload.bin"))),
+            check(Arrays.equals(data, Files.readAllBytes(Path.of("downloads/bob/session-upload.bin"))),
                 "binary file remains intact after handshake change");
 
+            // Simulate the close report before requesting a replacement connection;
+            // the server rejects lookup while metadata still says CONNECTED.
+            check(server.chats.disconnected(first, server.users.find("alice").orElseThrow(), "bob"),
+                "close first session before replacement lookup");
             connectPeer(alice, "bob");
             await(() -> server.chats.listSessions().size() == 2
                 && server.chats.find(first).orElseThrow().state() == ChatSession.State.DISCONNECTED
@@ -337,18 +343,26 @@ public class SessionLifecycleTest {
             socket = new Socket("127.0.0.1", port);
             socket.setSoTimeout(3000);
             request(OpCode.HELLO, "", OpCode.HELLO_ACK);
-            check(request(OpCode.AUTH_REQUEST, "admin1\npassword1\n12345", OpCode.AUTH_RESPONSE).text().equals("OK"),
+            check(request(OpCode.AUTH_REQUEST, "admin1\npassword1\n12345", OpCode.AUTH_RESPONSE).status().equals("OK"),
                 "admin login");
         }
 
         Packet request(OpCode op, String payload, OpCode expected) throws IOException {
             int id = ++requestId;
-            PacketCodec.write(socket.getOutputStream(), Packet.text(op, id, payload));
+            JsonObject fields = new JsonObject();
+            if (op == OpCode.AUTH_REQUEST) {
+                String[] parts = payload.split("\n", -1);
+                fields = Json.object("username", parts[0], "password", parts[1], "peerPort", Integer.parseInt(parts[2]));
+            } else if (op == OpCode.CHAT_SESSION_REPORT) {
+                String[] parts = payload.split("\n", -1);
+                fields = Json.object("sessionId", parts[0], "peerUsername", parts[1], "state", parts[2]);
+            }
+            PacketCodec.write(socket.getOutputStream(), Packet.json(op, id, fields));
             return PacketValidator.validateResponse(PacketCodec.read(socket.getInputStream()), expected, id);
         }
 
         String report(String payload) throws IOException {
-            return request(OpCode.CHAT_SESSION_REPORT, payload, OpCode.CHAT_SESSION_REPORT_RESPONSE).text();
+            return request(OpCode.CHAT_SESSION_REPORT, payload, OpCode.CHAT_SESSION_REPORT_RESPONSE).status();
         }
 
         @Override public void close() throws IOException { socket.close(); }

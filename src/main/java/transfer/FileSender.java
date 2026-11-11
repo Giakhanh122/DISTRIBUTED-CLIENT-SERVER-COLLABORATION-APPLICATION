@@ -4,15 +4,15 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 import protocols.FileTransferMeta;
 import protocols.OpCode;
+import protocols.Json;
 import protocols.Packet;
-import protocols.PacketCodec;
+import protocols.PacketChannel;
 import protocols.PacketValidator;
 
 public class FileSender {
@@ -26,19 +26,20 @@ public class FileSender {
 
     private final File file;
     private final String transferId;
-    private final OutputStream output;
+    private final PacketChannel channel;
+    private long endSequence;
     private final FileTransferSession session;
     private final ProgressListener listener;
 
-    public FileSender(File file, String transferId, OutputStream output) {
-        this(file, transferId, output, null, null);
+    public FileSender(File file, String transferId, PacketChannel channel) {
+        this(file, transferId, channel, null, null);
     }
 
-    public FileSender(File file, String transferId, OutputStream output,
+    public FileSender(File file, String transferId, PacketChannel channel,
                       FileTransferSession session, ProgressListener listener) {
         this.file = Objects.requireNonNull(file, "file must not be null");
         this.transferId = Objects.requireNonNull(transferId, "transferId must not be null");
-        this.output = Objects.requireNonNull(output, "output must not be null");
+        this.channel = Objects.requireNonNull(channel, "channel");
         this.session = session;
         this.listener = listener;
     }
@@ -69,7 +70,6 @@ public class FileSender {
         }
 
         long totalBytesSent = 0;
-        int chunkIndex = 0;
 
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[CHUNK_SIZE];
@@ -81,19 +81,9 @@ public class FileSender {
                 }
                 digest.update(buffer, 0, bytesRead);
 
-                byte[] chunkData;
-                if (bytesRead == buffer.length) {
-                    chunkData = buffer.clone();
-                } else {
-                    chunkData = new byte[bytesRead];
-                    System.arraycopy(buffer, 0, chunkData, 0, bytesRead);
-                }
-
-                Packet chunkPacket = new Packet(OpCode.FILE_CHUNK, chunkIndex, chunkData);
-                PacketCodec.write(output, chunkPacket);
+                channel.writeRaw(buffer, 0, bytesRead);
 
                 totalBytesSent += bytesRead;
-                chunkIndex++;
 
                 if (session != null) {
                     session.addBytesTransferred(bytesRead);
@@ -116,19 +106,20 @@ public class FileSender {
             throw new IOException("Source file changed since the offer was created");
         }
 
-        Packet endPacket = Packet.text(OpCode.FILE_END, chunkIndex, checksumHex);
-        PacketCodec.write(output, endPacket);
+        Packet endPacket = Packet.json(OpCode.FILE_END, Json.object("transferId", transferId, "checksum", checksumHex));
+        endSequence = channel.send(endPacket);
 
         return checksumHex;
     }
 
-    public void awaitResult(InputStream input) throws IOException {
+    public void awaitResult() throws IOException {
         try {
-            Packet result = PacketValidator.validateResponse(PacketCodec.read(input), OpCode.FILE_RESULT, 0);
-            String status = result.text();
+            Packet result = PacketValidator.validateResponse(channel.read(), OpCode.FILE_RESULT);
+            String status = result.status();
             if (!status.equals("OK")) {
-                throw new IOException("Receiver rejected file: " + status);
+                throw new IOException("Receiver rejected file: " + status + " " + result.jsonBody());
             }
+            PacketValidator.validateResponse(result, OpCode.FILE_RESULT, endSequence);
             if (session != null) {
                 session.complete();
             }

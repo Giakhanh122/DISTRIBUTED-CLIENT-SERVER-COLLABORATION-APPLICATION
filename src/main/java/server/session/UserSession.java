@@ -1,10 +1,10 @@
 package server.session;
 
-import java.net.Socket;
+import protocols.PacketChannel;
 
 public record UserSession(
         String username,
         String ip,
         int port,
-        Socket clientSocket) {
+        PacketChannel channel) {
 }

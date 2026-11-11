@@ -1,24 +1,21 @@
 package server.connection;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
+import protocols.Json;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
+import protocols.PacketChannel;
 import protocols.PacketValidator;
 import server.auth.AuthService;
 import server.broadcast.BroadcastFileMeta;
@@ -31,15 +28,14 @@ import server.session.UserSessionRegistry;
 import server.session.UserSession;
 import server.storage.FileStorageService;
 import transfer.FileSender;
+import transfer.FileDataReader;
 
 public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
     private static final int MAX_COMMUNITY_BYTES = 4096;
     private static final long MAX_BROADCAST_FILE_SIZE = 100L * 1024 * 1024;
-    private static final int CHUNK_SIZE = 64 * 1024;
 
-    private static final ExecutorService downloadPool = Executors.newFixedThreadPool(10);
 
     private final Socket socket;
     private final UserSessionRegistry userSessions;
@@ -50,7 +46,7 @@ public class ClientHandler implements Runnable {
     private final FileStorageService fileStorageService;
 
     private UserSession session;
-    private OutputStream output;
+    private PacketChannel channel;
 
     public ClientHandler(Socket socket, UserSessionRegistry userSessions,
             ChatSessionRegistry chatSessions, AuthService authService) {
@@ -77,38 +73,42 @@ public class ClientHandler implements Runnable {
         try (socket) {
             socket.setSoTimeout(10000);
 
-            InputStream input = socket.getInputStream();
-            this.output = socket.getOutputStream();
+            channel = new PacketChannel(socket);
 
-            Packet first = PacketCodec.read(input);
+            Packet first = channel.read();
             if (first == null) return;
 
             // Demultiplex: HELLO = normal client, upload/download start = file data connection
             if (first.op() == OpCode.FILE_BROADCAST_UPLOAD_START) {
-                handleBroadcastUploadConnection(first, input);
+                handleBroadcastUploadConnection(first);
                 return;
             }
             if (first.op() == OpCode.FILE_BROADCAST_DOWNLOAD_START) {
-                handleBroadcastDownloadConnection(first, input);
+                handleBroadcastDownloadConnection(first);
                 return;
             }
 
             // Normal client session
-            if (first.op() != OpCode.HELLO || first.payloadLength() != 0) {
+            if (first.op() != OpCode.HELLO) {
                 System.err.println("Invalid or missing HELLO from " + address);
                 return;
             }
 
-            Packet response = new Packet(OpCode.HELLO_ACK, first.requestId(), new byte[0]);
-            sendPacket(response);
+            if (first.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
+                channel.send(Packet.status(OpCode.HELLO_ACK, first.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
+                return;
+            }
+
+            Packet response = Packet.reply(OpCode.HELLO_ACK, first.sequence(), Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION));
+            channel.send(response);
             System.out.println("Handshake successful with " + address);
 
-            if (!handleAuth(input)) {
+            if (!handleAuth()) {
                 return;
             }
 
             socket.setSoTimeout(0);
-            readPackets(input);
+            readPackets();
         } catch (IOException e) {
             System.err.println("Client " + address + " error: " + e.getMessage());
         } finally {
@@ -122,22 +122,15 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    public synchronized void sendPacket(Packet packet) throws IOException {
-        if (output == null) {
-            throw new IOException("Client output is not available");
-        }
-        PacketCodec.write(output, packet);
-    }
-
-    private void readPackets(InputStream input) throws IOException {
+    private void readPackets() throws IOException {
         Packet packet;
-        while ((packet = PacketCodec.read(input)) != null) {
+        while ((packet = channel.read()) != null) {
             switch (packet.op()) {
                 case CHAT_MESSAGE -> {
-                    if (packet.payloadLength() > MAX_CHAT_BYTES) {
+                    if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds limit");
                     }
-                    String message = packet.text();
+                    String message = packet.string("content");
                     System.out.println(session.username() + ": " + message);
                 }
 
@@ -167,7 +160,7 @@ public class ClientHandler implements Runnable {
 
                 case LOGOUT_REQUEST -> {
                     PacketValidator.validateRequest(packet, OpCode.LOGOUT_REQUEST, 0, 0);
-                    sendPacket(Packet.text(OpCode.LOGOUT_RESPONSE, packet.requestId(), ""));
+                    channel.send(Packet.status(OpCode.LOGOUT_RESPONSE, packet.sequence(), "OK"));
                     return;
                 }
 
@@ -176,8 +169,8 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private boolean handleAuth(InputStream input) throws IOException {
-        Packet request = PacketCodec.read(input);
+    private boolean handleAuth() throws IOException {
+        Packet request = channel.read();
 
         try {
             PacketValidator.validateRequest(request, OpCode.AUTH_REQUEST, 0, MAX_AUTH_BYTES);
@@ -185,34 +178,24 @@ public class ClientHandler implements Runnable {
             return false;
         }
 
-        String credentials = request.text();
-        String[] parts = credentials.split("\n", -1);
-
         String status;
+        String username = "";
+        String password = "";
         int peerPort = 0;
-
-        if (parts.length == 3) {
-            try {
-                peerPort = Integer.parseInt(parts[2]);
-            } catch (NumberFormatException e) {
-            }
+        try {
+            username = request.string("username");
+            password = request.string("password");
+            peerPort = request.integer("peerPort");
+        } catch (IOException e) {
+            // A well-framed but malformed auth request receives a structured failure.
         }
-
-        if (parts.length != 3
-                || parts[0].isBlank()
-                || parts[1].isEmpty()
-                || peerPort < 1
-                || peerPort > 65535) {
+        if (username.isBlank() || password.isEmpty() || peerPort < 1 || peerPort > 65535) {
             status = "INVALID_AUTH_REQUEST";
-        } else if (!authService.authenticate(parts[0], parts[1])) {
+        } else if (!authService.authenticate(username, password)) {
             status = "INVALID_CREDENTIALS";
         } else {
-            UserSession candidate = new UserSession(
-                    parts[0],
-                    socket.getInetAddress().getHostAddress(),
-                    peerPort,
-                    socket);
-
+            UserSession candidate = new UserSession(username,
+                    socket.getInetAddress().getHostAddress(), peerPort, channel);
             if (userSessions.register(candidate)) {
                 session = candidate;
                 status = "OK";
@@ -221,8 +204,8 @@ public class ClientHandler implements Runnable {
             }
         }
 
-        Packet response = Packet.text(OpCode.AUTH_RESPONSE, request.requestId(), status);
-        sendPacket(response);
+        Packet response = Packet.status(OpCode.AUTH_RESPONSE, request.sequence(), status);
+        channel.send(response);
 
         return status.equals("OK");
     }
@@ -230,59 +213,50 @@ public class ClientHandler implements Runnable {
     private void handleUserList(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.USER_LIST_REQUEST, 0, 0);
 
-        String usernames = userSessions.listOnlineUsers().stream()
-                .map(UserSession::username)
-                .sorted()
-                .collect(Collectors.joining("\n"));
+        var usernames = userSessions.listOnlineUsers().stream()
+                .map(UserSession::username).sorted().toList();
+        Packet response = Packet.reply(OpCode.USER_LIST_RESPONSE, request.sequence(),
+                Json.object("status", "OK", "users", usernames));
 
-        Packet response = Packet.text(OpCode.USER_LIST_RESPONSE, request.requestId(), usernames);
-
-        sendPacket(response);
+        channel.send(response);
     }
 
     private void handlePeerLookup(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.PEER_LOOKUP_REQUEST, 1, PacketCodec.MAX_PAYLOAD_LENGTH);
+        PacketValidator.validateRequest(request, OpCode.PEER_LOOKUP_REQUEST, 1, PacketCodec.MAX_JSON_LENGTH);
 
-        String data = request.text();
-
-        String[] parts = data.split("\n");
-
-        String targetUsername = parts[0];
-        String username = parts[1];
-
+        String targetUsername = request.string("username");
         Optional<UserSession> target = userSessions.find(targetUsername);
-        String payload;
+        JsonObject payload;
         if (target.isEmpty()) {
-            payload = "USER_OFFLINE";
-        } else if (chatSessions.isConnected(username, targetUsername)) {
-            payload = "ALREADY_CONNECTED";
+            payload = Json.object("status", "USER_OFFLINE");
+        } else if (chatSessions.isConnected(session.username(), targetUsername)) {
+            payload = Json.object("status", "ALREADY_CONNECTED");
         } else {
             UserSession targetUser = target.get();
-            payload = "OK\n" + targetUser.ip() + "\n" + targetUser.port();
+            payload = Json.object("status", "OK", "ip", targetUser.ip(), "peerPort", targetUser.port());
         }
-
-        Packet response = Packet.text(OpCode.PEER_LOOKUP_RESPONSE, request.requestId(), payload);
-        sendPacket(response);
+        Packet response = Packet.reply(OpCode.PEER_LOOKUP_RESPONSE, request.sequence(), payload);
+        channel.send(response);
     }
 
     private void handleChatSessionReport(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_REPORT, 1, MAX_AUTH_BYTES);
-        String[] parts = request.text().split("\n", -1);
         String status = "INVALID_SESSION_REPORT";
-        if (parts.length == 3 && !parts[1].isBlank()
-                && !parts[1].equals(session.username())) {
-            try {
-                UUID id = UUID.fromString(parts[0]);
-                if (id.toString().equals(parts[0])) {
-                    synchronized (userSessions) {
-                        status = applyChatSessionReport(id, parts[1], parts[2]);
-                    }
+        try {
+            String idText = request.string("sessionId");
+            String peerUsername = request.string("peerUsername");
+            String state = request.string("state");
+            UUID id = UUID.fromString(idText);
+            if (id.toString().equals(idText) && !peerUsername.isBlank()
+                    && !peerUsername.equals(session.username())) {
+                synchronized (userSessions) {
+                    status = applyChatSessionReport(id, peerUsername, state);
                 }
-            } catch (IllegalArgumentException e) {
-                // Malformed metadata is rejected without closing the management connection.
             }
+        } catch (IllegalArgumentException | IOException e) {
+            // Invalid session metadata does not close the management connection.
         }
-        sendPacket(Packet.text(OpCode.CHAT_SESSION_REPORT_RESPONSE, request.requestId(), status));
+        channel.send(Packet.status(OpCode.CHAT_SESSION_REPORT_RESPONSE, request.sequence(), status));
     }
 
     private String applyChatSessionReport(UUID id, String peerUsername, String state) {
@@ -300,77 +274,75 @@ public class ClientHandler implements Runnable {
 
     private void handleChatSessionList(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_LIST_REQUEST, 0, 0);
-        String payload = chatSessions.listSessions().stream()
+        JsonArray sessions = new JsonArray();
+        chatSessions.listSessions().stream()
                 .sorted(java.util.Comparator.comparing(ChatSession::sessionId))
-                .map(chat -> chat.sessionId() + "\t" + chat.userA().username() + "\t"
-                        + chat.userB().username() + "\t" + chat.state())
-                .collect(Collectors.joining("\n"));
-        sendPacket(Packet.text(OpCode.CHAT_SESSION_LIST_RESPONSE, request.requestId(), payload));
+                .forEach(chat -> sessions.add(Json.object("sessionId", chat.sessionId().toString(),
+                        "userA", chat.userA().username(), "userB", chat.userB().username(),
+                        "state", chat.state().name())));
+        channel.send(Packet.reply(OpCode.CHAT_SESSION_LIST_RESPONSE, request.sequence(),
+                Json.object("status", "OK", "sessions", sessions)));
     }
 
     // ======================== Community Handlers ========================
 
     private void handleCommunityList(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_LIST_REQUEST, 0, 0);
-        String result = communityService.listCommunities(session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_LIST_RESPONSE, request.requestId(), result));
+        JsonObject result = communityService.listCommunities(session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_LIST_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunityCreate(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_CREATE_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String name = request.text();
-        String result = communityService.createCommunity(name, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_CREATE_RESPONSE, request.requestId(), result));
+        String name = request.string("name");
+        JsonObject result = communityService.createCommunity(name, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_CREATE_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunityJoin(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_JOIN_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String communityId = request.text();
-        String result = communityService.joinCommunity(communityId, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_JOIN_RESPONSE, request.requestId(), result));
+        String communityId = request.string("communityId");
+        JsonObject result = communityService.joinCommunity(communityId, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_JOIN_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunityLeave(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_LEAVE_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String communityId = request.text();
-        String result = communityService.leaveCommunity(communityId, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_LEAVE_RESPONSE, request.requestId(), result));
+        String communityId = request.string("communityId");
+        JsonObject result = communityService.leaveCommunity(communityId, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_LEAVE_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunityMembers(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_MEMBERS_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String communityId = request.text();
-        String result = communityService.listMembers(communityId, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_MEMBERS_RESPONSE, request.requestId(), result));
+        String communityId = request.string("communityId");
+        JsonObject result = communityService.listMembers(communityId, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_MEMBERS_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunitySelect(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_SELECT_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String communityId = request.text();
-        String result = communityService.selectCommunity(communityId, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_SELECT_RESPONSE, request.requestId(), result));
+        String communityId = request.string("communityId");
+        JsonObject result = communityService.selectCommunity(communityId, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_SELECT_RESPONSE, request.sequence(), result));
     }
 
     private void handleCommunityInfo(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.COMMUNITY_INFO_REQUEST, 1, MAX_COMMUNITY_BYTES);
-        String communityId = request.text();
-        String result = communityService.communityInfo(communityId, session.username());
-        sendPacket(Packet.text(OpCode.COMMUNITY_INFO_RESPONSE, request.requestId(), result));
+        String communityId = request.string("communityId");
+        JsonObject result = communityService.communityInfo(communityId, session.username());
+        channel.send(Packet.reply(OpCode.COMMUNITY_INFO_RESPONSE, request.sequence(), result));
     }
 
     // ======================== Broadcast Message (community-scoped) ========================
 
     private void handleBroadcastMessage(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.CHAT_MESSAGE_BROADCAST, 0, MAX_CHAT_BYTES);
-        String payload = request.text();
-
-        // Payload format: communityId\n<message>
-        int sep = payload.indexOf('\n');
-        if (sep <= 0) {
-            throw new IOException("Invalid broadcast payload");
+        PacketValidator.validateRequest(request, OpCode.CHAT_MESSAGE_BROADCAST, 1, PacketCodec.MAX_JSON_LENGTH);
+        String communityId = request.string("communityId");
+        String message = request.string("content");
+        if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
+            throw new IOException("Message exceeds limit");
         }
-        String communityId = payload.substring(0, sep);
-        String message = payload.substring(sep + 1);
 
         // Validate membership
         if (communityService == null) {
@@ -381,8 +353,9 @@ public class ClientHandler implements Runnable {
             throw new IOException("Not a member of the target community");
         }
 
-        // Build the broadcast packet (without communityId, just the message for recipients)
-        Packet broadcastPkt = Packet.text(OpCode.CHAT_MESSAGE_BROADCAST, request.requestId(), message);
+        // Include sender and community context in the broadcast event.
+        Packet broadcastPkt = Packet.json(OpCode.CHAT_MESSAGE_BROADCAST,
+                Json.object("communityId", communityId, "sender", session.username(), "content", message));
 
         Set<String> members = community.members();
         List<UserSession> onlineUsers = userSessions.listOnlineUsers();
@@ -393,9 +366,7 @@ public class ClientHandler implements Runnable {
             if (u.username().equals(session.username())) continue;
 
             try {
-                synchronized (u.clientSocket().getOutputStream()) {
-                    PacketCodec.write(u.clientSocket().getOutputStream(), broadcastPkt);
-                }
+                u.channel().send(broadcastPkt);
             } catch (IOException e) {
                 System.err.println("Broadcast to " + u.username() + " failed: " + e.getMessage());
                 // Continue to other recipients
@@ -407,31 +378,31 @@ public class ClientHandler implements Runnable {
 
     private void handleBroadcastFileUploadRequest(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.FILE_BROADCAST_UPLOAD_REQUEST, 1, MAX_COMMUNITY_BYTES * 2);
-        // Payload: communityId\nfileName\nfileSize\nchecksum
-        String[] parts = request.text().split("\n", -1);
-        if (parts.length != 4) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.requestId(), "INVALID_REQUEST"));
-            return;
-        }
-        String communityId = parts[0];
-        String fileName = parts[1];
+        String communityId;
+        String fileName;
+        String checksum;
         long fileSize;
         try {
-            fileSize = Long.parseLong(parts[2]);
-        } catch (NumberFormatException e) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.requestId(), "INVALID_SIZE"));
+            communityId = request.string("communityId");
+            fileName = request.string("fileName");
+            checksum = request.string("checksum");
+            fileSize = request.longValue("fileSize");
+        } catch (IOException e) {
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
             return;
         }
-        String checksum = parts[3];
-
-        if (fileSize <= 0 || fileSize > MAX_BROADCAST_FILE_SIZE) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.requestId(), "INVALID_SIZE"));
+        if (fileSize < 0 || fileSize > MAX_BROADCAST_FILE_SIZE) {
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_SIZE"));
+            return;
+        }
+        if (fileName.isBlank() || !checksum.matches("[0-9a-f]{64}")) {
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
             return;
         }
 
         Community community = communityService.validateMembership(communityId, session.username());
         if (community == null) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.requestId(), "NOT_MEMBER"));
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "NOT_MEMBER"));
             return;
         }
 
@@ -441,112 +412,54 @@ public class ClientHandler implements Runnable {
         broadcastFileRegistry.register(meta);
         String uploadToken = broadcastFileRegistry.createUploadToken(fileId);
 
-        // Response: OK\nfileId\nuploadToken
-        sendPacket(Packet.text(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.requestId(),
-                "OK\n" + fileId + "\n" + uploadToken));
+        channel.send(Packet.reply(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(),
+                Json.object("status", "OK", "fileId", fileId, "uploadToken", uploadToken)));
     }
 
-    private void handleBroadcastUploadConnection(Packet startPacket, InputStream input) throws IOException {
-        // Payload: uploadToken\nfileId
-        String[] parts = startPacket.text().split("\n", -1);
-        if (parts.length != 2) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Invalid upload start"));
-            return;
-        }
-        String uploadToken = parts[0];
-        String fileId = parts[1];
+    private void handleBroadcastUploadConnection(Packet startPacket) throws IOException {
+        String uploadToken = startPacket.string("uploadToken");
+        String fileId = startPacket.string("fileId");
 
         String tokenFileId = broadcastFileRegistry.consumeUploadToken(uploadToken);
         if (tokenFileId == null || !tokenFileId.equals(fileId)) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Invalid or expired token"));
+            channel.send(Packet.failure(channel.lastReceivedSequence(), "Invalid or expired token"));
             return;
         }
 
         BroadcastFileMeta meta = broadcastFileRegistry.find(fileId).orElse(null);
         if (meta == null) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: File not found"));
+            channel.send(Packet.failure(channel.lastReceivedSequence(), "File not found"));
             return;
         }
 
         socket.setSoTimeout(60000);
 
-        // Receive file chunks using the same protocol as P2P: FILE_CHUNK packets then FILE_END
-        MessageDigest digest;
         try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
-
-        long received = 0;
-        int expectedIndex = 0;
-        String remoteChecksum;
-
-        try (OutputStream fileOut = fileStorageService.openTempForWrite(fileId)) {
-            while (true) {
-                Packet packet = PacketCodec.read(input);
-                if (packet == null) {
-                    fileStorageService.deleteTempIfExists(fileId);
-                    sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Connection closed"));
-                    return;
-                }
-                if (packet.op() == OpCode.FILE_CHUNK) {
-                    if (packet.requestId() != expectedIndex) {
-                        fileStorageService.deleteTempIfExists(fileId);
-                        sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Out of order chunk"));
-                        return;
-                    }
-                    byte[] data = packet.data();
-                    if (data.length <= 0 || data.length > CHUNK_SIZE) {
-                        fileStorageService.deleteTempIfExists(fileId);
-                        sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Invalid chunk size"));
-                        return;
-                    }
-                    if (received + data.length > meta.fileSize()) {
-                        fileStorageService.deleteTempIfExists(fileId);
-                        sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Exceeds declared size"));
-                        return;
-                    }
-                    fileOut.write(data);
-                    digest.update(data);
-                    received += data.length;
-                    expectedIndex++;
-                } else if (packet.op() == OpCode.FILE_END) {
-                    remoteChecksum = packet.text();
-                    break;
-                } else {
-                    fileStorageService.deleteTempIfExists(fileId);
-                    sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Unexpected packet " + packet.op()));
-                    return;
-                }
+            try (OutputStream fileOut = fileStorageService.openTempForWrite(fileId)) {
+                FileDataReader.receive(channel, fileOut, fileId, meta.fileSize(), meta.checksum(), null);
             }
-        }
 
-        // Verify
-        String computedChecksum = HexFormat.of().formatHex(digest.digest());
-        if (received != meta.fileSize()) {
-            fileStorageService.deleteTempIfExists(fileId);
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0,
-                    "FAIL: Size mismatch, expected " + meta.fileSize() + " got " + received));
-            return;
-        }
-        if (!computedChecksum.equals(meta.checksum()) || !computedChecksum.equals(remoteChecksum)) {
-            fileStorageService.deleteTempIfExists(fileId);
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Checksum mismatch"));
-            return;
-        }
+            // Commit file
+            fileStorageService.commit(fileId, meta.fileName());
+            channel.send(Packet.status(OpCode.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
 
-        // Commit file
-        fileStorageService.commit(fileId, meta.fileName());
-        sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "OK"));
+        } catch (IOException | RuntimeException e) {
+            fileStorageService.deleteTempIfExists(fileId);
+            try {
+                channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));
+            } catch (IOException resultError) {
+                e.addSuppressed(resultError);
+            }
+            throw e;
+        }
 
         // Broadcast offer to community members (excluding sender)
         Community community = communityService.validateMembership(meta.communityId(), meta.sender());
         if (community != null) {
-            // Offer payload: fileId\tsender\tfilename\tfileSize\tchecksum
-            String offerPayload = meta.fileId() + "\t" + meta.sender() + "\t" +
-                    meta.fileName() + "\t" + meta.fileSize() + "\t" + meta.checksum();
-            Packet offerPacket = Packet.text(OpCode.FILE_BROADCAST_OFFER, 0, offerPayload);
+            Packet offerPacket = Packet.json(OpCode.FILE_BROADCAST_OFFER,
+                    Json.object("fileId", meta.fileId(), "sender", meta.sender(),
+                            "communityId", meta.communityId(), "fileName", meta.fileName(),
+                            "fileSize", meta.fileSize(), "checksum", meta.checksum()));
 
             Set<String> members = community.members();
             List<UserSession> onlineUsers = userSessions.listOnlineUsers();
@@ -558,9 +471,7 @@ public class ClientHandler implements Runnable {
                 meta.setRecipientState(u.username(), BroadcastFileMeta.RecipientState.PENDING);
 
                 try {
-                    synchronized (u.clientSocket().getOutputStream()) {
-                        PacketCodec.write(u.clientSocket().getOutputStream(), offerPacket);
-                    }
+                    u.channel().send(offerPacket);
                 } catch (IOException e) {
                     System.err.println("Broadcast offer to " + u.username() + " failed: " + e.getMessage());
                 }
@@ -570,64 +481,52 @@ public class ClientHandler implements Runnable {
 
     private void handleBroadcastFileDecision(Packet request) throws IOException {
         PacketValidator.validateRequest(request, OpCode.FILE_BROADCAST_DECISION, 1, MAX_COMMUNITY_BYTES);
-        // Payload: fileId\nACCEPT or fileId\nREJECT
-        String[] parts = request.text().split("\n", -1);
-        if (parts.length != 2) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(), "INVALID_DECISION"));
-            return;
-        }
-        String fileId = parts[0];
-        String decision = parts[1];
+        String fileId = request.string("fileId");
+        String decision = request.string("decision");
 
         BroadcastFileMeta meta = broadcastFileRegistry.find(fileId).orElse(null);
         if (meta == null) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(), "NOT_FOUND"));
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_FOUND"));
             return;
         }
 
         if (decision.equals("REJECT")) {
             meta.setRecipientState(session.username(), BroadcastFileMeta.RecipientState.REJECTED);
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(), "REJECTED"));
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "REJECTED"));
             return;
         }
 
         if (!decision.equals("ACCEPT")) {
-            sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(), "INVALID_DECISION"));
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "INVALID_DECISION"));
             return;
         }
 
         // ACCEPT
         meta.setRecipientState(session.username(), BroadcastFileMeta.RecipientState.ACCEPTED);
         String downloadToken = broadcastFileRegistry.createDownloadToken(fileId, session.username());
-        sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(),
-                "OK\n" + downloadToken));
+        channel.send(Packet.reply(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(),
+                Json.object("status", "OK", "downloadToken", downloadToken)));
     }
 
     private void handleBroadcastFileDownloadRequest(Packet request) throws IOException {
         // This is sent on the control connection to initiate a download (alternative path)
         // But we use dedicated data connections, so just acknowledge
-        sendPacket(Packet.text(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.requestId(), "USE_DATA_CONNECTION"));
+        channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "USE_DATA_CONNECTION"));
     }
 
-    private void handleBroadcastDownloadConnection(Packet startPacket, InputStream input) throws IOException {
-        // Payload: downloadToken\nfileId
-        String[] parts = startPacket.text().split("\n", -1);
-        if (parts.length != 2) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Invalid download start"));
-            return;
-        }
-        String downloadToken = parts[0];
-        String fileId = parts[1];
+    private void handleBroadcastDownloadConnection(Packet startPacket) throws IOException {
+        String downloadToken = startPacket.string("downloadToken");
+        String fileId = startPacket.string("fileId");
 
         BroadcastFileRegistry.DownloadToken token = broadcastFileRegistry.consumeDownloadToken(downloadToken);
         if (token == null || !token.fileId().equals(fileId)) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: Invalid or expired token"));
+            channel.send(Packet.failure(channel.lastReceivedSequence(), "Invalid or expired token"));
             return;
         }
 
         BroadcastFileMeta meta = broadcastFileRegistry.find(fileId).orElse(null);
         if (meta == null) {
-            sendPacket(Packet.text(OpCode.FILE_RESULT, 0, "FAIL: File not found"));
+            channel.send(Packet.failure(channel.lastReceivedSequence(), "File not found"));
             return;
         }
 
@@ -637,16 +536,11 @@ public class ClientHandler implements Runnable {
         try {
             // Stream the file using FileSender-compatible protocol
             java.io.File storedFile = fileStorageService.committedPath(fileId, meta.fileName()).toFile();
-            FileSender sender = new FileSender(storedFile, fileId, output);
+            FileSender sender = new FileSender(storedFile, fileId, channel);
             sender.send();
 
-            // Wait for FILE_RESULT from client
-            Packet result = PacketCodec.read(input);
-            if (result != null && result.op() == OpCode.FILE_RESULT && result.text().equals("OK")) {
-                meta.setRecipientState(token.username(), BroadcastFileMeta.RecipientState.COMPLETED);
-            } else {
-                meta.setRecipientState(token.username(), BroadcastFileMeta.RecipientState.FAILED);
-            }
+            sender.awaitResult();
+            meta.setRecipientState(token.username(), BroadcastFileMeta.RecipientState.COMPLETED);
         } catch (IOException e) {
             meta.setRecipientState(token.username(), BroadcastFileMeta.RecipientState.FAILED);
             throw e;

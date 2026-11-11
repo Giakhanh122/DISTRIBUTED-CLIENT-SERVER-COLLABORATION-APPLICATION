@@ -1,8 +1,9 @@
 package server.community;
 
-import java.util.List;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import java.util.Optional;
-import java.util.Set;
+import protocols.Json;
 import server.session.UserSessionRegistry;
 
 public class CommunityService {
@@ -14,122 +15,78 @@ public class CommunityService {
         this.userSessions = userSessions;
     }
 
-    /** List all communities with membership info for the requesting user. */
-    public String listCommunities(String username) {
-        List<Community> all = registry.listAll();
-        if (all.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < all.size(); i++) {
-            Community c = all.get(i);
-            if (i > 0) sb.append("\n");
-            // Format: id\tname\towner\tmemberCount\tisMember
-            sb.append(c.communityId()).append("\t")
-              .append(c.name()).append("\t")
-              .append(c.ownerUsername()).append("\t")
-              .append(c.memberCount()).append("\t")
-              .append(c.isMember(username));
-        }
-        return sb.toString();
+    public JsonObject listCommunities(String username) {
+        JsonArray communities = new JsonArray();
+        for (Community community : registry.listAll()) communities.add(describe(community, username));
+        return Json.object("status", "OK", "communities", communities);
     }
 
-    /** Create a new community. Returns "OK\n<id>\n<name>" or error string. */
-    public String createCommunity(String name, String ownerUsername) {
-        if (name == null || name.isBlank()) {
-            return "INVALID_NAME";
-        }
-        if (name.length() > 100) {
-            return "NAME_TOO_LONG";
-        }
+    public JsonObject createCommunity(String name, String ownerUsername) {
+        if (name == null || name.isBlank()) return status("INVALID_NAME");
+        if (name.length() > 100) return status("NAME_TOO_LONG");
         Community community = new Community(name.trim(), ownerUsername);
         registry.register(community);
-        return "OK\n" + community.communityId() + "\n" + community.name();
+        return selected(community);
     }
 
-    /** Join a community. Returns "OK\n<id>\n<name>" or error string. */
-    public String joinCommunity(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) {
-            return "NOT_FOUND";
-        }
-        Community c = opt.get();
-        if (c.isMember(username)) {
-            return "ALREADY_MEMBER";
-        }
-        c.addMember(username);
-        return "OK\n" + c.communityId() + "\n" + c.name();
+    public JsonObject joinCommunity(String communityId, String username) {
+        Optional<Community> found = registry.find(communityId);
+        if (found.isEmpty()) return status("NOT_FOUND");
+        Community community = found.get();
+        if (community.isMember(username)) return status("ALREADY_MEMBER");
+        community.addMember(username);
+        return selected(community);
     }
 
-    /** Leave a community. Returns "OK" or error string. */
-    public String leaveCommunity(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) {
-            return "NOT_FOUND";
-        }
-        Community c = opt.get();
-        if (!c.isMember(username)) {
-            return "NOT_MEMBER";
-        }
-        if (c.isOwner(username)) {
-            return "OWNER_CANNOT_LEAVE";
-        }
-        c.removeMember(username);
-        return "OK";
+    public JsonObject leaveCommunity(String communityId, String username) {
+        Optional<Community> found = registry.find(communityId);
+        if (found.isEmpty()) return status("NOT_FOUND");
+        Community community = found.get();
+        if (!community.isMember(username)) return status("NOT_MEMBER");
+        if (community.isOwner(username)) return status("OWNER_CANNOT_LEAVE");
+        community.removeMember(username);
+        return status("OK");
     }
 
-    /** List members of a community. Returns newline-separated "username\tonline" or error. */
-    public String listMembers(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) {
-            return "NOT_FOUND";
-        }
-        Community c = opt.get();
-        if (!c.isMember(username)) {
-            return "NOT_MEMBER";
-        }
-        Set<String> members = c.members();
-        if (members.isEmpty()) return "OK\n";
-        StringBuilder sb = new StringBuilder("OK\n");
-        boolean first = true;
-        for (String member : members) {
-            if (!first) sb.append("\n");
-            first = false;
-            boolean online = userSessions.find(member).isPresent();
-            sb.append(member).append("\t").append(online);
-        }
-        return sb.toString();
+    public JsonObject listMembers(String communityId, String username) {
+        Optional<Community> found = registry.find(communityId);
+        if (found.isEmpty()) return status("NOT_FOUND");
+        Community community = found.get();
+        if (!community.isMember(username)) return status("NOT_MEMBER");
+        JsonArray members = new JsonArray();
+        community.members().stream().sorted().forEach(member -> members.add(
+                Json.object("username", member, "online", userSessions.find(member).isPresent())));
+        return Json.object("status", "OK", "members", members);
     }
 
-    /** Select a community (verify membership). Returns "OK\n<id>\n<name>" or error. */
-    public String selectCommunity(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) {
-            return "NOT_FOUND";
-        }
-        Community c = opt.get();
-        if (!c.isMember(username)) {
-            return "NOT_MEMBER";
-        }
-        return "OK\n" + c.communityId() + "\n" + c.name();
+    public JsonObject selectCommunity(String communityId, String username) {
+        Optional<Community> found = registry.find(communityId);
+        if (found.isEmpty()) return status("NOT_FOUND");
+        if (!found.get().isMember(username)) return status("NOT_MEMBER");
+        return selected(found.get());
     }
 
-    /** Get community info. Returns multi-field response or error. */
-    public String communityInfo(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) {
-            return "NOT_FOUND";
-        }
-        Community c = opt.get();
-        // Format: OK\nid\tname\towner\tmemberCount\tisMember\tcreatedAt
-        return "OK\n" + c.communityId() + "\t" + c.name() + "\t" + c.ownerUsername()
-                + "\t" + c.memberCount() + "\t" + c.isMember(username) + "\t" + c.createdAt();
+    public JsonObject communityInfo(String communityId, String username) {
+        Optional<Community> found = registry.find(communityId);
+        if (found.isEmpty()) return status("NOT_FOUND");
+        return Json.object("status", "OK", "community", describe(found.get(), username));
     }
 
-    /** Validate membership for broadcast. Returns the community or null. */
     public Community validateMembership(String communityId, String username) {
-        Optional<Community> opt = registry.find(communityId);
-        if (opt.isEmpty()) return null;
-        Community c = opt.get();
-        if (!c.isMember(username)) return null;
-        return c;
+        return registry.find(communityId).filter(c -> c.isMember(username)).orElse(null);
+    }
+
+    private static JsonObject status(String status) {
+        return Json.object("status", status);
+    }
+
+    private static JsonObject selected(Community community) {
+        return Json.object("status", "OK", "communityId", community.communityId(), "name", community.name());
+    }
+
+    private static JsonObject describe(Community community, String username) {
+        return Json.object("communityId", community.communityId(), "name", community.name(),
+                "owner", community.ownerUsername(), "memberCount", community.memberCount(),
+                "isMember", community.isMember(username), "createdAt", community.createdAt().toString());
     }
 }

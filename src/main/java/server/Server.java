@@ -10,6 +10,7 @@ import java.net.Socket;
 import java.nio.file.Path;
 
 import protocols.OpCode;
+import protocols.Json;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
@@ -55,7 +56,6 @@ public class Server {
 
     private void listenDiscovery(DatagramSocket socket, int tcpPort) {
         byte[] buffer = new byte[4096];
-        String portData = Integer.toString(tcpPort);
 
         while (!socket.isClosed()) {
             DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
@@ -78,8 +78,8 @@ public class Server {
                 );
 
                 request = PacketCodec.read(input);
-                PacketValidator.validateRequest(request, OpCode.DISCOVER_REQUEST, 0, PacketCodec.MAX_PAYLOAD_LENGTH);
-                if (input.available() != 0) {
+                PacketValidator.validateRequest(request, OpCode.DISCOVER_REQUEST, 0, 0);
+                if (request.sequence() != 1 || input.available() != 0) {
                     continue;
                 }
             } catch (IOException e) {
@@ -87,9 +87,9 @@ public class Server {
             }
 
             try {
-                Packet response = Packet.text(OpCode.DISCOVER_RESPONSE, request.requestId(), portData);
+                Packet response = Packet.reply(OpCode.DISCOVER_RESPONSE, request.sequence(), Json.object("status", "OK", "tcpPort", tcpPort));
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
-                PacketCodec.write(output, response);
+                PacketCodec.write(output, response, 1);
                 byte[] bytes = output.toByteArray();
                 DatagramPacket outgoing = new DatagramPacket(bytes, bytes.length, incoming.getAddress(), incoming.getPort());
 

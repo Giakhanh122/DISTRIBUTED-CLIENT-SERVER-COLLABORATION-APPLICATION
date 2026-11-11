@@ -1,7 +1,7 @@
 package protocols;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+import com.google.gson.JsonObject;
+import java.io.IOException;
 import java.util.UUID;
 
 public final class FileTransferMeta {
@@ -63,62 +63,20 @@ public final class FileTransferMeta {
     public long   fileSize()   { return fileSize; }
     public String checksum()  { return checksum; }
 
-    public byte[] toBytes() {
-        byte[] idBytes       = transferId.getBytes(StandardCharsets.UTF_8);
-        byte[] senderBytes   = sender.getBytes(StandardCharsets.UTF_8);
-        byte[] receiverBytes = receiver.getBytes(StandardCharsets.UTF_8);
-        byte[] nameBytes     = fileName.getBytes(StandardCharsets.UTF_8);
-        byte[] checksumBytes = checksum.getBytes(StandardCharsets.UTF_8);
-
-        int totalSize = (4 + idBytes.length)
-                      + (4 + senderBytes.length)
-                      + (4 + receiverBytes.length)
-                      + (4 + nameBytes.length)
-                      + 8 + 4 + checksumBytes.length;
-
-        ByteBuffer buffer = ByteBuffer.allocate(totalSize);
-        writeString(buffer, idBytes);
-        writeString(buffer, senderBytes);
-        writeString(buffer, receiverBytes);
-        writeString(buffer, nameBytes);
-        buffer.putLong(fileSize);
-        writeString(buffer, checksumBytes);
-
-        return buffer.array();
+    public JsonObject toJson() {
+        return Json.object("transferId", transferId, "sender", sender, "receiver", receiver,
+                "fileName", fileName, "fileSize", fileSize, "checksum", checksum);
     }
 
-    public static FileTransferMeta fromBytes(byte[] data) {
-        ByteBuffer buffer = ByteBuffer.wrap(data);
+    public static FileTransferMeta fromJson(JsonObject payload) throws IOException {
         try {
-            String transferId = readString(buffer);
-            String sender     = readString(buffer);
-            String receiver   = readString(buffer);
-            String fileName   = readString(buffer);
-            long   fileSize   = buffer.getLong();
-            String checksum   = readString(buffer);
-            if (buffer.hasRemaining()) {
-                throw new IllegalArgumentException("Unexpected trailing metadata bytes");
-            }
-
-            return new FileTransferMeta(transferId, sender, receiver, fileName, fileSize, checksum);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid FileTransferMeta data", e);
+            return new FileTransferMeta(Json.string(payload, "transferId"),
+                    Json.string(payload, "sender"), Json.string(payload, "receiver"),
+                    Json.string(payload, "fileName"), Json.longValue(payload, "fileSize"),
+                    Json.string(payload, "checksum"));
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid file metadata", e);
         }
-    }
-
-    private static void writeString(ByteBuffer buffer, byte[] strBytes) {
-        buffer.putInt(strBytes.length);
-        buffer.put(strBytes);
-    }
-
-    private static String readString(ByteBuffer buffer) {
-        int length = buffer.getInt();
-        if (length < 0 || length > buffer.remaining()) {
-            throw new IllegalArgumentException("Invalid string length: " + length);
-        }
-        byte[] strBytes = new byte[length];
-        buffer.get(strBytes);
-        return new String(strBytes, StandardCharsets.UTF_8);
     }
 
     @Override

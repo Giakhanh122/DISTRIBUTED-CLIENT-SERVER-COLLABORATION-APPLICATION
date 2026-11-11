@@ -1,35 +1,37 @@
 package client;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.Socket;
 import java.net.InetSocketAddress;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 import protocols.*;
 
 public class PeerConnection implements AutoCloseable {
     private final Socket socket;
+    private final PacketChannel channel;
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private UUID sessionId = UUID.randomUUID();
     private final AtomicBoolean disconnectReported = new AtomicBoolean();
-    private int messageRequestId = 1;
     private InetSocketAddress peerAddress;
 
-    public PeerConnection(Socket socket) {
-        this.socket = socket;
+    public PeerConnection(PacketChannel channel) {
+        this.channel = channel;
+        this.socket = channel.socket();
     }
 
-    public void initiateHandshake(String username, int requestId, int listeningPort) throws IOException {
+    public void initiateHandshake(String username, int listeningPort) throws IOException {
         socket.setSoTimeout(10000);
-        InputStream input = socket.getInputStream();
-        Packet hello = Packet.text(OpCode.PEER_HELLO, requestId,
-            username + "\n" + listeningPort + "\n" + sessionId);
-        sendPacket(hello);
-        Packet response = PacketValidator.validateResponse(PacketCodec.read(input), OpCode.PEER_HELLO_ACK, requestId);
-        if (response.payloadLength() != 0) {
-            throw new IOException("PEER_HELLO_ACK payload must be empty");
+        Packet hello = Packet.json(OpCode.PEER_HELLO,
+            Json.object("protocolVersion", Packet.PROTOCOL_VERSION, "username", username, "peerPort", listeningPort, "sessionId", sessionId.toString()));
+        long helloSequence = channel.send(hello);
+        Packet response = PacketValidator.validateResponse(channel.read(), OpCode.PEER_HELLO_ACK, helloSequence);
+        PacketValidator.requireSuccess(response);
+        if (response.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
+            throw new IOException("Unsupported peer protocol version");
         }
         peerAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
         socket.setSoTimeout(0);
@@ -38,51 +40,50 @@ public class PeerConnection implements AutoCloseable {
     public String acceptHandshake(Packet hello) throws IOException {
         PacketValidator.validateRequest(hello, OpCode.PEER_HELLO, 1, 4096);
 
-        String[] identity = hello.text().split("\n", -1);
-        if (identity.length != 3 || identity[0].isBlank()) {
+        if (hello.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
+            channel.send(Packet.status(OpCode.PEER_HELLO_ACK, hello.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
+            throw new IOException("Unsupported peer protocol version");
+        }
+        String peerUsername = hello.string("username");
+        String id = hello.string("sessionId");
+        if (peerUsername.isBlank()) {
             throw new IOException("Invalid peer identity");
         }
         try {
-            sessionId = UUID.fromString(identity[2]);
-            if (!sessionId.toString().equals(identity[2])) {
+            sessionId = UUID.fromString(id);
+            if (!sessionId.toString().equals(id)) {
                 throw new IllegalArgumentException("Non-canonical session ID");
             }
         } catch (IllegalArgumentException e) {
             throw new IOException("Invalid chat session ID", e);
         }
-        int port;
-        try {
-            port = Integer.parseInt(identity[1]);
-        } catch (NumberFormatException e) {
-            throw new IOException("Invalid peer listening port", e);
-        }
+        int port = hello.integer("peerPort");
         if (port < 1 || port > 65535) {
             throw new IOException("Peer listening port is out of range");
         }
         peerAddress = new InetSocketAddress(socket.getInetAddress(), port);
 
-        Packet response = new Packet(
-            OpCode.PEER_HELLO_ACK,
-            hello.requestId(),
-            new byte[0]
-        );
+        Packet response = Packet.reply(OpCode.PEER_HELLO_ACK, hello.sequence(), Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION));
         sendPacket(response);
 
         socket.setSoTimeout(0);
-        return identity[0];
+        return peerUsername;
     }
 
-    public synchronized void sendMessage(String message) throws IOException {
-        Packet chatMessage = Packet.text(OpCode.CHAT_MESSAGE, messageRequestId + 1, message);
-        if (chatMessage.payloadLength() > MAX_CHAT_BYTES) {
+    public void sendMessage(String message) throws IOException {
+        Packet chatMessage = Packet.json(OpCode.CHAT_MESSAGE, Json.object("content", message));
+        if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
             throw new IOException("Message exceeds limit: " + MAX_CHAT_BYTES);
         }
-        messageRequestId++;
         sendPacket(chatMessage);
     }
 
-    public synchronized void sendPacket(Packet packet) throws IOException {
-        PacketCodec.write(socket.getOutputStream(), packet);
+    public long sendPacket(Packet packet) throws IOException {
+        return channel.send(packet);
+    }
+
+    public long sendPacket(Packet packet, LongConsumer beforeWrite) throws IOException {
+        return channel.send(packet, beforeWrite);
     }
 
     public InetSocketAddress peerAddress() {
@@ -102,16 +103,15 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void readMessages(String peerUsername, Consumer<Packet> onFilePacket) throws IOException {
-        InputStream input = socket.getInputStream();
         Packet packet;
 
-        while ((packet = PacketCodec.read(input)) != null) {
+        while ((packet = channel.read()) != null) {
             switch (packet.op()) {
                 case CHAT_MESSAGE -> {
-                    if (packet.payloadLength() > MAX_CHAT_BYTES) {
+                    if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
-                    System.out.println(peerUsername + ": " + packet.text());
+                    System.out.println(peerUsername + ": " + packet.string("content"));
                 }
                 case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
                 default -> throw new IOException("Unexpected peer chat packet: " + packet.op());

@@ -8,17 +8,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import protocols.OpCode;
 import protocols.Packet;
-import protocols.PacketCodec;
+import protocols.PacketChannel;
 
 public class PeerListener implements Runnable, AutoCloseable {
     private final ServerSocket listener;
     private final BiConsumer<String, PeerConnection> onConnected;
-    private final BiConsumer<Socket, Packet> onFileConnection;
+    private final BiConsumer<PacketChannel, Packet> onFileConnection;
     private final Set<Socket> pendingConnections = ConcurrentHashMap.newKeySet();
 
     public PeerListener(
         BiConsumer<String, PeerConnection> onConnected,
-        BiConsumer<Socket, Packet> onFileConnection
+        BiConsumer<PacketChannel, Packet> onFileConnection
     ) throws IOException {
         listener = new ServerSocket(0);
         this.onConnected = onConnected;
@@ -55,15 +55,16 @@ public class PeerListener implements Runnable, AutoCloseable {
             }
             socket.setSoTimeout(10000);
             // Read only the first packet here; exactly one handler owns subsequent reads.
-            Packet first = PacketCodec.read(socket.getInputStream());
+            PacketChannel channel = new PacketChannel(socket);
+            Packet first = channel.read();
             if (first != null && first.op() == OpCode.PEER_HELLO) {
-                PeerConnection connection = new PeerConnection(socket);
+                PeerConnection connection = new PeerConnection(channel);
                 String peerUsername = connection.acceptHandshake(first);
                 onConnected.accept(peerUsername, connection);
                 System.out.println("Peer handshake successful with " + peerUsername);
-            } else if (first != null && first.op() == OpCode.FILE_OFFER && first.requestId() == 0) {
+            } else if (first != null && first.op() == OpCode.FILE_OFFER) {
                 try (socket) {
-                    onFileConnection.accept(socket, first);
+                    onFileConnection.accept(channel, first);
                 }
             } else {
                 throw new IOException("Expected PEER_HELLO or file connection identification");
