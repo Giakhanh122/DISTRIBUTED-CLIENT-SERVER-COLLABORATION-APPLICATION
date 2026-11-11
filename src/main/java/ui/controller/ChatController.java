@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -28,7 +29,6 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Circle;
@@ -296,7 +296,7 @@ public class ChatController implements ClientEventListener {
         File file = chooser.showOpenDialog(stage);
 
         if (file != null) {
-            if (file.length() > 100L * 1024 * 1024) {
+            if (file.length() > 500L * 1024 * 1024) {
                 JavaFxUtils.showErrorAlert("File Too Large", "Maximum supported file size is 100 MiB.");
                 return;
             }

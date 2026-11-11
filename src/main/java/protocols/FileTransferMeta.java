@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 public final class FileTransferMeta {
-    public static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
+    public static final long MAX_FILE_SIZE = 500L * 1024 * 1024;
 
     private final String transferId;
     private final String sender;
