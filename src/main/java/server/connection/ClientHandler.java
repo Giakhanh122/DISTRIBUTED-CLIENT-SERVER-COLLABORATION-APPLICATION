@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -105,6 +106,8 @@ public class ClientHandler implements Runnable {
                     System.out.println(session.username() + ": " + message);
                 }
 
+                case CHAT_MESSAGE_BROADCAST -> handleBroadcastMessage(packet);
+
                 case USER_LIST_REQUEST -> handleUserList(packet);
 
                 case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
@@ -158,7 +161,8 @@ public class ClientHandler implements Runnable {
             UserSession candidate = new UserSession(
                     parts[0],
                     socket.getInetAddress().getHostAddress(),
-                    peerPort);
+                    peerPort,
+                    socket);
 
             if (userSessions.register(candidate)) {
                 session = candidate;
@@ -253,5 +257,20 @@ public class ClientHandler implements Runnable {
                         + chat.userB().username() + "\t" + chat.state())
                 .collect(Collectors.joining("\n"));
         sendPacket(Packet.text(OpCode.CHAT_SESSION_LIST_RESPONSE, request.requestId(), payload));
+    }
+
+    // broad cast
+
+    private void handleBroadcastMessage(Packet request) throws IOException {
+        PacketValidator.validateRequest(request, OpCode.CHAT_MESSAGE_BROADCAST, 0, MAX_CHAT_BYTES);
+        List<UserSession> listOfUser = userSessions.listOnlineUsers();
+
+        for (UserSession u : listOfUser) {
+            OutputStream userOutputStream = u.clientSocket().getOutputStream();
+            if (userOutputStream == null) {
+                throw new IOException("Client output is not available");
+            }
+            PacketCodec.write(userOutputStream, request);
+        }
     }
 }

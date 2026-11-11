@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.classfile.Opcode;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -144,7 +145,7 @@ public class Client {
 
     private void readConsole(OutputStream output, Scanner scanner) {
         System.out.println(
-                "Commands: /users, /chats, /lookup <username>, /sendfile <receiver> <filepath>, "
+                "Commands: /users, /chats, /lookup <username>, /broadcast <message>, /sendfile <receiver> <filepath>, "
                         + "/accept <offer_number>, /reject <offer_number>, /logout");
 
         while (scanner.hasNextLine()) {
@@ -223,6 +224,27 @@ public class Client {
                     }
                 } catch (IOException e) {
                     System.err.println("Server command: " + e.getMessage());
+                }
+                continue;
+            }
+
+            // broadcast
+
+            if (arguments[0].equalsIgnoreCase("/broadcast")) {
+                if (arguments.length != 2) {
+                    System.out.println("Usage: /broadcast <message>");
+                    continue;
+                }
+
+                String broadcastMesssage = arguments[1];
+                if (broadcastMesssage.length() > MAX_CHAT_BYTES) {
+                    System.err.println("Message exceeds limit: " + MAX_CHAT_BYTES);
+                    continue;
+                }
+                try {
+                    broadcastMessage(serverOutput, "(broadcast) " + username + " : " + broadcastMesssage);
+                } catch (Exception e) {
+                    System.err.println("Broadcast Failed : " + e.getMessage());
                 }
                 continue;
             }
@@ -545,6 +567,9 @@ public class Client {
                             System.err.println("Chat session report rejected: " + packet.text());
                         }
                     }
+                    case CHAT_MESSAGE_BROADCAST -> {
+                        System.out.println(packet.text());
+                    }
                     default -> {
                     }
                 }
@@ -592,5 +617,13 @@ public class Client {
         }
         PeerConnection peer = peers.get(parts[0]);
         fileTransfers.offer(peer, parts[0], new File(parts[1]), requestId);
+    }
+
+    private void broadcastMessage(OutputStream serverOutputStream, String message) throws IOException {
+        Packet chatMessage = Packet.text(OpCode.CHAT_MESSAGE_BROADCAST, nextRequestId(), message);
+        if (chatMessage.payloadLength() > MAX_CHAT_BYTES) {
+            throw new IOException("Message exceeds limit: " + MAX_CHAT_BYTES);
+        }
+        PacketCodec.write(serverOutputStream, chatMessage);
     }
 }
