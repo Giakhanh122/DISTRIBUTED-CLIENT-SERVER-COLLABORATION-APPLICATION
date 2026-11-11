@@ -1,1 +1,152 @@
 \section{Kiến trúc hệ thống}
+
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,calc}
+
+\subsection{Tổng quan}
+
+Hệ thống áp dụng mô hình kiến trúc \textit{lai} (hybrid) kết hợp Client-Server tập trung và Peer-to-Peer (P2P) phân tán.
+Máy chủ trung tâm (Application Server) đảm nhiệm các chức năng xác thực, quản lý phiên, tra cứu địa chỉ ngang hàng,
+quản lý cộng đồng (Community), lưu trữ và phân phối file broadcast.
+Giao tiếp trực tiếp giữa hai client — bao gồm nhắn tin riêng tư và truyền file ngang hàng — được thực hiện qua kết nối TCP trực tiếp,
+không qua server, nhằm giảm tải và giảm độ trễ.
+
+\subsection{Các thành phần chính}
+
+\begin{itemize}
+    \item \textbf{Application Server}: Lắng nghe trên cổng TCP 8080 và cổng UDP 41234 (khám phá mạng).
+          Mỗi kết nối TCP đến được xử lý bởi một \texttt{ClientHandler} chạy trên một \textit{virtual thread} riêng biệt.
+          Server duy trì các registry trong bộ nhớ: \texttt{UserSessionRegistry} (phiên đăng nhập),
+          \texttt{ChatSessionRegistry} (phiên P2P), \texttt{CommunityRegistry} (cộng đồng) và \texttt{BroadcastFileRegistry} (file broadcast).
+
+    \item \textbf{Client}: Mỗi tiến trình client duy trì một kết nối TCP điều khiển (control socket) đến server
+          và một vòng lặp đọc gói tin (\texttt{receivePackets}) chạy trên virtual thread riêng.
+          Client cũng khởi động \texttt{PeerListener} — một \texttt{ServerSocket} trên cổng ngẫu nhiên — để chấp nhận kết nối P2P đến từ các peer khác.
+
+    \item \textbf{PeerListener}: Chạy trên virtual thread, lắng nghe kết nối TCP đến từ peer.
+          Phân loại kết nối dựa trên gói tin đầu tiên nhận được:
+          nếu là \texttt{PEER\_HELLO} thì đây là phiên chat; nếu là \texttt{FILE\_OFFER} thì đây là luồng truyền file.
+
+    \item \textbf{PeerConnectionRegistry}: Quản lý tập hợp các kết nối P2P đang hoạt động (\texttt{ConcurrentHashMap<String, PeerConnection>}).
+          Theo dõi peer đang chọn (active peer) và ngăn chặn kết nối trùng lặp qua tập \texttt{pendingLookups}.
+
+    \item \textbf{FileStorageService}: Lưu trữ file broadcast phía server trên hệ thống tệp cục bộ.
+          Hỗ trợ upload từ client gửi và download cho các client nhận thông qua token xác thực tạm thời.
+
+    \item \textbf{AuthService}: Quản lý xác thực người dùng. Hiện tại dữ liệu tài khoản được lưu cứng trong bộ nhớ
+          (hardcoded: alice/alice123, bob/bob123, admin1/password1); chưa có cơ sở dữ liệu bền vững.
+\end{itemize}
+
+\subsection{Sơ đồ kiến trúc hệ thống}
+
+Hình~\ref{fig:kientruc} minh họa tổng quan cách các thành phần tương tác với nhau.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    box/.style={draw, rounded corners=4pt, minimum width=2.8cm, minimum height=0.75cm, align=center, fill=#1!10},
+    sbox/.style={draw, rounded corners=4pt, minimum width=5.0cm, minimum height=0.7cm, align=center, fill=blue!8},
+    grp/.style={draw, dashed, rounded corners=6pt, inner sep=8pt, fill=#1!5},
+    arr/.style={-{Stealth[length=5pt]}, thick},
+    darr/.style={{Stealth[length=5pt]}-{Stealth[length=5pt]}, thick}
+]
+
+%% ---- Client A ----
+\node[box=green] (ca-con) at (-5.5, 3.2) {readConsole\\(main thread)};
+\node[box=green] (ca-rcv) at (-5.5, 1.9) {receivePackets\\(virtual thread)};
+\node[box=green] (ca-pl)  at (-5.5, 0.7) {PeerListener\\(virtual thread)};
+\node[box=green] (ca-pr)  at (-5.5,-0.5) {PeerConnection\\Registry};
+
+\draw[dashed, gray, rounded corners=6pt]
+    (-7.3,-1.2) rectangle (-3.7, 3.85);
+\node[font=\bfseries\footnotesize] at (-5.5, 4.05) {Client A};
+
+%% ---- Server ----
+\node[sbox] (s1) at (0, 3.2)  {ClientHandler (per connection)};
+\node[sbox] (s2) at (0, 2.4)  {UserSessionRegistry};
+\node[sbox] (s3) at (0, 1.6)  {CommunityRegistry};
+\node[sbox] (s4) at (0, 0.8)  {BroadcastFileRegistry};
+\node[sbox] (s5) at (0, 0.0)  {FileStorageService};
+\node[sbox] (s6) at (0,-0.8)  {AuthService};
+
+\draw[dashed, gray, rounded corners=6pt]
+    (-2.8,-1.5) rectangle (2.8, 3.85);
+\node[font=\bfseries\footnotesize] at (0, 4.05) {Application Server (TCP 8080 / UDP 41234)};
+
+%% ---- Client B ----
+\node[box=orange] (cb-con) at (5.5, 3.2) {readConsole\\(main thread)};
+\node[box=orange] (cb-rcv) at (5.5, 1.9) {receivePackets\\(virtual thread)};
+\node[box=orange] (cb-pl)  at (5.5, 0.7) {PeerListener\\(virtual thread)};
+\node[box=orange] (cb-pr)  at (5.5,-0.5) {PeerConnection\\Registry};
+
+\draw[dashed, gray, rounded corners=6pt]
+    (3.7,-1.2) rectangle (7.3, 3.85);
+\node[font=\bfseries\footnotesize] at (5.5, 4.05) {Client B};
+
+%% ---- Arrows: control sockets ----
+\draw[darr, blue]
+    (ca-rcv.east) -- node[midway, above, font=\tiny, fill=white, inner sep=1pt] {TCP control (port 8080)}
+    (s1.west |- ca-rcv);
+
+\draw[darr, blue]
+    (s1.east |- cb-rcv) -- node[midway, above, font=\tiny, fill=white, inner sep=1pt] {TCP control (port 8080)}
+    (cb-rcv.west);
+
+%% ---- Arrow: P2P ----
+\draw[darr, red!70!black, dashed, thick]
+    (ca-pl.east) to[out=10, in=170]
+    node[midway, above=6pt, font=\tiny, fill=white, inner sep=1pt] {P2P TCP trực tiếp (chat / file)}
+    (cb-pl.west);
+
+%% ---- Broadcast upload: client A -> server ----
+\draw[arr, purple]
+    (-5.5,-1.0) to[out=-60, in=-140]
+    node[midway, below, font=\tiny, fill=white, inner sep=1pt] {TCP mới — upload file broadcast}
+    (0,-1.4);
+
+%% ---- Broadcast download: server -> client B ----
+\draw[arr, purple]
+    (0,-1.4) to[out=-40, in=-120]
+    node[midway, below, font=\tiny, fill=white, inner sep=1pt] {TCP mới — download file broadcast}
+    (5.5,-1.0);
+
+\end{tikzpicture}
+\caption{Kiến trúc tổng quan hệ thống Client-Server kết hợp P2P}
+\label{fig:kientruc}
+\end{figure}
+
+\subsection{Giao thức truyền thông}
+
+Toàn bộ giao tiếp giữa Client và Server sử dụng giao thức frame nhị phân tùy chỉnh với cấu trúc cố định:
+
+\[
+\underbrace{[OP: 1\text{B}]}_{\text{OpCode}} \;
+\underbrace{[ReqID: 4\text{B}]}_{\text{Request ID}} \;
+\underbrace{[Len: 4\text{B}]}_{\text{Payload length}} \;
+\underbrace{[Data: N\text{B}]}_{\text{Payload}}
+\]
+
+Phần header 9 byte được đọc trước, sau đó đọc chính xác $N$ byte payload bằng \texttt{DataInputStream.readFully()}.
+Cơ chế tương quan yêu cầu-phản hồi sử dụng \texttt{ConcurrentHashMap<Integer, CompletableFuture<Packet>>} với timeout 10 giây,
+cho phép nhiều yêu cầu đồng thời trên một kết nối mà không bị nhầm lẫn phản hồi.
+
+\subsection{Quản lý luồng thực thi}
+
+Hệ thống sử dụng \textit{virtual threads} (Project Loom, Java 21+) thay vì platform threads truyền thống để xử lý đồng thời:
+
+\begin{itemize}
+    \item Mỗi kết nối TCP đến server tạo một virtual thread chạy \texttt{ClientHandler}.
+    \item Mỗi \texttt{PeerConnection} có một virtual thread đọc gói tin độc lập.
+    \item \texttt{PeerListener} chạy trên một virtual thread riêng; mỗi kết nối mới được phân phối ngay cho virtual thread tiếp theo.
+    \item Trên client, \texttt{receivePackets} và \texttt{PeerListener} đều là virtual thread, song song với luồng chính đọc console.
+\end{itemize}
+
+Việc đồng bộ hóa ghi lên socket được thực hiện qua khóa đối tượng (object lock): \texttt{serverWriteLock} phía client,
+\texttt{synchronized(this)} trong \texttt{ClientHandler.sendPacket()}, và \texttt{synchronized(outputStream)} trong vòng lặp broadcast phía server.
+
+\subsection{Quản lý cộng đồng}
+
+Cộng đồng (Community) là khái niệm nhóm người dùng do server quản lý tập trung.
+\texttt{CommunityRegistry} lưu trữ các đối tượng \texttt{Community} trong \texttt{ConcurrentHashMap} theo ID.
+Mỗi Community có danh sách thành viên; chỉ thành viên mới nhận được tin nhắn broadcast và file broadcast của cộng đồng đó.
+Mọi trạng thái cộng đồng hiện tại chỉ tồn tại trong bộ nhớ và bị mất khi server khởi động lại.

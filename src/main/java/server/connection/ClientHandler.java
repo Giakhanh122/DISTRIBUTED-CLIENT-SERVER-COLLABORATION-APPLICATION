@@ -4,8 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -16,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -27,8 +26,8 @@ import server.community.Community;
 import server.community.CommunityService;
 import server.session.ChatSession;
 import server.session.ChatSessionRegistry;
-import server.session.UserSessionRegistry;
 import server.session.UserSession;
+import server.session.UserSessionRegistry;
 import server.storage.FileStorageService;
 import transfer.FileSender;
 
@@ -36,7 +35,7 @@ public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
     private static final int MAX_COMMUNITY_BYTES = 4096;
-    private static final long MAX_BROADCAST_FILE_SIZE = 100L * 1024 * 1024;
+    private static final long MAX_BROADCAST_FILE_SIZE = 500L * 1024 * 1024;
     private static final int CHUNK_SIZE = 64 * 1024;
 
     private static final ExecutorService downloadPool = Executors.newFixedThreadPool(10);

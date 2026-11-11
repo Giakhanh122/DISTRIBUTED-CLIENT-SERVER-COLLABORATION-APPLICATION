@@ -171,19 +171,18 @@ public class SessionLifecycleTest {
             await(() -> output().contains("[FILE OFFER #1]"), "P2P file offer received");
             bob.command("/accept 1");
             await(() -> output().contains("[P2P SENT] session-upload.bin completed!"), "P2P file acknowledged");
-            check(Arrays.equals(data, Files.readAllBytes(Path.of("downloads/session-upload.bin"))),
+            Path downloadedPath = Files.exists(Path.of("downloads/bob/session-upload.bin"))
+                ? Path.of("downloads/bob/session-upload.bin")
+                : Path.of("downloads/session-upload.bin");
+            check(Arrays.equals(data, Files.readAllBytes(downloadedPath)),
                 "binary file remains intact after handshake change");
 
-            connectPeer(alice, "bob");
-            await(() -> server.chats.listSessions().size() == 2
-                && server.chats.find(first).orElseThrow().state() == ChatSession.State.DISCONNECTED
-                && server.chats.listSessions().stream()
-                    .filter(chat -> chat.state() == ChatSession.State.CONNECTED).count() == 1,
-                "replacement connection has separate history");
-            UUID second = server.chats.listSessions().stream()
-                .filter(chat -> chat.state() == ChatSession.State.CONNECTED).findFirst().orElseThrow().sessionId();
+            int lookupOffset = output().length();
+            alice.command("/lookup bob");
+            await(() -> output().substring(lookupOffset).contains("bob is already connected"),
+                "re-lookup reports already connected");
             bob.close();
-            await(() -> server.chats.find(second).orElseThrow().state() == ChatSession.State.DISCONNECTED,
+            await(() -> server.chats.find(first).orElseThrow().state() == ChatSession.State.DISCONNECTED,
                 "logout closes P2P metadata before removing user");
             await(() -> server.users.find("bob").isEmpty(), "logout removes online user");
             System.out.println("PASS: real clients, /chats, validation, chat, file and logout");

@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Scanner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,8 +36,10 @@ public class Client {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private String username;
     private int peerPort;
-    private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
-    private volatile String selectedPeerUsername;
+    private final PeerConnectionRegistry peerRegistry = new PeerConnectionRegistry();
+    private final ConcurrentHashMap<String, PeerConnection> peers = peerRegistry.asMap();
+    private final java.util.Set<String> pendingLookups = ConcurrentHashMap.newKeySet();
+    private volatile java.util.function.Consumer<String> chatListener;
     private boolean closingPeers;
     private final AtomicInteger requestSequence = new AtomicInteger();
     private final Object serverWriteLock = new Object();
@@ -213,11 +216,39 @@ public class Client {
                 continue;
             }
 
+            // ==================== Peer & Messaging Commands ====================
+
+            if (command.equalsIgnoreCase("/peers")) {
+                printPeers();
+                continue;
+            }
+
+            if (command.equalsIgnoreCase("/peer")) {
+                handlePeerCommand(null);
+                continue;
+            }
+
+            if (command.startsWith("/peer ")) {
+                handlePeerCommand(command.substring(6).trim());
+                continue;
+            }
+
+            if (command.equalsIgnoreCase("/msg")) {
+                System.out.println("Usage: /msg [<username>] <message>");
+                continue;
+            }
+
+            if (command.startsWith("/msg ")) {
+                handleMsgCommand(command.substring(5).trim());
+                continue;
+            }
+
             // ==================== File Commands ====================
 
             try {
-                if (command.startsWith("/sendfile ")) {
-                    sendFileOffer(command.substring(10).trim(), nextRequestId());
+                if (command.startsWith("/sendfile ") || command.equalsIgnoreCase("/sendfile")) {
+                    String rawArgs = command.length() > 9 ? command.substring(10).trim() : "";
+                    handleSendFileCommand(rawArgs, nextRequestId());
                     continue;
                 }
                 if (command.startsWith("/accept ")) {
@@ -241,14 +272,24 @@ public class Client {
 
             String[] arguments = command.split("\\s+", 2);
             if (arguments[0].equalsIgnoreCase("/lookup")) {
-                if (arguments.length != 2) {
+                if (arguments.length != 2 || arguments[1].isBlank()) {
                     System.out.println("Usage: /lookup <username>");
                     continue;
                 }
 
-                String targetUsername = arguments[1];
+                String targetUsername = arguments[1].trim();
                 if (targetUsername.equals(username)) {
                     System.out.println("Cannot connect to yourself");
+                    continue;
+                }
+
+                if (peerRegistry.isConnected(targetUsername)) {
+                    System.out.println(targetUsername + " is already connected");
+                    continue;
+                }
+
+                if (!pendingLookups.add(targetUsername)) {
+                    System.out.println(targetUsername + " connection attempt already in progress");
                     continue;
                 }
 
@@ -260,7 +301,7 @@ public class Client {
 
                     InetSocketAddress address = result.address();
 
-                    if (result.status() == null) {
+                    if (result.status() == null || result.status() == PeerLookupResult.Status.USER_OFFLINE) {
                         System.out.println(targetUsername + " is offline");
                     } else if (result.status() == PeerLookupResult.Status.ALREADY_CONNECTED) {
                         System.out.println(targetUsername + " is already connected");
@@ -269,6 +310,8 @@ public class Client {
                     }
                 } catch (IOException e) {
                     System.err.println("Server command: " + e.getMessage());
+                } finally {
+                    pendingLookups.remove(targetUsername);
                 }
                 continue;
             }
@@ -346,25 +389,13 @@ public class Client {
 
             // ==================== Direct P2P Chat ====================
 
-            byte[] data = message.getBytes(StandardCharsets.UTF_8);
-            if (data.length > MAX_CHAT_BYTES) {
-                System.err.println("Message exceeds limit: " + MAX_CHAT_BYTES);
-                continue;
-            }
-
-            String targetUsername = selectedPeerUsername;
-            PeerConnection connection = targetUsername == null ? null : peers.get(targetUsername);
-            if (connection == null) {
+            String activePeer = peerRegistry.getActivePeer();
+            if (activePeer == null) {
                 System.out.println("Connect to a peer before sending messages.");
                 continue;
             }
 
-            try {
-                connection.sendMessage(message);
-            } catch (IOException e) {
-                System.err.println("Cannot send message: " + e.getMessage());
-                closePeer(connection);
-            }
+            sendMessageToPeer(activePeer, message);
         }
     }
 
@@ -583,7 +614,10 @@ public class Client {
                     /broadcast -m <message>         Broadcast text in active community
                     /broadcast -f <filepath>        Broadcast a file in active community
                     /lookup <username>              Connect to a user for P2P chat
-                    /sendfile <username> <filepath>  Send a private file through P2P
+                    /peers                          List connected P2P peers
+                    /peer [<username>]              View or set active peer
+                    /msg [<username>] <message>     Send private message
+                    /sendfile [<user>] <filepath>   Send a private file through P2P
 
                   GENERAL
                     /users                          List online users
@@ -820,19 +854,28 @@ public class Client {
     }
 
     private void connectToPeer(String targetUsername, InetSocketAddress address) {
+        if (peerRegistry.isConnected(targetUsername)) {
+            System.out.println(targetUsername + " is already connected");
+            return;
+        }
+
         Socket peerSocket = new Socket();
         PeerConnection connection = new PeerConnection(peerSocket);
+        connection.setPeerUsername(targetUsername);
 
         try {
             peerSocket.connect(address, 10000);
             connection.initiateHandshake(username, 1, peerPort);
 
-            registerPeer(targetUsername, connection);
-            selectedPeerUsername = targetUsername;
+            if (!registerPeer(targetUsername, connection)) {
+                System.out.println(targetUsername + " is already connected");
+                return;
+            }
 
+            peerRegistry.setActivePeer(targetUsername);
             System.out.println("Now chatting with " + targetUsername);
         } catch (IOException e) {
-            closePeer(connection);
+            closePeerOnly(connection);
 
             System.err.println(
                     "Cannot connect to " + targetUsername
@@ -840,53 +883,59 @@ public class Client {
         }
     }
 
-    private synchronized void registerPeer(String peerUsername, PeerConnection connection) {
-        if (closingPeers) {
-            closePeer(connection);
-            return;
+    private synchronized boolean registerPeer(String peerUsername, PeerConnection connection) {
+        if (closingPeers || peerRegistry.isClosing()) {
+            closePeerOnly(connection);
+            return false;
         }
 
-        PeerConnection previous = peers.put(peerUsername, connection);
-        if (previous != null) {
-            closePeer(previous);
-        }
-        if (selectedPeerUsername == null) {
-            selectedPeerUsername = peerUsername;
+        if (!peerRegistry.register(peerUsername, connection)) {
+            closePeerOnly(connection);
+            return false;
         }
 
+        connection.setPeerUsername(peerUsername);
         reportChatSession(peerUsername, connection, "CONNECTED");
 
         Thread.startVirtualThread(() -> {
             try {
-                connection.readMessages(peerUsername, packet -> {
-                    try {
-                        if (packet.op() == OpCode.FILE_OFFER) {
-                            fileTransfers.handleIncomingOffer(peerUsername, connection, packet);
-                        } else {
-                            fileTransfers.handleIncomingDecision(connection, packet);
-                        }
-                    } catch (IOException | RuntimeException e) {
-                        System.err.println("Invalid peer file packet: " + e.getMessage());
-                    }
-                });
+                connection.readMessages(
+                        peerUsername,
+                        text -> {
+                            System.out.println(peerUsername + ": " + text);
+                            java.util.function.Consumer<String> l = chatListener;
+                            if (l != null) {
+                                l.accept(peerUsername + ": " + text);
+                            }
+                        },
+                        packet -> {
+                            try {
+                                if (packet.op() == OpCode.FILE_OFFER) {
+                                    fileTransfers.handleIncomingOffer(peerUsername, connection, packet);
+                                } else {
+                                    fileTransfers.handleIncomingDecision(connection, packet);
+                                }
+                            } catch (IOException | RuntimeException e) {
+                                System.err.println("Invalid peer file packet: " + e.getMessage());
+                            }
+                        });
             } catch (IOException e) {
                 System.err.println("Peer " + peerUsername + ": " + e.getMessage());
             } finally {
                 fileTransfers.closeForPeer(connection);
                 synchronized (Client.this) {
                     reportChatSession(peerUsername, connection, "DISCONNECTED");
-                    if (peers.remove(peerUsername, connection)
-                            && peerUsername.equals(selectedPeerUsername)) {
-                        selectedPeerUsername = null;
-                    }
+                    peerRegistry.unregister(peerUsername, connection);
                 }
 
-                closePeer(connection);
+                closePeerOnly(connection);
             }
         });
+        return true;
     }
 
-    private void closePeer(PeerConnection connection) {
+    private void closePeerOnly(PeerConnection connection) {
+        if (connection == null) return;
         try {
             connection.close();
         } catch (IOException e) {
@@ -894,17 +943,27 @@ public class Client {
         }
     }
 
+    private void closePeer(String peerUsername, PeerConnection connection) {
+        if (connection == null) return;
+        fileTransfers.closeForPeer(connection);
+        synchronized (this) {
+            reportChatSession(peerUsername, connection, "DISCONNECTED");
+            peerRegistry.unregister(peerUsername, connection);
+        }
+        closePeerOnly(connection);
+    }
+
     private synchronized void closePeers() {
         closingPeers = true;
+        peerRegistry.setClosing(true);
 
-        for (var entry : peers.entrySet()) {
+        for (var entry : peerRegistry.asMap().entrySet()) {
             PeerConnection connection = entry.getValue();
             reportChatSession(entry.getKey(), connection, "DISCONNECTED");
-            closePeer(connection);
+            closePeerOnly(connection);
         }
 
-        peers.clear();
-        selectedPeerUsername = null;
+        peerRegistry.clear();
     }
 
     private void reportChatSession(String peerUsername, PeerConnection connection, String state) {
@@ -1094,14 +1153,167 @@ public class Client {
         }
     }
 
-    private void sendFileOffer(String args, int requestId) {
-        String[] parts = args.split("\\s+", 2);
-        if (parts.length != 2) {
-            System.out.println("Usage: /sendfile <user> <path>");
+    public boolean sendMessageToPeer(String targetUsername, String message) {
+        if (targetUsername == null || targetUsername.isBlank()) {
+            System.out.println("No target peer specified.");
+            return false;
+        }
+
+        byte[] data = message.getBytes(StandardCharsets.UTF_8);
+        if (data.length > MAX_CHAT_BYTES) {
+            System.err.println("Message exceeds limit: " + MAX_CHAT_BYTES);
+            return false;
+        }
+
+        PeerConnection connection = peerRegistry.get(targetUsername);
+        if (connection == null || connection.isClosed()) {
+            System.out.println("Peer " + targetUsername + " is not connected.");
+            return false;
+        }
+
+        try {
+            connection.sendMessage(message);
+            return true;
+        } catch (IOException e) {
+            System.err.println("Cannot send message to " + targetUsername + ": " + e.getMessage());
+            closePeer(targetUsername, connection);
+            return false;
+        }
+    }
+
+    private void printPeers() {
+        System.out.println("Connected peers:");
+        List<String> connected = peerRegistry.getConnectedPeers();
+        if (connected.isEmpty()) {
+            System.out.println("(none)");
             return;
         }
-        PeerConnection peer = peers.get(parts[0]);
-        fileTransfers.offer(peer, parts[0], new File(parts[1]), requestId);
+        String active = peerRegistry.getActivePeer();
+        for (String peerName : connected) {
+            boolean isActive = peerName.equals(active);
+            System.out.println("- " + peerName + " (CONNECTED)" + (isActive ? " [ACTIVE]" : ""));
+        }
+    }
+
+    private void handlePeerCommand(String target) {
+        if (target == null || target.isBlank()) {
+            String active = peerRegistry.getActivePeer();
+            if (active == null) {
+                System.out.println("No active peer selected.");
+            } else {
+                System.out.println("Active peer: " + active);
+            }
+            return;
+        }
+
+        if (peerRegistry.isConnected(target)) {
+            peerRegistry.setActivePeer(target);
+            System.out.println("Active peer set to " + target);
+        } else {
+            System.out.println("Peer " + target + " is not connected. Use /lookup " + target + " to connect.");
+        }
+    }
+
+    private void handleMsgCommand(String content) {
+        if (content == null || content.isBlank()) {
+            System.out.println("Usage: /msg [<username>] <message>");
+            return;
+        }
+
+        String[] parts = content.split("\\s+", 2);
+        String firstToken = parts[0];
+
+        if (peerRegistry.isConnected(firstToken)) {
+            if (parts.length < 2 || parts[1].isBlank()) {
+                System.out.println("Message cannot be empty.");
+                return;
+            }
+            sendMessageToPeer(firstToken, parts[1]);
+            return;
+        }
+
+        String active = peerRegistry.getActivePeer();
+        if (active == null) {
+            if (parts.length >= 2 && !peerRegistry.isConnected(firstToken)) {
+                System.out.println("Peer " + firstToken + " is not connected. Use /lookup " + firstToken + " first, or select an active peer.");
+            } else {
+                System.out.println("No active peer selected. Use /peer <username> to select an active peer, or /msg <username> <message>.");
+            }
+            return;
+        }
+
+        sendMessageToPeer(active, content);
+    }
+
+    private void handleSendFileCommand(String rawArgs, int requestId) {
+        if (rawArgs == null || rawArgs.isBlank()) {
+            System.out.println("Usage: /sendfile [<username>] <filepath>");
+            return;
+        }
+
+        String args = rawArgs.trim();
+        String[] parts = args.split("\\s+", 2);
+        String firstToken = parts[0];
+
+        String targetPeer;
+        String filepath;
+
+        if (peerRegistry.isConnected(firstToken)) {
+            if (parts.length < 2 || parts[1].isBlank()) {
+                System.out.println("Usage: /sendfile " + firstToken + " <filepath>");
+                return;
+            }
+            targetPeer = firstToken;
+            filepath = stripQuotes(parts[1].trim());
+        } else {
+            if (parts.length >= 2) {
+                File possibleFileDirect = new File(stripQuotes(args));
+                File possibleFileRest = new File(stripQuotes(parts[1].trim()));
+                if (!possibleFileDirect.exists() && possibleFileRest.exists()) {
+                    System.out.println("Peer " + firstToken + " is not connected. Use /lookup " + firstToken + " first.");
+                    return;
+                }
+            }
+
+            String active = peerRegistry.getActivePeer();
+            if (active == null) {
+                System.out.println("No active peer selected. Use /sendfile <username> <filepath> or set active peer with /peer <username>.");
+                return;
+            }
+            targetPeer = active;
+            filepath = stripQuotes(args);
+        }
+
+        PeerConnection peer = peerRegistry.get(targetPeer);
+        if (peer == null || peer.isClosed()) {
+            System.out.println("Peer " + targetPeer + " is not connected. Connect with /lookup " + targetPeer + " first.");
+            return;
+        }
+
+        File file = new File(filepath);
+        if (!file.exists() || !file.isFile()) {
+            System.err.println("File not found: " + filepath);
+            return;
+        }
+
+        fileTransfers.offer(peer, targetPeer, file, requestId);
+    }
+
+    private static String stripQuotes(String s) {
+        if (s == null) return null;
+        s = s.trim();
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
+    }
+
+    public PeerConnectionRegistry getPeerRegistry() {
+        return peerRegistry;
+    }
+
+    public void setChatListener(java.util.function.Consumer<String> chatListener) {
+        this.chatListener = chatListener;
     }
 
     private void broadcastMessage(OutputStream serverOutputStream, String message) throws IOException {

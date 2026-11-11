@@ -1,0 +1,192 @@
+\section{Sequence Diagram}
+
+\usetikzlibrary{positioning,arrows.meta,calc}
+
+Phần này mô tả tuần tự các luồng hoạt động chính của hệ thống thông qua các sơ đồ trình tự (sequence diagram).
+
+% =========================================================
+\subsection{Luồng đăng nhập và kết nối P2P}
+% =========================================================
+
+Hình~\ref{fig:seq-p2p} mô tả toàn bộ quá trình từ khi Client A đăng nhập đến khi thiết lập kết nối P2P với Client B và trao đổi tin nhắn.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    actor/.style={draw, fill=gray!15, minimum width=2.3cm, minimum height=0.6cm, align=center},
+    msg/.style={-{Stealth[length=4pt]}, thick},
+    notelbl/.style={draw, fill=yellow!20, rounded corners=2pt, inner sep=3pt, font=\tiny, align=left}
+]
+
+\def\xA{0}
+\def\xS{5.5}
+\def\xB{11}
+
+\node[actor] at (\xA, 10) {Client A};
+\node[actor] at (\xS, 10) {Server};
+\node[actor] at (\xB, 10) {Client B};
+
+\draw[dashed, gray] (\xA, 9.7) -- (\xA, -0.3);
+\draw[dashed, gray] (\xS, 9.7) -- (\xS, -0.3);
+\draw[dashed, gray] (\xB, 9.7) -- (\xB, -0.3);
+
+%% --- Login A ---
+\draw[msg] (\xA,9.3)--(\xS,9.3) node[midway,above,font=\tiny]{HELLO};
+\draw[msg] (\xS,9.0)--(\xA,9.0) node[midway,above,font=\tiny]{HELLO\_ACK};
+\draw[msg] (\xA,8.7)--(\xS,8.7) node[midway,above,font=\tiny]{AUTH\_REQUEST (alice)};
+\draw[msg] (\xS,8.4)--(\xA,8.4) node[midway,above,font=\tiny]{AUTH\_RESPONSE (OK)};
+
+%% --- Login B ---
+\draw[msg] (\xB,9.3)--(\xS,9.3) node[midway,above,font=\tiny]{HELLO};
+\draw[msg] (\xS,9.0)--(\xB,9.0) node[midway,above,font=\tiny]{HELLO\_ACK};
+\draw[msg] (\xB,8.7)--(\xS,8.7) node[midway,above,font=\tiny]{AUTH\_REQUEST (bob)};
+\draw[msg] (\xS,8.4)--(\xB,8.4) node[midway,above,font=\tiny]{AUTH\_RESPONSE (OK)};
+
+%% --- Peer Lookup ---
+\draw[msg] (\xA,7.9)--(\xS,7.9) node[midway,above,font=\tiny]{PEER\_LOOKUP\_REQUEST (bob)};
+\draw[msg] (\xS,7.6)--(\xA,7.6) node[midway,above,font=\tiny]{PEER\_LOOKUP\_RESPONSE (IP:peerPort)};
+
+%% --- P2P Handshake ---
+\node[notelbl] at (3.0,7.1) {A mở TCP trực tiếp\\đến peerPort của B};
+\draw[msg, red!70!black] (\xA,6.7)--(\xB,6.7) node[midway,above,font=\tiny]{PEER\_HELLO (alice)};
+\draw[msg, red!70!black] (\xB,6.4)--(\xA,6.4) node[midway,above,font=\tiny]{PEER\_HELLO\_ACK};
+
+%% --- Chat ---
+\draw[msg, red!70!black] (\xA,5.9)--(\xB,5.9) node[midway,above,font=\tiny]{CHAT\_MESSAGE ``Xin chào Bob!''};
+\draw[msg, red!70!black] (\xB,5.6)--(\xA,5.6) node[midway,above,font=\tiny]{CHAT\_MESSAGE ``Chào Alice!''};
+\node[notelbl] at (5.5,5.1) {Tin nhắn P2P trực tiếp,\\không qua server};
+
+\end{tikzpicture}
+\caption{Sequence diagram: Đăng nhập và nhắn tin P2P trực tiếp}
+\label{fig:seq-p2p}
+\end{figure}
+
+% =========================================================
+\subsection{Luồng truyền file P2P}
+% =========================================================
+
+Hình~\ref{fig:seq-file-p2p} mô tả chi tiết quá trình truyền file trực tiếp giữa hai client sau khi đã thiết lập kết nối P2P.
+Toàn bộ luồng dữ liệu không đi qua server.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    actor/.style={draw, fill=gray!15, minimum width=2.6cm, minimum height=0.6cm, align=center},
+    msg/.style={-{Stealth[length=4pt]}, thick},
+    notelbl/.style={draw, fill=yellow!20, rounded corners=2pt, inner sep=3pt, font=\tiny, align=left}
+]
+
+\def\xA{0}
+\def\xB{10}
+
+\node[actor] at (\xA, 10) {Client A (sender)};
+\node[actor] at (\xB, 10) {Client B (PeerListener)};
+
+\draw[dashed,gray] (\xA,9.7)--(\xA,-0.3);
+\draw[dashed,gray] (\xB,9.7)--(\xB,-0.3);
+
+%% Existing P2P connection: A sends FILE_OFFER
+\draw[msg] (\xA,9.3)--(\xB,9.3) node[midway,above,font=\tiny]{FILE\_OFFER (tên, kích thước, transferId)};
+\node[notelbl] at (\xB+1.6,8.85) {B lưu offer \#N\\(transferId, sender)};
+\draw[msg] (\xB,8.6)--(\xA,8.6) node[midway,above,font=\tiny]{FILE\_OFFER\_ACK};
+
+\node[notelbl] at (\xB+1.6,8.1) {Người dùng gõ \lstinline{/accept N}};
+\draw[msg] (\xB,7.7)--(\xA,7.7) node[midway,above,font=\tiny]{FILE\_DECISION (ACCEPT, transferId)};
+
+%% New TCP connection for data
+\node[notelbl] at (5.0,7.2) {A mở kết nối TCP mới đến peerPort của B};
+\draw[msg] (\xA,6.9)--(\xB,6.9) node[midway,above,font=\tiny]{FILE\_OFFER (requestId=0) — header luồng data};
+
+%% Chunks
+\draw[msg] (\xA,6.5)--(\xB,6.5) node[midway,above,font=\tiny]{FILE\_CHUNK \#1};
+\draw[msg] (\xA,6.2)--(\xB,6.2) node[midway,above,font=\tiny]{FILE\_CHUNK \#2 \ldots};
+\draw[msg] (\xA,5.9)--(\xB,5.9) node[midway,above,font=\tiny]{FILE\_CHUNK \#N};
+
+%% End and result
+\draw[msg] (\xA,5.5)--(\xB,5.5) node[midway,above,font=\tiny]{FILE\_END (SHA-256 checksum)};
+\draw[msg] (\xB,5.2)--(\xA,5.2) node[midway,above,font=\tiny]{FILE\_RESULT (OK / CHECKSUM\_MISMATCH)};
+\node[notelbl] at (5.0,4.7) {B kiểm tra SHA-256, atomic move\\từ file tạm sang đích};
+
+\end{tikzpicture}
+\caption{Sequence diagram: Truyền file P2P trực tiếp}
+\label{fig:seq-file-p2p}
+\end{figure}
+
+% =========================================================
+\subsection{Luồng broadcast file qua server}
+% =========================================================
+
+Hình~\ref{fig:seq-broadcast} mô tả luồng broadcast file trong cộng đồng: Client A upload file lên server,
+server lưu trữ và phân phối đề nghị tải xuống đến các thành viên cùng cộng đồng.
+Mỗi client nhận tải file xuống qua một kết nối TCP riêng biệt đến cổng 8080.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    actor/.style={draw, fill=gray!15, minimum width=2.3cm, minimum height=0.6cm, align=center},
+    msg/.style={-{Stealth[length=4pt]}, thick},
+    notelbl/.style={draw, fill=yellow!20, rounded corners=2pt, inner sep=3pt, font=\tiny, align=left}
+]
+
+\def\xA{0}
+\def\xS{5.5}
+\def\xB{11}
+
+\node[actor] at (\xA, 11.5) {Client A (sender)};
+\node[actor] at (\xS, 11.5) {Server};
+\node[actor] at (\xB, 11.5) {Client B/C (receiver)};
+
+\draw[dashed,gray] (\xA,11.2)--(\xA,-0.3);
+\draw[dashed,gray] (\xS,11.2)--(\xS,-0.3);
+\draw[dashed,gray] (\xB,11.2)--(\xB,-0.3);
+
+%% Upload request
+\draw[msg] (\xA,10.8)--(\xS,10.8)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_UPLOAD\_REQUEST (meta, communityId)};
+\draw[msg] (\xS,10.5)--(\xA,10.5)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_UPLOAD\_RESPONSE (uploadToken)};
+
+%% New TCP upload
+\node[notelbl] at (2.5,10.1) {A mở TCP mới đến port 8080};
+\draw[msg] (\xA,9.8)--(\xS,9.8)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_UPLOAD\_START (uploadToken)};
+\draw[msg] (\xA,9.5)--(\xS,9.5)
+    node[midway,above,font=\tiny]{FILE\_CHUNK \#1 \ldots \#N};
+\draw[msg] (\xA,9.2)--(\xS,9.2)
+    node[midway,above,font=\tiny]{FILE\_END (SHA-256)};
+\draw[msg] (\xS,8.9)--(\xA,8.9)
+    node[midway,above,font=\tiny]{FILE\_RESULT (OK)};
+
+\node[notelbl] at (5.5,8.4) {Server lưu file vào\\FileStorageService};
+
+%% Server offers to community members
+\draw[msg] (\xS,8.0)--(\xB,8.0)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_OFFER (fileId, tên, kích thước)};
+
+%% Recipients accept
+\node[notelbl] at (\xB+1.6,7.5) {Người dùng gõ \lstinline{/accept N}};
+\draw[msg] (\xB,7.2)--(\xS,7.2)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_DECISION (ACCEPT, offerId)};
+\draw[msg] (\xS,6.9)--(\xB,6.9)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_DOWNLOAD\_RESPONSE (downloadToken)};
+
+%% New TCP download
+\node[notelbl] at (8.5,6.5) {B/C mở TCP mới đến port 8080};
+\draw[msg] (\xB,6.2)--(\xS,6.2)
+    node[midway,above,font=\tiny]{FILE\_BROADCAST\_DOWNLOAD\_START (downloadToken)};
+\draw[msg] (\xS,5.9)--(\xB,5.9)
+    node[midway,above,font=\tiny]{FILE\_CHUNK \#1 \ldots \#N (FileSender stream)};
+\draw[msg] (\xS,5.6)--(\xB,5.6)
+    node[midway,above,font=\tiny]{FILE\_END (SHA-256)};
+\draw[msg] (\xB,5.3)--(\xS,5.3)
+    node[midway,above,font=\tiny]{FILE\_RESULT (OK)};
+
+\node[notelbl] at (8.5,4.8) {B/C kiểm tra SHA-256\\atomic move sang đích};
+
+\end{tikzpicture}
+\caption{Sequence diagram: Broadcast file trong cộng đồng qua server trung tâm}
+\label{fig:seq-broadcast}
+\end{figure}

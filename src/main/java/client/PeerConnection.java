@@ -16,6 +16,7 @@ public class PeerConnection implements AutoCloseable {
     private final AtomicBoolean disconnectReported = new AtomicBoolean();
     private int messageRequestId = 1;
     private InetSocketAddress peerAddress;
+    private volatile String peerUsername;
 
     public PeerConnection(Socket socket) {
         this.socket = socket;
@@ -69,6 +70,7 @@ public class PeerConnection implements AutoCloseable {
         sendPacket(response);
 
         socket.setSoTimeout(0);
+        this.peerUsername = identity[0];
         return identity[0];
     }
 
@@ -89,6 +91,14 @@ public class PeerConnection implements AutoCloseable {
         return peerAddress;
     }
 
+    public String getPeerUsername() {
+        return peerUsername;
+    }
+
+    public void setPeerUsername(String peerUsername) {
+        this.peerUsername = peerUsername;
+    }
+
     public UUID sessionId() {
         return sessionId;
     }
@@ -101,7 +111,15 @@ public class PeerConnection implements AutoCloseable {
         return socket.isClosed();
     }
 
+    public boolean isConnected() {
+        return socket.isConnected() && !socket.isClosed();
+    }
+
     public void readMessages(String peerUsername, Consumer<Packet> onFilePacket) throws IOException {
+        readMessages(peerUsername, text -> System.out.println(peerUsername + ": " + text), onFilePacket);
+    }
+
+    public void readMessages(String peerUsername, Consumer<String> onChatMessage, Consumer<Packet> onFilePacket) throws IOException {
         InputStream input = socket.getInputStream();
         Packet packet;
 
@@ -111,7 +129,11 @@ public class PeerConnection implements AutoCloseable {
                     if (packet.payloadLength() > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
-                    System.out.println(peerUsername + ": " + packet.text());
+                    if (onChatMessage != null) {
+                        onChatMessage.accept(packet.text());
+                    } else {
+                        System.out.println(peerUsername + ": " + packet.text());
+                    }
                 }
                 case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
                 default -> throw new IOException("Unexpected peer chat packet: " + packet.op());

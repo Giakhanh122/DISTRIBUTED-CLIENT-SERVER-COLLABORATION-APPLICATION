@@ -7,4 +7,8 @@ public record UserSession(
         String ip,
         int port,
         Socket clientSocket) {
+
+    public UserSession(String username, String ip, int port) {
+        this(username, ip, port, null);
+    }
 }
