@@ -6,72 +6,84 @@
 <?import javafx.scene.control.PasswordField?>
 <?import javafx.scene.control.ProgressIndicator?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
-<StackPane stylesheets="@../css/dark-theme.css"
-           styleClass="window-root"
-           prefWidth="850.0" prefHeight="600.0"
-           xmlns="http://javafx.com/javafx/21"
-           xmlns:fx="http://javafx.com/fxml/1"
-           fx:controller="ui.controller.LoginController">
+<VBox stylesheets="@../css/dl-chat-theme.css"
+      styleClass="window-root"
+      prefWidth="800.0" prefHeight="560.0"
+      xmlns="http://javafx.com/javafx/21"
+      xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="ui.controller.LoginController">
 
-    <VBox alignment="CENTER" maxWidth="420.0" spacing="22.0">
+    <!-- Custom Flat Title Bar -->
+    <HBox fx:id="titleBar" styleClass="title-bar" alignment="CENTER_LEFT" spacing="8.0">
         <padding>
-            <Insets top="32.0" right="32.0" bottom="32.0" left="32.0"/>
+            <Insets left="14.0" right="0.0" top="0.0" bottom="0.0"/>
         </padding>
+        <ImageView fitWidth="18.0" fitHeight="18.0" preserveRatio="true">
+            <image>
+                <Image url="@../assets/DL-Chat-icon-32.png"/>
+            </image>
+        </ImageView>
+        <Label text="DL-Chat" styleClass="title-bar-text"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="minimizeBtn" text="-" styleClass="window-btn" onAction="#handleMinimize"/>
+        <Button fx:id="maximizeBtn" text="☐" styleClass="window-btn" onAction="#handleMaximize"/>
+        <Button fx:id="closeBtn" text="✕" styleClass="window-btn-close" onAction="#handleClose"/>
+    </HBox>
 
-        <!-- Brand / Header -->
-        <VBox alignment="CENTER" spacing="8.0">
-            <StackPane fx:id="logoContainer" prefWidth="48.0" prefHeight="48.0"/>
-            <Label text="PulseChat" style="-fx-font-size: 26px; -fx-font-weight: bold; -fx-text-fill: #F1F3F8;"/>
-            <Label text="Distributed P2P Collaboration Messenger" style="-fx-font-size: 13px; -fx-text-fill: #9299A8;"/>
-        </VBox>
+    <!-- Main Content Background -->
+    <StackPane VBox.vgrow="ALWAYS" style="-fx-background-color: #FAFAFA;">
+        <VBox alignment="CENTER" maxWidth="380.0" spacing="16.0">
+            <padding>
+                <Insets top="28.0" right="24.0" bottom="28.0" left="24.0"/>
+            </padding>
 
-        <!-- Login Card -->
-        <VBox spacing="16.0" style="-fx-background-color: #181B22; -fx-background-radius: 14px; -fx-border-color: #262B37; -fx-border-radius: 14px; -fx-padding: 24px;">
+            <ImageView fitWidth="210.0" preserveRatio="true" smooth="true">
+                <image>
+                    <Image url="@../assets/DL-Chat-logo.png"/>
+                </image>
+            </ImageView>
 
-            <!-- Server Connection Row -->
-            <VBox spacing="6.0">
-                <Label text="SERVER ADDRESS" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
-                <HBox spacing="8.0" alignment="CENTER_LEFT">
-                    <TextField fx:id="hostField" promptText="localhost" text="localhost" HBox.hgrow="ALWAYS" styleClass="text-input"/>
-                    <TextField fx:id="portField" promptText="8080" text="8080" prefWidth="76.0" styleClass="text-input"/>
-                    <Button fx:id="discoverBtn" text="Discover" onAction="#handleDiscover" styleClass="btn-secondary" style="-fx-padding: 9px 12px;"/>
+            <!-- Login Card -->
+            <VBox spacing="14.0" styleClass="login-card">
+
+                <VBox spacing="6.0">
+                    <Label text="SERVER HOST &amp; PORT" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #71717A;"/>
+                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                        <TextField fx:id="hostField" promptText="localhost" text="localhost" HBox.hgrow="ALWAYS" styleClass="text-input"/>
+                        <TextField fx:id="portField" promptText="8080" text="8080" prefWidth="76.0" styleClass="text-input"/>
+                        <Button fx:id="discoverBtn" text="Discover" onAction="#handleDiscover" styleClass="btn-secondary"/>
+                    </HBox>
+                </VBox>
+
+                <VBox spacing="6.0">
+                    <Label text="USERNAME" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #71717A;"/>
+                    <TextField fx:id="usernameField" promptText="alice, bob, admin1..." styleClass="text-input" onAction="#handleLogin"/>
+                </VBox>
+
+                <VBox spacing="6.0">
+                    <Label text="PASSWORD" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #71717A;"/>
+                    <PasswordField fx:id="passwordField" promptText="••••••••" styleClass="text-input" onAction="#handleLogin"/>
+                </VBox>
+
+                <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
+                       style="-fx-background-color: #FEF2F2; -fx-text-fill: #EF4444; -fx-padding: 8px 12px; -fx-border-color: #FECACA; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-font-size: 12px;"/>
+
+                <Label fx:id="statusLabel" visible="false" managed="false" wrapText="true"
+                       style="-fx-text-fill: #D97706; -fx-font-size: 12px;"/>
+
+                <HBox spacing="10.0" alignment="CENTER">
+                    <Button fx:id="loginBtn" text="Sign In" onAction="#handleLogin" HBox.hgrow="ALWAYS" maxWidth="Infinity" styleClass="btn-primary" style="-fx-padding: 10px; -fx-font-size: 13px;"/>
+                    <ProgressIndicator fx:id="loadingIndicator" visible="false" managed="false" prefWidth="24.0" prefHeight="24.0"/>
                 </HBox>
             </VBox>
-
-            <!-- Username Row -->
-            <VBox spacing="6.0">
-                <Label text="USERNAME" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
-                <TextField fx:id="usernameField" promptText="e.g. alice, bob, admin1" styleClass="text-input" onAction="#handleLogin"/>
-            </VBox>
-
-            <!-- Password Row -->
-            <VBox spacing="6.0">
-                <Label text="PASSWORD" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #9299A8;"/>
-                <PasswordField fx:id="passwordField" promptText="••••••••" styleClass="text-input" onAction="#handleLogin"/>
-            </VBox>
-
-            <!-- Error Notification Banner -->
-            <Label fx:id="errorLabel" visible="false" managed="false" wrapText="true"
-                   style="-fx-background-color: rgba(241, 107, 117, 0.15); -fx-text-fill: #F16B75; -fx-padding: 8px 12px; -fx-background-radius: 6px; -fx-font-size: 12px;"/>
-
-            <!-- Status Indicator -->
-            <Label fx:id="statusLabel" visible="false" managed="false" wrapText="true"
-                   style="-fx-text-fill: #35C98A; -fx-font-size: 12px;"/>
-
-            <!-- Login Button & Progress -->
-            <HBox spacing="10.0" alignment="CENTER">
-                <Button fx:id="loginBtn" text="Sign In" onAction="#handleLogin" HBox.hgrow="ALWAYS" maxWidth="Infinity" styleClass="btn-primary" style="-fx-padding: 11px; -fx-font-size: 14px;"/>
-                <ProgressIndicator fx:id="loadingIndicator" visible="false" managed="false" prefWidth="26.0" prefHeight="26.0"/>
-            </HBox>
-
-            <!-- Demo Hint -->
-            <Label text="Demo Accounts: alice / alice123  •  bob / bob123"
-                   style="-fx-font-size: 11px; -fx-text-fill: #5E6678;" alignment="CENTER" maxWidth="Infinity"/>
         </VBox>
-    </VBox>
+    </StackPane>
 
-</StackPane>
+</VBox>

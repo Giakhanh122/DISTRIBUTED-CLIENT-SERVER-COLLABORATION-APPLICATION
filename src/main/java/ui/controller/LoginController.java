@@ -13,17 +13,22 @@ import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
-import javafx.scene.layout.StackPane;
+import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import ui.adapter.ChatClientAdapter;
 import ui.adapter.ClientEventListener;
+import ui.model.CommunityModel;
 import ui.model.FileOfferModel;
 import ui.util.IconUtils;
-import ui.util.JavaFxUtils;
+import ui.util.WindowDragHelper;
 
 public class LoginController implements ClientEventListener {
 
-    @FXML private StackPane logoContainer;
+    @FXML private HBox titleBar;
+    @FXML private Button minimizeBtn;
+    @FXML private Button maximizeBtn;
+    @FXML private Button closeBtn;
+
     @FXML private TextField hostField;
     @FXML private TextField portField;
     @FXML private Button discoverBtn;
@@ -39,13 +44,26 @@ public class LoginController implements ClientEventListener {
     @FXML
     public void initialize() {
         adapter.addListener(this);
+        WindowDragHelper.makeDraggable(titleBar);
+        discoverBtn.setGraphic(IconUtils.createIconNode(IconUtils.REFRESH, 13, "#71717A"));
+    }
 
-        // Decorate logo
-        StackPane logoNode = IconUtils.createIconNode(IconUtils.APP_LOGO, 38, "#6C8CFF");
-        logoContainer.getChildren().add(logoNode);
+    @FXML
+    private void handleMinimize() {
+        ((Stage) titleBar.getScene().getWindow()).setIconified(true);
+    }
 
-        // Decorate discover button
-        discoverBtn.setGraphic(IconUtils.createIconNode(IconUtils.REFRESH, 14, "#9299A8"));
+    @FXML
+    private void handleMaximize() {
+        Stage stage = (Stage) titleBar.getScene().getWindow();
+        WindowDragHelper.toggleMaximize(stage);
+    }
+
+    @FXML
+    private void handleClose() {
+        ChatClientAdapter.getInstance().disconnect();
+        Platform.exit();
+        System.exit(0);
     }
 
     @FXML
@@ -142,28 +160,24 @@ public class LoginController implements ClientEventListener {
         statusLabel.setManaged(false);
     }
 
-    // --- ClientEventListener callbacks ---
-
     @Override
     public void onLoginSuccess(String username) {
         setLoading(false);
         hideError();
         hideStatus();
 
-        // Switch scene to chat screen
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/chat.fxml"));
             Parent root = loader.load();
 
             Stage stage = (Stage) loginBtn.getScene().getWindow();
-            Scene scene = new Scene(root, 1080, 700);
-            stage.setTitle("PulseChat — " + username);
+            Scene scene = new Scene(root, 1060, 700);
+            stage.setTitle("DL-Chat - " + username);
             stage.setScene(scene);
-            stage.setMinWidth(800);
-            stage.setMinHeight(550);
+            stage.setMinWidth(850);
+            stage.setMinHeight(580);
             stage.centerOnScreen();
 
-            // Unsubscribe login listener
             adapter.removeListener(this);
         } catch (IOException e) {
             showError("Failed to open chat screen: " + e.getMessage());
@@ -181,14 +195,16 @@ public class LoginController implements ClientEventListener {
     @Override public void onPeerOffline(String peerUsername) {}
     @Override public void onPeerConnectionFailed(String peerUsername, String reason) {}
     @Override public void onMessageReceived(String peerUsername, String message) {}
+    @Override public void onBroadcastMessageReceived(String communityId, String sender, String message) {}
+    @Override public void onCommunityListUpdated(List<CommunityModel> communities) {}
+    @Override public void onCommunityJoined(String communityId, String communityName) {}
+    @Override public void onCommunityLeft(String communityId) {}
     @Override public void onFileOfferReceived(FileOfferModel offer) {}
     @Override public void onFileOfferStateChanged(String offerNumber, String statusMessage) {}
     @Override public void onFileTransferCompleted(String fileName, String detail, boolean isSent) {}
     @Override public void onFileTransferError(String error) {}
     @Override public void onPeerDisconnected(String peerUsername) {}
-    @Override public void onConnectionClosed() {
-        setLoading(false);
-    }
+    @Override public void onConnectionClosed() { setLoading(false); }
     @Override public void onSystemNotification(String message, boolean isError) {
         if (isError && loadingIndicator.isVisible()) {
             showError(message);

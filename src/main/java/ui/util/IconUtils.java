@@ -26,6 +26,7 @@ public final class IconUtils {
     public static final String LOCK = "M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4";
     public static final String SHIELD = "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z";
     public static final String CHAT_BUBBLE = "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z";
+    public static final String COMPASS = "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zm3.88-14.12l-2.06 5.82a1.5 1.5 0 0 1-.82.82l-5.82 2.06 2.06-5.82a1.5 1.5 0 0 1 .82-.82z";
     public static final String APP_LOGO = "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5";
 
     public static SVGPath createIcon(String pathData, double size, String colorHex) {
