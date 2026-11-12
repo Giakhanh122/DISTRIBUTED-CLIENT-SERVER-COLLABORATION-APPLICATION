@@ -1,17 +1,11 @@
 package client;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Scanner;
@@ -995,63 +989,7 @@ public class Client {
     }
 
     public ServerInfo discover() throws IOException {
-        final int DISCOVERY_PORT = 41234;
-        final int maxAttemps = 5;
-
-        InetAddress broadcastAddress = InetAddress.getByName("255.255.255.255");
-        int requestId = nextRequestId();
-        Packet request = new Packet(OpCode.DISCOVER_REQUEST, requestId, new byte[0]);
-
-        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-        PacketCodec.write(encoded, request);
-        byte[] requestBytes = encoded.toByteArray();
-
-        try (DatagramSocket socket = new DatagramSocket()) {
-            socket.setBroadcast(true);
-            socket.setSoTimeout(3000);
-
-            DatagramPacket outgoing = new DatagramPacket(
-                    requestBytes,
-                    requestBytes.length,
-                    broadcastAddress,
-                    DISCOVERY_PORT);
-
-            byte[] buffer = new byte[4096];
-            for (int attemp = 1; attemp <= maxAttemps; attemp++) {
-                socket.send(outgoing);
-                System.out.println("Finding server: " + attemp + "/" + maxAttemps);
-
-                DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
-
-                try {
-                    socket.receive(incoming);
-                } catch (SocketTimeoutException e) {
-                    continue;
-                }
-
-                try {
-                    ByteArrayInputStream input = new ByteArrayInputStream(
-                            incoming.getData(),
-                            incoming.getOffset(),
-                            incoming.getLength());
-
-                    Packet response = PacketCodec.read(input);
-                    PacketValidator.validateResponse(response, OpCode.DISCOVER_RESPONSE, requestId);
-                    if (input.available() != 0 || incoming.getPort() != DISCOVERY_PORT) {
-                        continue;
-                    }
-
-                    int tcpPort = Integer.parseInt(response.text());
-                    if (tcpPort < 1 || tcpPort > 65535)
-                        continue;
-
-                    return new ServerInfo(incoming.getAddress().getHostAddress(), tcpPort);
-                } catch (IOException | NumberFormatException e) {
-                    continue;
-                }
-            }
-        }
-        return null;
+        return new ServerDiscovery().discover(nextRequestId());
     }
 
     private Packet awaitResponse(OutputStream output, Packet request, OpCode expectedOp) throws IOException {
