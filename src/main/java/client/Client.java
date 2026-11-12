@@ -475,19 +475,27 @@ public class Client {
             return;
         }
 
-        if (subcommand.equalsIgnoreCase("leave")) {
-            if (activeCommunityId == null) {
+        if (subcommand.startsWith("leave")) {
+            String targetId = activeCommunityId;
+            String arg = subcommand.length() > 5 ? subcommand.substring(5).trim() : "";
+            if (!arg.isEmpty()) {
+                targetId = arg;
+            }
+            if (targetId == null) {
                 System.err.println("No active community selected.");
                 return;
             }
             try {
-                Packet request = Packet.text(OpCode.COMMUNITY_LEAVE_REQUEST, nextRequestId(), activeCommunityId);
+                Packet request = Packet.text(OpCode.COMMUNITY_LEAVE_REQUEST, nextRequestId(), targetId);
                 Packet response = awaitResponse(output, request, OpCode.COMMUNITY_LEAVE_RESPONSE);
                 String result = response.text();
                 if (result.equals("OK")) {
-                    System.out.println("Left community '" + activeCommunityName + "'.");
-                    activeCommunityId = null;
-                    activeCommunityName = null;
+                    String commName = activeCommunityName != null ? activeCommunityName : targetId;
+                    System.out.println("Left community '" + commName + "'.");
+                    if (targetId.equals(activeCommunityId)) {
+                        activeCommunityId = null;
+                        activeCommunityName = null;
+                    }
                 } else {
                     System.err.println("Leave failed: " + result);
                 }
@@ -1106,7 +1114,7 @@ public class Client {
     }
 
     private void handleBroadcastOfferReceived(Packet packet) {
-        // Payload: fileId\tsender\tfilename\tfileSize\tchecksum
+        // Payload: fileId\tsender\tfilename\tfileSize\tchecksum[\tcommunityId\tcommunityName]
         String[] fields = packet.text().split("\t", -1);
         if (fields.length < 5) return;
 
@@ -1116,13 +1124,16 @@ public class Client {
         long fileSize;
         try { fileSize = Long.parseLong(fields[3]); } catch (NumberFormatException e) { return; }
         String checksum = fields[4];
+        String commId = fields.length >= 6 ? fields[5] : "";
+        String commName = fields.length >= 7 ? fields[6] : "";
 
         int num = broadcastOfferSeq.incrementAndGet();
         String key = "bc-" + num;
         broadcastOffers.put(key, new BroadcastOffer(fileId, sender, fileName, fileSize, checksum));
 
+        String commTag = (!commId.isBlank()) ? " in community [" + commId + ":" + commName + "]." : " in community.";
         System.out.println("\n[BROADCAST FILE OFFER #" + num + "] " + sender + " shared '" + fileName
-                + "' (" + fileSize + " bytes) in community.");
+                + "' (" + fileSize + " bytes)" + commTag);
         System.out.println("SHA-256: " + checksum);
         System.out.println("Type '/accept " + num + "' or '/reject " + num + "'");
     }

@@ -542,9 +542,10 @@ public class ClientHandler implements Runnable {
         // Broadcast offer to community members (excluding sender)
         Community community = communityService.validateMembership(meta.communityId(), meta.sender());
         if (community != null) {
-            // Offer payload: fileId\tsender\tfilename\tfileSize\tchecksum
+            // Offer payload: fileId\tsender\tfilename\tfileSize\tchecksum\tcommunityId\tcommunityName
             String offerPayload = meta.fileId() + "\t" + meta.sender() + "\t" +
-                    meta.fileName() + "\t" + meta.fileSize() + "\t" + meta.checksum();
+                    meta.fileName() + "\t" + meta.fileSize() + "\t" + meta.checksum() + "\t" +
+                    meta.communityId() + "\t" + community.name();
             Packet offerPacket = Packet.text(OpCode.FILE_BROADCAST_OFFER, 0, offerPayload);
 
             Set<String> members = community.members();
