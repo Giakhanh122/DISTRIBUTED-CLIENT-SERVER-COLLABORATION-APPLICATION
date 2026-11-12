@@ -40,7 +40,13 @@ public class CommunityService {
         if (name.length() > 100) {
             return "NAME_TOO_LONG";
         }
-        Community community = new Community(name.trim(), ownerUsername);
+        String trimmed = name.trim();
+        for (Community existing : registry.listAll()) {
+            if (existing.name().equalsIgnoreCase(trimmed) && existing.ownerUsername().equalsIgnoreCase(ownerUsername)) {
+                return "OK\n" + existing.communityId() + "\n" + existing.name();
+            }
+        }
+        Community community = new Community(trimmed, ownerUsername);
         registry.register(community);
         return "OK\n" + community.communityId() + "\n" + community.name();
     }
@@ -69,10 +75,13 @@ public class CommunityService {
         if (!c.isMember(username)) {
             return "NOT_MEMBER";
         }
-        if (c.isOwner(username)) {
-            return "OWNER_CANNOT_LEAVE";
-        }
         c.removeMember(username);
+        if (c.memberCount() == 0) {
+            registry.remove(communityId);
+        } else if (c.isOwner(username)) {
+            String nextOwner = c.members().iterator().next();
+            c.setOwnerUsername(nextOwner);
+        }
         return "OK";
     }
 

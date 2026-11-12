@@ -22,9 +22,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import ui.model.CommunityModel;
 import ui.model.FileOfferModel;
 import ui.util.JavaFxUtils;
 
@@ -60,6 +62,7 @@ public class ChatClientAdapter {
         }), true, StandardCharsets.UTF_8));
     }
 
+    private final Consumer<String> capturedLineHandler = this::handleCapturedLine;
     private final List<ClientEventListener> listeners = new CopyOnWriteArrayList<>();
     private final Map<String, FileOfferModel> fileOffers = new ConcurrentHashMap<>();
 
@@ -70,6 +73,8 @@ public class ChatClientAdapter {
 
     private volatile String currentUsername;
     private volatile String selectedPeer;
+    private volatile String activeCommunityId;
+    private volatile String activeCommunityName;
     private volatile String serverHost;
     private volatile int serverPort;
     private volatile boolean connected = false;
@@ -78,26 +83,33 @@ public class ChatClientAdapter {
     // Line parser state per adapter
     private boolean collectingUserList = false;
     private final List<String> userListBuffer = new ArrayList<>();
+    private boolean collectingCommunityList = false;
+    private final List<CommunityModel> communityListBuffer = new ArrayList<>();
+
     private String pendingOfferNum = null;
     private String pendingOfferSender = null;
     private String pendingOfferFile = null;
     private long pendingOfferSize = 0;
+    private String pendingOfferCommId = null;
+    private boolean pendingIsBroadcast = false;
 
-    private ScheduledExecutorService userListPollExecutor;
+    private ScheduledExecutorService pollerExecutor;
     private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
+    private final AtomicBoolean commFlushScheduled = new AtomicBoolean(false);
+    private final AtomicLong lastUserListReqTime = new AtomicLong(0);
+    private final AtomicLong lastCommListReqTime = new AtomicLong(0);
     private volatile long lastUserListLineTime = 0;
+    private volatile long lastCommListLineTime = 0;
     private final List<String> lastKnownOnlineUsers = new CopyOnWriteArrayList<>();
+    private final List<CommunityModel> lastKnownCommunities = new CopyOnWriteArrayList<>();
 
     private void scheduleUserListFlush() {
         lastUserListLineTime = System.currentTimeMillis();
         if (flushScheduled.compareAndSet(false, true)) {
-            CompletableFuture.delayedExecutor(150, TimeUnit.MILLISECONDS).execute(() -> {
+            CompletableFuture.delayedExecutor(60, TimeUnit.MILLISECONDS).execute(() -> {
                 synchronized (ChatClientAdapter.this) {
                     flushScheduled.set(false);
-                    long elapsed = System.currentTimeMillis() - lastUserListLineTime;
-                    if (elapsed < 120) {
-                        scheduleUserListFlush();
-                    } else if (collectingUserList || !userListBuffer.isEmpty()) {
+                    if (collectingUserList || !userListBuffer.isEmpty()) {
                         flushUserList();
                     }
                 }
@@ -105,13 +117,18 @@ public class ChatClientAdapter {
         }
     }
 
-    public List<String> getLastKnownOnlineUsers() {
-        return Collections.unmodifiableList(lastKnownOnlineUsers);
-    }
-
-    public ChatClientAdapter() {
-        interceptSystemStreams();
-        globalLineListeners.add(this::handleCapturedLine);
+    private void scheduleCommunityListFlush() {
+        lastCommListLineTime = System.currentTimeMillis();
+        if (commFlushScheduled.compareAndSet(false, true)) {
+            CompletableFuture.delayedExecutor(60, TimeUnit.MILLISECONDS).execute(() -> {
+                synchronized (ChatClientAdapter.this) {
+                    commFlushScheduled.set(false);
+                    if (collectingCommunityList || !communityListBuffer.isEmpty()) {
+                        flushCommunityList();
+                    }
+                }
+            });
+        }
     }
 
     public void addListener(ClientEventListener listener) {
@@ -124,11 +141,47 @@ public class ChatClientAdapter {
         listeners.remove(listener);
     }
 
-    public synchronized void discoverServer(Consumer<Client.ServerInfo> callback) {
-        Thread.startVirtualThread(() -> {
+    public String getCurrentUsername() {
+        return currentUsername;
+    }
+
+    public String getServerHost() {
+        return serverHost;
+    }
+
+    public int getServerPort() {
+        return serverPort;
+    }
+
+    public boolean isConnected() {
+        return connected;
+    }
+
+    public String getActiveCommunityId() {
+        return activeCommunityId;
+    }
+
+    public String getActiveCommunityName() {
+        return activeCommunityName;
+    }
+
+    public List<String> getLastKnownOnlineUsers() {
+        return Collections.unmodifiableList(lastKnownOnlineUsers);
+    }
+
+    public List<CommunityModel> getLastKnownCommunities() {
+        return Collections.unmodifiableList(lastKnownCommunities);
+    }
+
+    public FileOfferModel getFileOffer(String offerNumber) {
+        return fileOffers.get(offerNumber);
+    }
+
+    public void discoverServer(Consumer<Client.ServerInfo> callback) {
+        Thread.ofVirtual().name("Server-Discovery").start(() -> {
             try {
-                Client c = new Client();
-                Client.ServerInfo info = c.discover();
+                Client tempClient = new Client();
+                Client.ServerInfo info = tempClient.discover();
                 JavaFxUtils.runOnFxThread(() -> callback.accept(info));
             } catch (Exception e) {
                 JavaFxUtils.runOnFxThread(() -> callback.accept(null));
@@ -140,13 +193,19 @@ public class ChatClientAdapter {
         if (connected || loggingIn) {
             return;
         }
+
         this.serverHost = host;
         this.serverPort = port;
         this.currentUsername = username;
         this.loggingIn = true;
-        this.client = new Client();
+
+        interceptSystemStreams();
+        if (!globalLineListeners.contains(capturedLineHandler)) {
+            globalLineListeners.add(capturedLineHandler);
+        }
 
         try {
+            client = new Client();
             commandPipeOut = new PipedOutputStream();
             PipedInputStream commandPipeIn = new PipedInputStream(commandPipeOut, 8192);
             commandWriter = new PrintWriter(commandPipeOut, true, StandardCharsets.UTF_8);
@@ -165,7 +224,7 @@ public class ChatClientAdapter {
                 } finally {
                     connected = false;
                     loggingIn = false;
-                    stopUserListPolling();
+                    stopPolling();
                     notifyConnectionClosed();
                 }
             });
@@ -177,8 +236,68 @@ public class ChatClientAdapter {
     }
 
     public void requestUserList() {
+        long now = System.currentTimeMillis();
+        if (now - lastUserListReqTime.get() < 700) {
+            return;
+        }
+        lastUserListReqTime.set(now);
         if (commandWriter != null && connected) {
             commandWriter.println("/users");
+        }
+    }
+
+    public void requestCommunityList() {
+        long now = System.currentTimeMillis();
+        if (now - lastCommListReqTime.get() < 700) {
+            return;
+        }
+        lastCommListReqTime.set(now);
+        if (commandWriter != null && connected) {
+            commandWriter.println("/communities");
+        }
+    }
+
+    public void createCommunity(String name) {
+        if (commandWriter != null && connected && name != null && !name.isBlank()) {
+            commandWriter.println("/community create " + name.trim());
+        }
+    }
+
+    public void joinCommunity(String communityId) {
+        if (commandWriter != null && connected && communityId != null && !communityId.isBlank()) {
+            commandWriter.println("/community join " + communityId.trim());
+        }
+    }
+
+    public void selectCommunity(String communityId) {
+        if (commandWriter != null && connected && communityId != null && !communityId.isBlank()) {
+            commandWriter.println("/community select " + communityId.trim());
+        }
+    }
+
+    public void leaveCommunity(String communityId) {
+        if (commandWriter != null && connected) {
+            if (communityId != null && !communityId.isBlank()) {
+                commandWriter.println("/community leave " + communityId.trim());
+            } else {
+                commandWriter.println("/community leave");
+            }
+        }
+    }
+
+    public void leaveCommunity() {
+        leaveCommunity(null);
+    }
+
+    public void broadcastMessage(String text) {
+        if (commandWriter != null && connected && text != null && !text.isBlank()) {
+            commandWriter.println("/broadcast -m " + text.trim());
+        }
+    }
+
+    public void broadcastFile(File file) {
+        if (commandWriter != null && connected && file != null && file.exists()) {
+            commandWriter.println("/broadcast -f " + file.getAbsolutePath());
         }
     }
 
@@ -249,65 +368,68 @@ public class ChatClientAdapter {
         if (commandWriter != null && connected) {
             commandWriter.println("/logout");
         }
+        disconnect();
+    }
+
+    public synchronized void disconnect() {
+        stopPolling();
+        globalLineListeners.remove(capturedLineHandler);
         connected = false;
         loggingIn = false;
-        stopUserListPolling();
-    }
 
-    public void disconnect() {
-        logout();
         if (commandWriter != null) {
             try {
+                commandWriter.close();
+            } catch (Exception ignored) {}
+            commandWriter = null;
+        }
+
+        if (commandPipeOut != null) {
+            try {
                 commandPipeOut.close();
-            } catch (IOException ignored) {}
+            } catch (Exception ignored) {}
+            commandPipeOut = null;
         }
-        if (clientThread != null) {
+
+        if (clientThread != null && clientThread.isAlive()) {
             clientThread.interrupt();
+            clientThread = null;
         }
+
+        fileOffers.clear();
+        selectedPeer = null;
+        currentUsername = null;
+        activeCommunityId = null;
+        activeCommunityName = null;
+        lastKnownCommunities.clear();
+        lastKnownOnlineUsers.clear();
+        communityListBuffer.clear();
+        userListBuffer.clear();
     }
 
-    public String getCurrentUsername() {
-        return currentUsername;
-    }
-
-    public String getSelectedPeer() {
-        return selectedPeer;
-    }
-
-    public boolean isConnected() {
-        return connected;
-    }
-
-    public String getServerHost() {
-        return serverHost;
-    }
-
-    public int getServerPort() {
-        return serverPort;
-    }
-
-    public FileOfferModel getFileOffer(String offerNumber) {
-        return fileOffers.get(offerNumber);
-    }
-
-    private void startUserListPolling() {
-        stopUserListPolling();
-        userListPollExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "UserList-Poller-" + currentUsername);
+    private void startPolling() {
+        stopPolling();
+        pollerExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "Poller-" + (currentUsername != null ? currentUsername : "user"));
             t.setDaemon(true);
             return t;
         });
-        userListPollExecutor.scheduleWithFixedDelay(() -> {
+
+        pollerExecutor.scheduleWithFixedDelay(() -> {
             if (connected) {
                 requestUserList();
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException ignored) {}
+                requestCommunityList();
             }
-        }, 1, 3, TimeUnit.SECONDS);
+        }, 3, 4, TimeUnit.SECONDS);
     }
 
-    private void stopUserListPolling() {
-        if (userListPollExecutor != null && !userListPollExecutor.isShutdown()) {
-            userListPollExecutor.shutdownNow();
-            userListPollExecutor = null;
+    private void stopPolling() {
+        if (pollerExecutor != null && !pollerExecutor.isShutdown()) {
+            pollerExecutor.shutdownNow();
+            pollerExecutor = null;
         }
     }
 
@@ -323,13 +445,12 @@ public class ChatClientAdapter {
             if (loggingIn) {
                 connected = true;
                 loggingIn = false;
-                startUserListPolling();
+                startPolling();
                 JavaFxUtils.runOnFxThread(() -> {
                     for (ClientEventListener l : listeners) {
                         l.onLoginSuccess(currentUsername);
                     }
                 });
-                requestUserList();
             }
             return;
         }
@@ -351,6 +472,9 @@ public class ChatClientAdapter {
 
         // Online Users List Parsing
         if (trimmed.contains("Online users:")) {
+            if (collectingCommunityList) {
+                flushCommunityList();
+            }
             collectingUserList = true;
             userListBuffer.clear();
             scheduleUserListFlush();
@@ -371,6 +495,133 @@ public class ChatClientAdapter {
             } else {
                 flushUserList();
             }
+        }
+
+        // Communities List Parsing
+        // Format printed in Client.java: "  <name> | ID: <id> | Owner: <owner> | Members: <count> [JOINED]"
+        if (trimmed.equals("Communities:")) {
+            if (collectingUserList) {
+                flushUserList();
+            }
+            collectingCommunityList = true;
+            communityListBuffer.clear();
+            scheduleCommunityListFlush();
+            return;
+        }
+
+        if (trimmed.contains("No communities available")) {
+            collectingCommunityList = false;
+            communityListBuffer.clear();
+            flushCommunityList();
+            return;
+        }
+
+        if (trimmed.contains(" | ID: ") && trimmed.contains(" | Owner: ") && trimmed.contains(" | Members: ")) {
+            Pattern commPattern = Pattern.compile("^\\s*(.*?)\\s*\\|\\s*ID:\\s*(\\S+)\\s*\\|\\s*Owner:\\s*(\\S+)\\s*\\|\\s*Members:\\s*(\\d+)(\\s*\\[JOINED\\])?$");
+            Matcher m = commPattern.matcher(trimmed);
+            if (m.find()) {
+                String name = m.group(1).trim();
+                String id = m.group(2).trim();
+                String owner = m.group(3).trim();
+                int count = Integer.parseInt(m.group(4).trim());
+                boolean joined = m.group(5) != null;
+                communityListBuffer.removeIf(c -> c.getId().equals(id));
+                communityListBuffer.add(new CommunityModel(id, name, owner, count, joined));
+                scheduleCommunityListFlush();
+                return;
+            }
+        }
+
+        // Community selection/creation/join events
+        // "[Community: Name] selected."
+        if (trimmed.contains("[Community: ") && trimmed.contains("] selected.")) {
+            int start = trimmed.indexOf("[Community: ") + "[Community: ".length();
+            int end = trimmed.indexOf("] selected.");
+            String commName = trimmed.substring(start, end).trim();
+            this.activeCommunityName = commName;
+            JavaFxUtils.runOnFxThread(() -> {
+                for (ClientEventListener l : listeners) {
+                    l.onCommunityJoined(activeCommunityId != null ? activeCommunityId : commName, commName);
+                }
+            });
+            requestCommunityList();
+            return;
+        }
+
+        // "Community 'Name' created! ID: <id>"
+        if (trimmed.startsWith("Community '") && trimmed.contains("' created! ID: ")) {
+            int startName = 11;
+            int endName = trimmed.indexOf("' created! ID: ");
+            String commName = trimmed.substring(startName, endName);
+            String id = trimmed.substring(endName + "' created! ID: ".length()).trim();
+            this.activeCommunityId = id;
+            this.activeCommunityName = commName;
+            JavaFxUtils.runOnFxThread(() -> {
+                for (ClientEventListener l : listeners) {
+                    l.onCommunityJoined(id, commName);
+                }
+            });
+            requestCommunityList();
+            return;
+        }
+
+        // "Joined community 'Name'!"
+        if (trimmed.startsWith("Joined community '") && trimmed.endsWith("'!")) {
+            String commName = trimmed.substring(18, trimmed.length() - 2);
+            this.activeCommunityName = commName;
+            JavaFxUtils.runOnFxThread(() -> {
+                for (ClientEventListener l : listeners) {
+                    l.onCommunityJoined(activeCommunityId != null ? activeCommunityId : commName, commName);
+                }
+            });
+            requestCommunityList();
+            return;
+        }
+
+        // "Left community 'Name'."
+        if (trimmed.startsWith("Left community '")) {
+            String leftId = activeCommunityId;
+            this.activeCommunityId = null;
+            this.activeCommunityName = null;
+            JavaFxUtils.runOnFxThread(() -> {
+                for (ClientEventListener l : listeners) {
+                    l.onCommunityLeft(leftId);
+                }
+            });
+            requestCommunityList();
+            return;
+        }
+
+        // Broadcast Message Parsing
+        // Format: "<activeCommunityId>\n(<activeCommunityName>:broadcast) <sender> : <content>"
+        if (trimmed.contains(":broadcast) ")) {
+            int bcIdx = trimmed.indexOf(":broadcast) ");
+            String afterBc = trimmed.substring(bcIdx + ":broadcast) ".length());
+            int colon = afterBc.indexOf(" : ");
+            if (colon > 0) {
+                String sender = afterBc.substring(0, colon).trim();
+                String content = afterBc.substring(colon + 3);
+                JavaFxUtils.runOnFxThread(() -> {
+                    for (ClientEventListener l : listeners) {
+                        l.onBroadcastMessageReceived(activeCommunityId, sender, content);
+                    }
+                });
+                return;
+            }
+        }
+
+        // Broadcast File Offer Parsing
+        // [BROADCAST FILE OFFER #1] alice shared 'video.mp4' (12345 bytes) in community [commId:commName].
+        Pattern bcOfferPattern = Pattern.compile("\\[BROADCAST FILE OFFER #(\\d+)\\]\\s+(\\w+)\\s+shared '([^']+)'\\s+\\((\\d+)\\s+bytes\\)(?:\\s+in community\\s+\\[([^:]+):([^\\]]*)\\])?.*");
+        Matcher bcOfferMatcher = bcOfferPattern.matcher(trimmed);
+        if (bcOfferMatcher.find()) {
+            pendingOfferNum = bcOfferMatcher.group(1);
+            pendingOfferSender = bcOfferMatcher.group(2);
+            pendingOfferFile = bcOfferMatcher.group(3);
+            pendingOfferSize = Long.parseLong(bcOfferMatcher.group(4));
+            pendingOfferCommId = bcOfferMatcher.group(5);
+            pendingIsBroadcast = true;
+            return;
         }
 
         // Peer Lookup & Connection Events
@@ -427,12 +678,13 @@ public class ChatClientAdapter {
             pendingOfferSender = offerMatcher.group(2);
             pendingOfferFile = offerMatcher.group(3);
             pendingOfferSize = Long.parseLong(offerMatcher.group(4));
+            pendingOfferCommId = null;
+            pendingIsBroadcast = false;
             return;
         }
 
         if (trimmed.startsWith("SHA-256: ") && pendingOfferNum != null) {
             String checksum = trimmed.substring("SHA-256: ".length()).trim();
-            // Ensure this offer is intended for this receiver
             if (currentUsername != null && !currentUsername.equals(pendingOfferSender)) {
                 FileOfferModel offer = new FileOfferModel(
                         pendingOfferNum,
@@ -443,6 +695,10 @@ public class ChatClientAdapter {
                         checksum,
                         true
                 );
+                offer.setBroadcast(pendingIsBroadcast);
+                if (pendingOfferCommId != null && !pendingOfferCommId.isBlank()) {
+                    offer.setCommunityId(pendingOfferCommId);
+                }
                 fileOffers.put(pendingOfferNum, offer);
 
                 JavaFxUtils.runOnFxThread(() -> {
@@ -452,32 +708,16 @@ public class ChatClientAdapter {
                 });
             }
             pendingOfferNum = null;
+            pendingOfferCommId = null;
+            pendingIsBroadcast = false;
             return;
         }
 
-        // Outbound offer sent: "[FILE] Offer sent to bob: 'data.zip'."
+        // Outbound offer sent notification
         Pattern outOfferPattern = Pattern.compile("\\[FILE\\]\\s+Offer sent to\\s+(\\w+):\\s+'([^']+)'.*");
         Matcher outOfferMatcher = outOfferPattern.matcher(trimmed);
         if (outOfferMatcher.find()) {
-            String receiver = outOfferMatcher.group(1);
-            String fileName = outOfferMatcher.group(2);
-            // Only the sender gets the outbound notification
-            if (currentUsername != null && !currentUsername.equals(receiver)) {
-                FileOfferModel offer = new FileOfferModel(
-                        "out-" + System.currentTimeMillis(),
-                        currentUsername,
-                        receiver,
-                        fileName,
-                        0,
-                        "",
-                        false
-                );
-                JavaFxUtils.runOnFxThread(() -> {
-                    for (ClientEventListener l : listeners) {
-                        l.onFileOfferReceived(offer);
-                    }
-                });
-            }
+            // Outbound card was already created by handleAttachFile with actual file size.
             return;
         }
 
@@ -497,7 +737,7 @@ public class ChatClientAdapter {
             return;
         }
 
-        if (trimmed.startsWith("[FILE] Accepted offer #")) {
+        if (trimmed.startsWith("[FILE] Accepted offer #") || trimmed.startsWith("[BROADCAST] Rejected broadcast file offer #")) {
             String msg = trimmed;
             JavaFxUtils.runOnFxThread(() -> {
                 for (ClientEventListener l : listeners) {
@@ -507,32 +747,29 @@ public class ChatClientAdapter {
             return;
         }
 
-        if (trimmed.startsWith("[FILE] Rejected offer #")) {
-            String msg = trimmed;
+        // File Transfer Completion (P2P or Broadcast)
+        if (trimmed.startsWith("[P2P SENT] ") || trimmed.startsWith("[BROADCAST] File '")) {
+            String fileName = trimmed;
+            if (trimmed.startsWith("[P2P SENT] ")) {
+                String rest = trimmed.substring("[P2P SENT] ".length());
+                fileName = rest.contains(" completed!") ? rest.substring(0, rest.indexOf(" completed!")) : rest;
+            } else if (trimmed.startsWith("[BROADCAST] File '")) {
+                int start = "[BROADCAST] File '".length();
+                int end = trimmed.indexOf("'", start);
+                if (end > start) fileName = trimmed.substring(start, end);
+            }
+            String finalFile = fileName;
             JavaFxUtils.runOnFxThread(() -> {
                 for (ClientEventListener l : listeners) {
-                    l.onFileOfferStateChanged("", msg);
+                    l.onFileTransferCompleted(finalFile, trimmed, true);
                 }
             });
             return;
         }
 
-        // File Transfer Completion
-        // [P2P SENT] test.txt completed! SHA-256: ...
-        if (trimmed.startsWith("[P2P SENT] ")) {
-            String rest = trimmed.substring("[P2P SENT] ".length());
-            String fileName = rest.contains(" completed!") ? rest.substring(0, rest.indexOf(" completed!")) : rest;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileTransferCompleted(fileName, rest, true);
-                }
-            });
-            return;
-        }
-
-        // [P2P RECEIVED] Saved to: /path/to/downloads/file
-        if (trimmed.startsWith("[P2P RECEIVED] Saved to: ")) {
-            String path = trimmed.substring("[P2P RECEIVED] Saved to: ".length()).trim();
+        if (trimmed.startsWith("[P2P RECEIVED] Saved to: ") || trimmed.startsWith("[BROADCAST RECEIVED] Saved to: ")) {
+            String prefix = trimmed.startsWith("[P2P RECEIVED] Saved to: ") ? "[P2P RECEIVED] Saved to: " : "[BROADCAST RECEIVED] Saved to: ";
+            String path = trimmed.substring(prefix.length()).trim();
             File f = new File(path);
             String fileName = f.getName();
             JavaFxUtils.runOnFxThread(() -> {
@@ -543,7 +780,8 @@ public class ChatClientAdapter {
             return;
         }
 
-        if (trimmed.startsWith("[P2P SEND ERROR] ") || trimmed.startsWith("[P2P RECEIVE ERROR] ") || trimmed.startsWith("[FILE OFFER ERROR] ")) {
+        if (trimmed.startsWith("[P2P SEND ERROR] ") || trimmed.startsWith("[P2P RECEIVE ERROR] ")
+                || trimmed.startsWith("[BROADCAST DOWNLOAD ERROR] ") || trimmed.startsWith("[BROADCAST] Reject failed")) {
             String err = trimmed;
             JavaFxUtils.runOnFxThread(() -> {
                 for (ClientEventListener l : listeners) {
@@ -553,16 +791,17 @@ public class ChatClientAdapter {
             return;
         }
 
-        // Incoming Chat Message: "<peerUsername>: <message>"
+        // Incoming Direct Chat Message: "<peerUsername>: <message>"
         if (!trimmed.startsWith("Commands:") && !trimmed.startsWith("Finding server:")
                 && !trimmed.startsWith("Handshake successful") && !trimmed.startsWith("Server found:")
                 && !trimmed.startsWith("Type '/accept") && !trimmed.contains("error:")
                 && !trimmed.startsWith("Usage:") && !trimmed.startsWith("PASS:")
                 && !trimmed.startsWith("FAIL:") && !trimmed.startsWith("===")
                 && !trimmed.startsWith("Username:") && !trimmed.startsWith("Password:")
-                && !trimmed.startsWith("[FILE") && !trimmed.startsWith("[P2P")
+                && !trimmed.startsWith("[FILE") && !trimmed.startsWith("[P2P") && !trimmed.startsWith("[BROADCAST")
                 && !trimmed.startsWith("Online users:") && !trimmed.startsWith("Peer ")
-                && !trimmed.startsWith("Now chatting with") && !trimmed.startsWith("Cannot ")) {
+                && !trimmed.startsWith("Now chatting with") && !trimmed.startsWith("Cannot ")
+                && !trimmed.startsWith("Communities:")) {
 
             int colonIdx = trimmed.indexOf(": ");
             if (colonIdx > 0) {
@@ -586,11 +825,35 @@ public class ChatClientAdapter {
         flushScheduled.set(false);
         List<String> list = new ArrayList<>(userListBuffer);
         userListBuffer.clear();
+
+        if (list.equals(lastKnownOnlineUsers)) {
+            return;
+        }
+
         lastKnownOnlineUsers.clear();
         lastKnownOnlineUsers.addAll(list);
         JavaFxUtils.runOnFxThread(() -> {
             for (ClientEventListener l : listeners) {
                 l.onUserListUpdated(list);
+            }
+        });
+    }
+
+    private synchronized void flushCommunityList() {
+        collectingCommunityList = false;
+        commFlushScheduled.set(false);
+        List<CommunityModel> list = new ArrayList<>(communityListBuffer);
+        communityListBuffer.clear();
+
+        if (list.equals(lastKnownCommunities)) {
+            return;
+        }
+
+        lastKnownCommunities.clear();
+        lastKnownCommunities.addAll(list);
+        JavaFxUtils.runOnFxThread(() -> {
+            for (ClientEventListener l : listeners) {
+                l.onCommunityListUpdated(list);
             }
         });
     }
@@ -619,70 +882,53 @@ public class ChatClientAdapter {
         });
     }
 
-    // --- Helper LineSplittingOutputStream ---
     private static class LineSplittingOutputStream extends OutputStream {
-        private final PrintStream target;
+        private final OutputStream downstream;
         private final Consumer<String> lineConsumer;
-        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream(256);
 
-        public LineSplittingOutputStream(PrintStream target, Consumer<String> lineConsumer) {
-            this.target = target;
+        LineSplittingOutputStream(OutputStream downstream, Consumer<String> lineConsumer) {
+            this.downstream = downstream;
             this.lineConsumer = lineConsumer;
         }
 
         @Override
-        public void write(int b) throws IOException {
-            String lineToEmit = null;
-            synchronized (this) {
-                target.write(b);
-                if (b == '\n') {
-                    target.flush();
-                    byte[] bytes = buffer.toByteArray();
-                    buffer.reset();
-                    lineToEmit = new String(bytes, StandardCharsets.UTF_8);
-                } else if (b != '\r') {
-                    buffer.write(b);
-                }
-            }
-            if (lineToEmit != null) {
-                lineConsumer.accept(lineToEmit);
+        public synchronized void write(int b) throws IOException {
+            downstream.write(b);
+            if (b == '\n') {
+                byte[] bytes = buffer.toByteArray();
+                buffer.reset();
+                String line = new String(bytes, StandardCharsets.UTF_8).replace("\r", "");
+                lineConsumer.accept(line);
+            } else if (b != '\r') {
+                buffer.write(b);
             }
         }
 
         @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            List<String> linesToEmit = null;
-            synchronized (this) {
-                target.write(b, off, len);
-                boolean hasNewline = false;
-                for (int i = off; i < off + len; i++) {
-                    byte val = b[i];
-                    if (val == '\n') {
-                        hasNewline = true;
-                        byte[] bytes = buffer.toByteArray();
-                        buffer.reset();
-                        if (linesToEmit == null) linesToEmit = new ArrayList<>();
-                        linesToEmit.add(new String(bytes, StandardCharsets.UTF_8));
-                    } else if (val != '\r') {
-                        buffer.write(val);
-                    }
-                }
-                if (hasNewline) {
-                    target.flush();
-                }
-            }
-            if (linesToEmit != null) {
-                for (String line : linesToEmit) {
+        public synchronized void write(byte[] b, int off, int len) throws IOException {
+            downstream.write(b, off, len);
+            for (int i = off; i < off + len; i++) {
+                byte val = b[i];
+                if (val == '\n') {
+                    byte[] bytes = buffer.toByteArray();
+                    buffer.reset();
+                    String line = new String(bytes, StandardCharsets.UTF_8).replace("\r", "");
                     lineConsumer.accept(line);
+                } else if (val != '\r') {
+                    buffer.write(val);
                 }
             }
         }
 
         @Override
         public void flush() throws IOException {
-            synchronized (this) {
-                target.flush();
-            }
+            downstream.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            downstream.close();
         }
     }
 }
