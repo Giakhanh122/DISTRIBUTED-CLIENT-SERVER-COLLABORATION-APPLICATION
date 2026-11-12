@@ -5,8 +5,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.Inet4Address;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.file.Path;
 
 import protocols.OpCode;
@@ -41,7 +44,8 @@ public class Server {
         ) {
             Thread.startVirtualThread(() -> listenDiscovery(discoverySocket, listener.getLocalPort()));
 
-            System.out.println("Server started on port " + portNumber);
+            printServerAddresses(listener.getLocalPort());
+            System.out.println("Server started on port " + listener.getLocalPort());
             while (true) {
                 Socket socket = listener.accept();
                 ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions,
@@ -50,6 +54,24 @@ public class Server {
             }
         } catch (IOException e) {
             System.err.println("Server error: " + e.getMessage());
+        }
+    }
+
+    private void printServerAddresses(int port) {
+        try {
+            var interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                var network = interfaces.nextElement();
+                if (!network.isUp() || network.isLoopback()) continue;
+                for (var address : network.getInterfaceAddresses()) {
+                    if (address.getAddress() instanceof Inet4Address ip) {
+                        System.out.println("Server address (" + network.getDisplayName() + "): "
+                                + ip.getHostAddress() + ":" + port);
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            System.err.println("Cannot list server addresses: " + e.getMessage());
         }
     }
 
