@@ -27,7 +27,7 @@ public class Client {
             }
             connectToServer(serverHost, serverPort, scanner);
         } catch (IOException e) {
-            System.err.println("Dicovery failed: " + e.getMessage());
+            System.err.println("Discovery failed: " + e.getMessage());
         }
     }
 
@@ -39,7 +39,7 @@ public class Client {
             ClientConsole.Credentials credentials = ClientConsole.readCredentials(scanner);
             if (credentials == null) return;
             try (ClientSession session = new ClientSession(credentials.username(), host, port, channel)) {
-                if (!authenticate(channel, credentials, session.peerPort())) return;
+                if (!authenticate(channel, credentials.username(), credentials.password(), session.peerPort())) return;
                 socket.setSoTimeout(0);
                 session.start();
                 new ClientConsole(session).run(scanner);
@@ -59,7 +59,7 @@ public class Client {
             PacketChannel channel = new PacketChannel(socket);
             if (!handshake(channel)) throw new IOException("Server handshake failed");
             session = new ClientSession(username, host, port, channel, events);
-            if (!authenticate(channel, new ClientConsole.Credentials(username, password), session.peerPort())) {
+            if (!authenticate(channel, username, password, session.peerPort())) {
                 throw new IOException("Login failed");
             }
             socket.setSoTimeout(0);
@@ -93,10 +93,10 @@ public class Client {
         return true;
     }
 
-    private boolean authenticate(PacketChannel channel, ClientConsole.Credentials credentials, int peerPort)
+    private boolean authenticate(PacketChannel channel, String username, String password, int peerPort)
             throws IOException {
         long sequence = channel.send(Packet.json(OpCode.AUTH_REQUEST,
-                Json.object("username", credentials.username(), "password", credentials.password(), "peerPort", peerPort)));
+                Json.object("username", username, "password", password, "peerPort", peerPort)));
         Packet response = channel.read();
         try {
             PacketValidator.validateResponse(response, OpCode.AUTH_RESPONSE, sequence);

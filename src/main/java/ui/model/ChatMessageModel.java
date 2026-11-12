@@ -17,7 +17,7 @@ public class ChatMessageModel {
     private final String content;
     private final String timestamp;
     private final boolean mine;
-    private FileOfferModel fileOffer;
+    private final FileOfferModel fileOffer;
 
     public ChatMessageModel(String sender, String content, boolean mine) {
         this(Type.TEXT, sender, content, LocalTime.now().format(TIME_FORMATTER), mine, null);
@@ -48,5 +48,4 @@ public class ChatMessageModel {
     public boolean isSystem() { return type == Type.SYSTEM; }
     public boolean isFileOffer() { return type == Type.FILE_OFFER; }
     public FileOfferModel getFileOffer() { return fileOffer; }
-    public void setFileOffer(FileOfferModel fileOffer) { this.fileOffer = fileOffer; }
 }

@@ -14,7 +14,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <javafx.version>21.0.2</javafx.version>
-        <main.class>ui.MainApp</main.class>
+        <main.class>ui.Launcher</main.class>
     </properties>
 
     <dependencies>

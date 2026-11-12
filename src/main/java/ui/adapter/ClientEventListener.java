@@ -5,19 +5,18 @@ import ui.model.CommunityModel;
 import ui.model.FileOfferModel;
 
 public interface ClientEventListener {
-    void onLoginSuccess(String username);
-    void onLoginFailed(String reason);
-    void onUserListUpdated(List<String> onlineUsers);
-    void onPeerConnected(String peerUsername);
-    void onPeerOffline(String peerUsername);
-    void onPeerConnectionFailed(String peerUsername, String reason);
-    void onMessageReceived(String peerUsername, String message);
-    void onBroadcastMessageReceived(String communityId, String sender, String message);
-    void onCommunityListUpdated(List<CommunityModel> communities);
-    void onCommunityJoined(String communityId, String communityName);
-    void onCommunityLeft(String communityId);
-    void onFileOfferReceived(FileOfferModel offer);
-    void onPeerDisconnected(String peerUsername);
-    void onConnectionClosed();
-    void onSystemNotification(String message, boolean isError);
+    default void onLoginSuccess(String username) {}
+    default void onLoginFailed(String reason) {}
+    default void onUserListUpdated(List<String> onlineUsers) {}
+    default void onPeerConnected(String peerUsername) {}
+    default void onPeerConnectionFailed(String peerUsername, String reason) {}
+    default void onMessageReceived(String peerUsername, String message) {}
+    default void onBroadcastMessageReceived(String communityId, String sender, String message) {}
+    default void onCommunityListUpdated(List<CommunityModel> communities) {}
+    default void onCommunityJoined(String communityId, String communityName) {}
+    default void onCommunityLeft(String communityId) {}
+    default void onFileOfferReceived(FileOfferModel offer) {}
+    default void onPeerDisconnected(String peerUsername) {}
+    default void onConnectionClosed() {}
+    default void onSystemNotification(String message, boolean isError) {}
 }

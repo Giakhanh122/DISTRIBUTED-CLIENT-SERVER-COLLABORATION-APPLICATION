@@ -5,74 +5,63 @@ import javafx.scene.Node;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
+/** Window bounds belong to each stage, including modal dialogs. */
 public final class WindowDragHelper {
+    private static final Object STATE_KEY = new Object();
 
-    private static double xOffset = 0;
-    private static double yOffset = 0;
-
-    private static double prevX = 0;
-    private static double prevY = 0;
-    private static double prevWidth = 0;
-    private static double prevHeight = 0;
-    private static boolean isCustomMaximized = false;
+    private static final class WindowState {
+        double xOffset;
+        double yOffset;
+        Rectangle2D restoredBounds;
+    }
 
     private WindowDragHelper() {}
+
+    private static WindowState state(Stage stage) {
+        return (WindowState) stage.getProperties().computeIfAbsent(STATE_KEY, key -> new WindowState());
+    }
 
     public static void makeDraggable(Node titleBar) {
         titleBar.setOnMousePressed(event -> {
             Stage stage = (Stage) titleBar.getScene().getWindow();
-            if (isCustomMaximized) return;
-            xOffset = event.getSceneX();
-            yOffset = event.getSceneY();
+            WindowState state = state(stage);
+            state.xOffset = event.getSceneX();
+            state.yOffset = event.getSceneY();
         });
-
         titleBar.setOnMouseDragged(event -> {
             Stage stage = (Stage) titleBar.getScene().getWindow();
-            if (isCustomMaximized) {
+            WindowState state = state(stage);
+            if (state.restoredBounds != null) {
                 toggleMaximize(stage);
-                xOffset = stage.getWidth() / 2;
-                yOffset = 19;
+                state.xOffset = stage.getWidth() / 2;
+                state.yOffset = 19;
             }
-            stage.setX(event.getScreenX() - xOffset);
-            stage.setY(event.getScreenY() - yOffset);
+            stage.setX(event.getScreenX() - state.xOffset);
+            stage.setY(event.getScreenY() - state.yOffset);
         });
-
         titleBar.setOnMouseClicked(event -> {
-            if (event.getClickCount() == 2) {
-                Stage stage = (Stage) titleBar.getScene().getWindow();
-                toggleMaximize(stage);
-            }
+            Stage stage = (Stage) titleBar.getScene().getWindow();
+            if (event.getClickCount() == 2 && stage.isResizable()) toggleMaximize(stage);
         });
     }
 
     public static void toggleMaximize(Stage stage) {
-        if (!isCustomMaximized) {
-            prevX = stage.getX();
-            prevY = stage.getY();
-            prevWidth = stage.getWidth();
-            prevHeight = stage.getHeight();
-
-            Screen screen = Screen.getScreensForRectangle(prevX, prevY, Math.max(10, prevWidth), Math.max(10, prevHeight))
-                    .stream()
-                    .findFirst()
-                    .orElse(Screen.getPrimary());
-
-            Rectangle2D bounds = screen.getVisualBounds();
-            stage.setX(bounds.getMinX());
-            stage.setY(bounds.getMinY());
-            stage.setWidth(bounds.getWidth());
-            stage.setHeight(bounds.getHeight());
-            isCustomMaximized = true;
+        WindowState state = state(stage);
+        if (state.restoredBounds == null) {
+            state.restoredBounds = new Rectangle2D(stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight());
+            Rectangle2D previous = state.restoredBounds;
+            Screen screen = Screen.getScreensForRectangle(previous).stream().findFirst().orElse(Screen.getPrimary());
+            setBounds(stage, screen.getVisualBounds());
         } else {
-            stage.setX(prevX);
-            stage.setY(prevY);
-            stage.setWidth(prevWidth);
-            stage.setHeight(prevHeight);
-            isCustomMaximized = false;
+            setBounds(stage, state.restoredBounds);
+            state.restoredBounds = null;
         }
     }
 
-    public static boolean isMaximized() {
-        return isCustomMaximized;
+    private static void setBounds(Stage stage, Rectangle2D bounds) {
+        stage.setX(bounds.getMinX());
+        stage.setY(bounds.getMinY());
+        stage.setWidth(bounds.getWidth());
+        stage.setHeight(bounds.getHeight());
     }
 }

@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-mvn javafx:run
+set -euo pipefail
+exec bash "$(dirname "$0")/app.sh" ui "$@"

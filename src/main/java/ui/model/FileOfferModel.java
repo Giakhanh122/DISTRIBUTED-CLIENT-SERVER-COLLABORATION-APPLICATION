@@ -33,7 +33,7 @@ public class FileOfferModel {
     private final StringProperty localPath = new SimpleStringProperty("");
     private final BooleanProperty broadcast = new SimpleBooleanProperty(false);
     private final StringProperty communityId = new SimpleStringProperty("");
-    private long fileSizeInBytes = 0;
+    private final long fileSizeInBytes;
 
     public FileOfferModel(String offerNumber, String sender, String receiver, String fileName, long fileSize, String checksum, boolean incoming) {
         this.offerNumber.set(offerNumber);

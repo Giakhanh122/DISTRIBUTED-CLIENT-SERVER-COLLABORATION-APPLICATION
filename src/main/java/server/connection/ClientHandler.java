@@ -12,6 +12,7 @@ import java.util.UUID;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
 import protocols.Json;
+import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -34,8 +35,6 @@ public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
     private static final int MAX_COMMUNITY_BYTES = 4096;
-    private static final long MAX_BROADCAST_FILE_SIZE = 500L * 1024 * 1024;
-
 
     private final Socket socket;
     private final UserSessionRegistry userSessions;
@@ -391,7 +390,7 @@ public class ClientHandler implements Runnable {
             channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
             return;
         }
-        if (fileSize < 0 || fileSize > MAX_BROADCAST_FILE_SIZE) {
+        if (fileSize < 0 || fileSize > FileTransferMeta.MAX_FILE_SIZE) {
             channel.send(Packet.status(OpCode.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_SIZE"));
             return;
         }
@@ -445,6 +444,7 @@ public class ClientHandler implements Runnable {
 
         } catch (IOException | RuntimeException e) {
             fileStorageService.deleteTempIfExists(fileId);
+            broadcastFileRegistry.discard(fileId);
             try {
                 channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));
             } catch (IOException resultError) {
@@ -490,6 +490,11 @@ public class ClientHandler implements Runnable {
             return;
         }
 
+        if (!mayDownload(meta, session.username())) {
+            channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_AUTHORIZED"));
+            return;
+        }
+
         if (decision.equals("REJECT")) {
             meta.setRecipientState(session.username(), BroadcastFileMeta.RecipientState.REJECTED);
             channel.send(Packet.status(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "REJECTED"));
@@ -506,6 +511,11 @@ public class ClientHandler implements Runnable {
         String downloadToken = broadcastFileRegistry.createDownloadToken(fileId, session.username());
         channel.send(Packet.reply(OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "downloadToken", downloadToken)));
+    }
+
+    private boolean mayDownload(BroadcastFileMeta meta, String username) {
+        return meta.isRecipient(username)
+                && communityService.validateMembership(meta.communityId(), username) != null;
     }
 
     private void handleBroadcastFileDownloadRequest(Packet request) throws IOException {
@@ -527,6 +537,11 @@ public class ClientHandler implements Runnable {
         BroadcastFileMeta meta = broadcastFileRegistry.find(fileId).orElse(null);
         if (meta == null) {
             channel.send(Packet.failure(channel.lastReceivedSequence(), "File not found"));
+            return;
+        }
+
+        if (!mayDownload(meta, token.username())) {
+            channel.send(Packet.failure(channel.lastReceivedSequence(), "No longer a recipient of this community file"));
             return;
         }
 

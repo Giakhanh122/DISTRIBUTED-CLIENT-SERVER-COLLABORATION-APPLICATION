@@ -1,15 +1,11 @@
 package ui.controller;
 
-import java.awt.Desktop;
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -17,21 +13,16 @@ import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
-import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Circle;
@@ -47,6 +38,8 @@ import ui.model.UserModel;
 import ui.util.IconUtils;
 import ui.util.JavaFxUtils;
 import ui.util.WindowDragHelper;
+import ui.view.ChatMessageView;
+import ui.view.ConversationCells;
 
 public class ChatController implements ClientEventListener {
 
@@ -103,12 +96,14 @@ public class ChatController implements ClientEventListener {
     private enum Mode { COMMUNITY, EXPLORE, DIRECT }
     private Mode currentMode = Mode.COMMUNITY;
 
+    private ChatMessageView messageView;
+
     private CommunityModel activeCommunity = null;
     private UserModel activePeer = null;
 
     @FXML
     public void initialize() {
-        adapter.addListener(this);
+        messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::rejectFileOffer);
 
         setupTitleBar();
         setupCurrentUserDisplay();
@@ -120,9 +115,8 @@ public class ChatController implements ClientEventListener {
         onCommunityListUpdated(adapter.getLastKnownCommunities());
 
         adapter.requestUserList();
-        CompletableFuture.delayedExecutor(200, TimeUnit.MILLISECONDS).execute(() -> {
-            adapter.requestCommunityList();
-        });
+        adapter.requestCommunityList();
+        adapter.addListener(this);
     }
 
     private void setupTitleBar() {
@@ -175,60 +169,10 @@ public class ChatController implements ClientEventListener {
         filteredCommunities = new FilteredList<>(allCommunities, CommunityModel::isJoined);
         communitiesListView.setItems(filteredCommunities);
 
-        communitiesListView.setCellFactory(lv -> new ListCell<>() {
-            @Override
-            protected void updateItem(CommunityModel comm, boolean empty) {
-                super.updateItem(comm, empty);
-                if (empty || comm == null) {
-                    setText(null);
-                    setGraphic(null);
-                    setStyle("-fx-background-color: transparent;");
-                } else {
-                    HBox box = new HBox(10);
-                    box.setAlignment(Pos.CENTER_LEFT);
-                    box.setPadding(new Insets(6, 8, 6, 8));
-                    box.getStyleClass().add("community-item");
-
-                    StackPane avatar = new StackPane();
-                    avatar.getStyleClass().add("avatar-circle");
-                    avatar.setMinSize(30, 30);
-                    avatar.setPrefSize(30, 30);
-                    avatar.setMaxSize(30, 30);
-                    avatar.setStyle("-fx-background-color: " + JavaFxUtils.getAvatarColor(comm.getId()) + ";");
-
-                    Label init = new Label(comm.getInitials());
-                    init.getStyleClass().add("avatar-text");
-                    init.setStyle("-fx-font-size: 10px;");
-                    avatar.getChildren().add(init);
-
-                    VBox info = new VBox(2);
-                    info.setAlignment(Pos.CENTER_LEFT);
-                    HBox.setHgrow(info, Priority.ALWAYS);
-
-                    Label nameLbl = new Label(comm.getName());
-                    nameLbl.setStyle("-fx-font-weight: bold; -fx-text-fill: #0F172A; -fx-font-size: 13px;");
-
-                    String statusText = comm.getMemberCount() + " members" + (comm.isJoined() ? " • Joined" : " • Click to join");
-                    Label meta = new Label(statusText);
-                    meta.setStyle("-fx-font-size: 11px; -fx-text-fill: " + (comm.isJoined() ? "#10B981;" : "#71717A;"));
-                    info.getChildren().addAll(nameLbl, meta);
-
-                    box.getChildren().addAll(avatar, info);
-
-                    if (comm.getUnreadCount() > 0) {
-                        Label unread = new Label(String.valueOf(comm.getUnreadCount()));
-                        unread.getStyleClass().add("unread-badge");
-                        box.getChildren().add(unread);
-                    }
-
-                    setGraphic(box);
-                    setText(null);
-                }
-            }
-        });
+        communitiesListView.setCellFactory(list -> ConversationCells.community());
 
         communitiesListView.getSelectionModel().selectedItemProperty().addListener((obs, oldV, newV) -> {
-            if (newV != null) {
+            if (newV != null && currentMode != Mode.DIRECT) {
                 selectCommunity(newV);
             }
         });
@@ -240,64 +184,10 @@ public class ChatController implements ClientEventListener {
         filteredUsers = new FilteredList<>(allUsers, p -> true);
         usersListView.setItems(filteredUsers);
 
-        usersListView.setCellFactory(lv -> new ListCell<>() {
-            @Override
-            protected void updateItem(UserModel user, boolean empty) {
-                super.updateItem(user, empty);
-                if (empty || user == null) {
-                    setText(null);
-                    setGraphic(null);
-                    setStyle("-fx-background-color: transparent;");
-                } else {
-                    HBox box = new HBox(10);
-                    box.setAlignment(Pos.CENTER_LEFT);
-                    box.setPadding(new Insets(6, 8, 6, 8));
-                    box.getStyleClass().add("user-item");
-
-                    StackPane avatar = new StackPane();
-                    avatar.getStyleClass().add("avatar-circle");
-                    avatar.setMinSize(30, 30);
-                    avatar.setPrefSize(30, 30);
-                    avatar.setMaxSize(30, 30);
-                    avatar.setStyle("-fx-background-color: " + JavaFxUtils.getAvatarColor(user.getUsername()) + ";");
-
-                    Label init = new Label(user.getInitials());
-                    init.getStyleClass().add("avatar-text");
-                    init.setStyle("-fx-font-size: 10px;");
-                    avatar.getChildren().add(init);
-
-                    VBox info = new VBox(2);
-                    info.setAlignment(Pos.CENTER_LEFT);
-                    HBox.setHgrow(info, Priority.ALWAYS);
-
-                    Label name = new Label(user.getUsername());
-                    name.setStyle("-fx-font-weight: bold; -fx-text-fill: #0F172A; -fx-font-size: 13px;");
-
-                    HBox stat = new HBox(4);
-                    stat.setAlignment(Pos.CENTER_LEFT);
-                    Circle dot = new Circle(3);
-                    dot.getStyleClass().add(user.isOnline() ? "status-dot-online" : "status-dot-offline");
-                    Label stText = new Label(user.getStatusMessage());
-                    stText.setStyle("-fx-font-size: 10px; -fx-text-fill: #64748B;");
-                    stat.getChildren().addAll(dot, stText);
-
-                    info.getChildren().addAll(name, stat);
-                    box.getChildren().addAll(avatar, info);
-
-                    if (user.getUnreadCount() > 0) {
-                        Label unread = new Label(String.valueOf(user.getUnreadCount()));
-                        unread.getStyleClass().add("unread-badge");
-                        box.getChildren().add(unread);
-                    }
-
-                    setGraphic(box);
-                    setText(null);
-                }
-            }
-        });
+        usersListView.setCellFactory(list -> ConversationCells.user());
 
         usersListView.getSelectionModel().selectedItemProperty().addListener((obs, oldV, newV) -> {
-            if (newV != null) {
+            if (newV != null && currentMode == Mode.DIRECT) {
                 selectPeerUser(newV);
             }
         });
@@ -329,8 +219,8 @@ public class ChatController implements ClientEventListener {
     }
 
     private void showEmptyChatState() {
-        activeCommunity = null;
-        activePeer = null;
+        if (currentMode == Mode.DIRECT) activePeer = null;
+        else activeCommunity = null;
         emptyStateView.setVisible(true);
         emptyStateView.setManaged(true);
         messageScrollPane.setVisible(false);
@@ -348,95 +238,47 @@ public class ChatController implements ClientEventListener {
     }
 
     @FXML
-    private void handleSelectCommunitiesTab() {
-        currentMode = Mode.COMMUNITY;
-        if (railCommunitiesBtn != null) {
-            railCommunitiesBtn.getStyleClass().setAll("rail-btn-active");
-            railCommunitiesBtn.setGraphic(IconUtils.createIconNode(IconUtils.CHAT_BUBBLE, 18, "#09090B"));
-        }
-        if (railExploreBtn != null) {
-            railExploreBtn.getStyleClass().setAll("rail-btn");
-            railExploreBtn.setGraphic(IconUtils.createIconNode(IconUtils.COMPASS, 18, "#A1A1AA"));
-        }
-        if (railDirectBtn != null) {
-            railDirectBtn.getStyleClass().setAll("rail-btn");
-            railDirectBtn.setGraphic(IconUtils.createIconNode(IconUtils.USER, 18, "#A1A1AA"));
-        }
+    private void handleSelectCommunitiesTab() { selectNavigationTab(Mode.COMMUNITY); }
 
-        sidebarSectionTitle.setText("MY COMMUNITIES");
-        searchField.setPromptText("Search my communities...");
+    @FXML
+    private void handleSelectExploreTab() { selectNavigationTab(Mode.EXPLORE); }
 
-        communitiesListView.setVisible(true);
-        communitiesListView.setManaged(true);
-        usersListView.setVisible(false);
-        usersListView.setManaged(false);
+    @FXML
+    private void handleSelectDirectTab() { selectNavigationTab(Mode.DIRECT); }
 
-        adapter.requestCommunityList();
+    private void selectNavigationTab(Mode mode) {
+        currentMode = mode;
+        updateRailButton(railCommunitiesBtn, Mode.COMMUNITY, IconUtils.CHAT_BUBBLE);
+        updateRailButton(railExploreBtn, Mode.EXPLORE, IconUtils.COMPASS);
+        updateRailButton(railDirectBtn, Mode.DIRECT, IconUtils.USER);
+        sidebarSectionTitle.setText(switch (mode) {
+            case COMMUNITY -> "MY COMMUNITIES";
+            case EXPLORE -> "EXPLORE COMMUNITIES";
+            case DIRECT -> "ONLINE USERS";
+        });
+        searchField.setPromptText(switch (mode) {
+            case COMMUNITY -> "Search my communities...";
+            case EXPLORE -> "Search all communities...";
+            case DIRECT -> "Search online users...";
+        });
+        boolean direct = mode == Mode.DIRECT;
+        usersListView.setVisible(direct);
+        usersListView.setManaged(direct);
+        communitiesListView.setVisible(!direct);
+        communitiesListView.setManaged(!direct);
+        if (direct) adapter.requestUserList();
+        else adapter.requestCommunityList();
         applyFilter(searchField.getText());
-
-        if (activeCommunity != null && activeCommunity.isJoined()) {
+        if (direct && activePeer != null) selectPeerUser(activePeer);
+        else if (!direct && activeCommunity != null && (mode == Mode.EXPLORE || activeCommunity.isJoined())) {
             selectCommunity(activeCommunity);
-        }
+        } else showEmptyChatState();
     }
 
-    @FXML
-    private void handleSelectExploreTab() {
-        currentMode = Mode.EXPLORE;
-        if (railExploreBtn != null) {
-            railExploreBtn.getStyleClass().setAll("rail-btn-active");
-            railExploreBtn.setGraphic(IconUtils.createIconNode(IconUtils.COMPASS, 18, "#09090B"));
-        }
-        if (railCommunitiesBtn != null) {
-            railCommunitiesBtn.getStyleClass().setAll("rail-btn");
-            railCommunitiesBtn.setGraphic(IconUtils.createIconNode(IconUtils.CHAT_BUBBLE, 18, "#A1A1AA"));
-        }
-        if (railDirectBtn != null) {
-            railDirectBtn.getStyleClass().setAll("rail-btn");
-            railDirectBtn.setGraphic(IconUtils.createIconNode(IconUtils.USER, 18, "#A1A1AA"));
-        }
-
-        sidebarSectionTitle.setText("EXPLORE COMMUNITIES");
-        searchField.setPromptText("Search all communities...");
-
-        communitiesListView.setVisible(true);
-        communitiesListView.setManaged(true);
-        usersListView.setVisible(false);
-        usersListView.setManaged(false);
-
-        adapter.requestCommunityList();
-        applyFilter(searchField.getText());
-    }
-
-    @FXML
-    private void handleSelectDirectTab() {
-        currentMode = Mode.DIRECT;
-        if (railDirectBtn != null) {
-            railDirectBtn.getStyleClass().setAll("rail-btn-active");
-            railDirectBtn.setGraphic(IconUtils.createIconNode(IconUtils.USER, 18, "#09090B"));
-        }
-        if (railCommunitiesBtn != null) {
-            railCommunitiesBtn.getStyleClass().setAll("rail-btn");
-            railCommunitiesBtn.setGraphic(IconUtils.createIconNode(IconUtils.CHAT_BUBBLE, 18, "#A1A1AA"));
-        }
-        if (railExploreBtn != null) {
-            railExploreBtn.getStyleClass().setAll("rail-btn");
-            railExploreBtn.setGraphic(IconUtils.createIconNode(IconUtils.COMPASS, 18, "#A1A1AA"));
-        }
-
-        sidebarSectionTitle.setText("ONLINE USERS");
-        searchField.setPromptText("Search online users...");
-
-        usersListView.setVisible(true);
-        usersListView.setManaged(true);
-        communitiesListView.setVisible(false);
-        communitiesListView.setManaged(false);
-
-        adapter.requestUserList();
-        applyFilter(searchField.getText());
-
-        if (activePeer != null) {
-            selectPeerUser(activePeer);
-        }
+    private void updateRailButton(Button button, Mode mode, String icon) {
+        boolean selected = currentMode == mode;
+        button.getStyleClass().setAll(selected ? "rail-btn-active" : "rail-btn");
+        button.setGraphic(IconUtils.createIconNode(icon, 18, selected ? "#09090B" : "#A1A1AA"));
     }
 
     @FXML
@@ -530,6 +372,7 @@ public class ChatController implements ClientEventListener {
     }
 
     private void updateJoinLeaveButton(boolean isJoined) {
+        joinLeaveCommunityBtn.setDisable(false);
         if (isJoined) {
             joinLeaveCommunityBtn.setText("Leave");
             joinLeaveCommunityBtn.getStyleClass().clear();
@@ -545,37 +388,14 @@ public class ChatController implements ClientEventListener {
     private void handleToggleJoinCommunity() {
         if (activeCommunity == null) return;
         if (activeCommunity.isJoined()) {
-            Window win = titleBar != null && titleBar.getScene() != null ? titleBar.getScene().getWindow() : null;
-            boolean confirm = JavaFxUtils.showConfirmDialog(
-                win,
-                "Leave Community",
-                "Are you sure you want to leave #" + activeCommunity.getName() + "?"
-            );
-            if (!confirm) return;
-
+            Window owner = titleBar.getScene().getWindow();
+            if (!JavaFxUtils.showConfirmDialog(owner, "Leave Community",
+                    "Are you sure you want to leave #" + activeCommunity.getName() + "?")) return;
             adapter.leaveCommunity(activeCommunity.getId());
-            activeCommunity.setJoined(false);
-            updateJoinLeaveButton(false);
-            inputContainer.setDisable(true);
-            messageInput.setPromptText("Join community to participate in broadcast...");
-
-            String q = searchField.getText();
-            if (q == null || q.trim().isEmpty()) {
-                applyFilter("");
-                showEmptyChatState();
-            } else {
-                applyFilter(q);
-            }
         } else {
             adapter.joinCommunity(activeCommunity.getId());
-            activeCommunity.setJoined(true);
-            updateJoinLeaveButton(true);
-            inputContainer.setDisable(false);
-            messageInput.setPromptText("Broadcast to #" + activeCommunity.getName() + "...");
-
-            String q = searchField.getText();
-            applyFilter(q);
         }
+        joinLeaveCommunityBtn.setDisable(true);
     }
 
     private void loadConversation(String convKey) {
@@ -584,7 +404,7 @@ public class ChatController implements ClientEventListener {
                 convKey, k -> FXCollections.observableArrayList()
         );
         for (ChatMessageModel msg : history) {
-            renderMessageNode(msg);
+            messageView.render(msg);
         }
         scrollToBottom();
     }
@@ -593,21 +413,23 @@ public class ChatController implements ClientEventListener {
     private void handleSendMessage() {
         String text = messageInput.getText().trim();
         if (text.isEmpty()) return;
+        if ((currentMode == Mode.DIRECT && activePeer == null)
+                || (currentMode != Mode.DIRECT && activeCommunity == null)) return;
         messageInput.clear();
 
-        if (currentMode == Mode.COMMUNITY && activeCommunity != null) {
-            adapter.broadcastMessage(text);
+        if (currentMode != Mode.DIRECT && activeCommunity != null) {
+            adapter.broadcastMessage(activeCommunity.getId(), text);
             ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
             String convKey = "comm-" + activeCommunity.getId();
             conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
-            renderMessageNode(msg);
+            messageView.render(msg);
             scrollToBottom();
         } else if (currentMode == Mode.DIRECT && activePeer != null) {
             adapter.sendChatMessage(activePeer.getUsername(), text);
             ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
             String convKey = "peer-" + activePeer.getUsername();
             conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
-            renderMessageNode(msg);
+            messageView.render(msg);
             scrollToBottom();
         }
     }
@@ -615,7 +437,7 @@ public class ChatController implements ClientEventListener {
     @FXML
     private void handleAttachFile() {
         FileChooser chooser = new FileChooser();
-        String title = (currentMode == Mode.COMMUNITY)
+        String title = (currentMode != Mode.DIRECT)
                 ? "Select File to Broadcast to #" + (activeCommunity != null ? activeCommunity.getName() : "Community")
                 : "Select File to Send to @" + (activePeer != null ? activePeer.getUsername() : "User");
         chooser.setTitle(title);
@@ -629,198 +451,11 @@ public class ChatController implements ClientEventListener {
                 return;
             }
 
-            if (currentMode == Mode.COMMUNITY && activeCommunity != null) {
-                adapter.broadcastFile(file);
-
+            if (currentMode != Mode.DIRECT && activeCommunity != null) {
+                adapter.broadcastFile(activeCommunity.getId(), activeCommunity.getName(), file);
             } else if (currentMode == Mode.DIRECT && activePeer != null) {
                 adapter.sendFile(activePeer.getUsername(), file);
-
             }
-        }
-    }
-
-    private void renderMessageNode(ChatMessageModel msg) {
-        if (msg.isSystem()) {
-            HBox systemRow = new HBox();
-            systemRow.setAlignment(Pos.CENTER);
-            Label sysLbl = new Label(msg.getContent());
-            sysLbl.getStyleClass().add("bubble-system");
-            sysLbl.getStyleClass().add("bubble-system-text");
-            systemRow.getChildren().add(sysLbl);
-            messagesContainer.getChildren().add(systemRow);
-            return;
-        }
-
-        if (msg.isFileOffer()) {
-            renderFileOfferCard(msg);
-            return;
-        }
-
-        VBox messageBubbleBox = new VBox(3);
-        messageBubbleBox.setMaxWidth(480.0);
-
-        Label contentLbl = new Label(msg.getContent());
-        contentLbl.setWrapText(true);
-
-        Label timeLbl = new Label(msg.getTimestamp());
-        timeLbl.getStyleClass().add("bubble-timestamp");
-
-        if (msg.isMine()) {
-            contentLbl.getStyleClass().add("bubble-sent");
-            contentLbl.getStyleClass().add("bubble-sent-text");
-            messageBubbleBox.setAlignment(Pos.TOP_RIGHT);
-            timeLbl.setAlignment(Pos.CENTER_RIGHT);
-            messageBubbleBox.getChildren().addAll(contentLbl, timeLbl);
-
-            HBox row = new HBox(messageBubbleBox);
-            row.setAlignment(Pos.CENTER_RIGHT);
-            messagesContainer.getChildren().add(row);
-        } else {
-            contentLbl.getStyleClass().add("bubble-received");
-            contentLbl.getStyleClass().add("bubble-received-text");
-
-            Label senderLbl = new Label(msg.getSender());
-            senderLbl.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #003366;");
-
-            messageBubbleBox.setAlignment(Pos.TOP_LEFT);
-            messageBubbleBox.getChildren().addAll(senderLbl, contentLbl, timeLbl);
-
-            HBox row = new HBox(8);
-            row.setAlignment(Pos.TOP_LEFT);
-
-            StackPane smallAvatar = new StackPane();
-            smallAvatar.setMinSize(28, 28);
-            smallAvatar.setPrefSize(28, 28);
-            smallAvatar.setMaxSize(28, 28);
-            smallAvatar.getStyleClass().add("avatar-circle");
-            smallAvatar.setStyle("-fx-background-color: " + JavaFxUtils.getAvatarColor(msg.getSender()) + ";");
-
-            String inits = msg.getSender().length() <= 2 ? msg.getSender().toUpperCase() : msg.getSender().substring(0, 2).toUpperCase();
-            Label initsLbl = new Label(inits);
-            initsLbl.setStyle("-fx-font-size: 10px; -fx-text-fill: white; -fx-font-weight: bold;");
-            smallAvatar.getChildren().add(initsLbl);
-
-            row.getChildren().addAll(smallAvatar, messageBubbleBox);
-            messagesContainer.getChildren().add(row);
-        }
-    }
-
-    private void renderFileOfferCard(ChatMessageModel msg) {
-        FileOfferModel offer = msg.getFileOffer();
-        if (offer == null) return;
-
-        VBox card = new VBox(8);
-        card.getStyleClass().add("file-card");
-        card.setMaxWidth(400.0);
-
-        HBox topRow = new HBox(10);
-        topRow.setAlignment(Pos.CENTER_LEFT);
-
-        StackPane fileIcon = IconUtils.createIconNode(IconUtils.FILE, 24, "#F59E0B");
-        VBox fileInfo = new VBox(2);
-        Label nameLbl = new Label(offer.getFileName());
-        nameLbl.getStyleClass().add("file-card-title");
-        Label metaLbl = new Label(offer.getFormattedSize() + (offer.getChecksum().isEmpty() ? "" : " • " + offer.getChecksum().substring(0, Math.min(8, offer.getChecksum().length()))));
-        metaLbl.getStyleClass().add("file-card-meta");
-        fileInfo.getChildren().addAll(nameLbl, metaLbl);
-        topRow.getChildren().addAll(fileIcon, fileInfo);
-
-        Label statusLbl = new Label(offer.getStatusText());
-        statusLbl.textProperty().bind(offer.statusTextProperty());
-        statusLbl.setStyle("-fx-font-size: 11px; -fx-text-fill: #71717A;");
-
-        ProgressBar pb = new ProgressBar(0.0);
-        pb.progressProperty().bind(offer.progressProperty());
-        pb.setMaxWidth(Double.MAX_VALUE);
-        pb.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.TRANSFERRING));
-        pb.managedProperty().bind(pb.visibleProperty());
-
-        HBox buttonBar = new HBox(8);
-        buttonBar.setAlignment(Pos.CENTER_RIGHT);
-
-        Runnable updateButtons = () -> {
-            buttonBar.getChildren().clear();
-            boolean hasPath = offer.getLocalPath() != null && !offer.getLocalPath().isEmpty();
-
-            if (offer.isIncoming() && offer.getStatus() == FileOfferModel.Status.PENDING) {
-                Button rejectBtn = new Button("Reject");
-                rejectBtn.getStyleClass().add("btn-secondary");
-                rejectBtn.setStyle("-fx-font-size: 11px; -fx-padding: 5px 12px; -fx-cursor: hand;");
-                rejectBtn.setOnAction(e -> {
-                    adapter.rejectFileOffer(offer.getOfferNumber());
-                    offer.setStatus(FileOfferModel.Status.REJECTED);
-                    offer.setStatusText("Rejected");
-                });
-
-                Button acceptBtn = new Button(offer.isBroadcast() ? "Accept" : "Download");
-                acceptBtn.getStyleClass().add("btn-primary");
-                acceptBtn.setStyle("-fx-font-size: 11px; -fx-padding: 5px 14px; -fx-cursor: hand;");
-                acceptBtn.setOnAction(e -> {
-                    adapter.acceptFileOffer(offer.getOfferNumber());
-                    offer.setStatus(FileOfferModel.Status.ACCEPTED);
-                    offer.setStatusText(offer.isBroadcast() ? "Downloading from server..." : "Connecting P2P & downloading...");
-                });
-
-                buttonBar.getChildren().addAll(rejectBtn, acceptBtn);
-            } else if (hasPath) {
-                Button folderBtn = new Button("Folder");
-                folderBtn.getStyleClass().add("btn-secondary");
-                folderBtn.setStyle("-fx-font-size: 11px; -fx-padding: 5px 12px; -fx-cursor: hand;");
-                folderBtn.setOnAction(e -> openDownloadedFolder(offer.getLocalPath()));
-
-                Button openBtn = new Button("Open File");
-                openBtn.getStyleClass().add("btn-primary");
-                openBtn.setStyle("-fx-font-size: 11px; -fx-padding: 5px 14px; -fx-cursor: hand;");
-                openBtn.setOnAction(e -> openDownloadedFile(offer.getLocalPath()));
-
-                buttonBar.getChildren().addAll(folderBtn, openBtn);
-            }
-        };
-
-        offer.statusProperty().addListener((obs, oldV, newV) -> JavaFxUtils.runOnFxThread(updateButtons));
-        offer.localPathProperty().addListener((obs, oldV, newV) -> JavaFxUtils.runOnFxThread(updateButtons));
-        updateButtons.run();
-
-        card.getChildren().addAll(topRow, statusLbl, pb, buttonBar);
-
-        HBox outer = new HBox(card);
-        outer.setAlignment(msg.isMine() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
-        messagesContainer.getChildren().add(outer);
-    }
-
-    private void openDownloadedFile(String path) {
-        if (path == null || path.isEmpty()) return;
-        try {
-            File f = new File(path);
-            if (f.exists() && Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().open(f);
-            } else if (f.getParentFile() != null && f.getParentFile().exists()) {
-                Desktop.getDesktop().open(f.getParentFile());
-            } else {
-                JavaFxUtils.showInfoAlert("File Info", "File located at:\n" + path);
-            }
-        } catch (Exception ex) {
-            try {
-                File f = new File(path);
-                if (f.getParentFile() != null && f.getParentFile().exists()) {
-                    Desktop.getDesktop().open(f.getParentFile());
-                }
-            } catch (Exception ignored) {
-                JavaFxUtils.showErrorAlert("Open File Error", "Cannot open file: " + ex.getMessage());
-            }
-        }
-    }
-
-    private void openDownloadedFolder(String path) {
-        if (path == null || path.isEmpty()) return;
-        try {
-            File f = new File(path);
-            File dir = f.isDirectory() ? f : f.getParentFile();
-            if (dir != null && dir.exists() && Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().open(dir);
-            }
-        } catch (Exception ex) {
-            JavaFxUtils.showErrorAlert("Open Folder Error", "Cannot open folder: " + ex.getMessage());
         }
     }
 
@@ -870,7 +505,8 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onCommunityListUpdated(List<CommunityModel> communities) {
-        allCommunities.setAll(communities);
+        if (!allCommunities.equals(communities)) allCommunities.setAll(communities);
+        communitiesListView.refresh();
         if (activeCommunity != null) {
             for (CommunityModel c : allCommunities) {
                 if (c.getId().equals(activeCommunity.getId())) {
@@ -886,12 +522,12 @@ public class ChatController implements ClientEventListener {
     @Override
     public void onCommunityJoined(String communityId, String communityName) {
         for (CommunityModel c : allCommunities) {
-            if (c.getId().equals(communityId) || c.getName().equalsIgnoreCase(communityName)) {
+            if (c.getId().equals(communityId)) {
                 c.setJoined(true);
                 break;
             }
         }
-        if (activeCommunity != null && (activeCommunity.getId().equals(communityId) || activeCommunity.getName().equalsIgnoreCase(communityName))) {
+        if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.getId().equals(communityId)) {
             activeCommunity.setJoined(true);
             updateJoinLeaveButton(true);
             inputContainer.setDisable(false);
@@ -925,8 +561,8 @@ public class ChatController implements ClientEventListener {
         String convKey = "comm-" + (communityId != null ? communityId : (activeCommunity != null ? activeCommunity.getId() : "default"));
         conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
 
-        if (currentMode == Mode.COMMUNITY && activeCommunity != null && (communityId == null || activeCommunity.getId().equals(communityId))) {
-            renderMessageNode(msg);
+        if (currentMode != Mode.DIRECT && activeCommunity != null && (communityId == null || activeCommunity.getId().equals(communityId))) {
+            messageView.render(msg);
             scrollToBottom();
         } else {
             for (CommunityModel c : allCommunities) {
@@ -960,7 +596,7 @@ public class ChatController implements ClientEventListener {
             }
         }
         allUsers.setAll(updated);
-        if (activePeer != null) {
+        if (currentMode == Mode.DIRECT && activePeer != null) {
             for (UserModel m : allUsers) {
                 if (m.getUsername().equals(activePeer.getUsername())) {
                     usersListView.getSelectionModel().select(m);
@@ -972,7 +608,7 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onPeerConnected(String peerUsername) {
-        if (activePeer != null && activePeer.getUsername().equals(peerUsername)) {
+        if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
             targetMetaLabel.setText("Direct P2P Session Active");
             targetStatusDot.setVisible(true);
             targetStatusDot.getStyleClass().clear();
@@ -982,19 +618,8 @@ public class ChatController implements ClientEventListener {
     }
 
     @Override
-    public void onPeerOffline(String peerUsername) {
-        if (activePeer != null && activePeer.getUsername().equals(peerUsername)) {
-            targetMetaLabel.setText("Peer is currently offline");
-            targetStatusDot.setVisible(true);
-            targetStatusDot.getStyleClass().clear();
-            targetStatusDot.getStyleClass().add("status-dot-offline");
-            inputContainer.setDisable(true);
-        }
-    }
-
-    @Override
     public void onPeerConnectionFailed(String peerUsername, String reason) {
-        if (activePeer != null && activePeer.getUsername().equals(peerUsername)) {
+        if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
             targetMetaLabel.setText("Connection failed: " + reason);
         }
     }
@@ -1006,7 +631,7 @@ public class ChatController implements ClientEventListener {
         conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
 
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
-            renderMessageNode(msg);
+            messageView.render(msg);
             scrollToBottom();
         } else {
             for (UserModel u : allUsers) {
@@ -1042,8 +667,8 @@ public class ChatController implements ClientEventListener {
             String convKey = "comm-" + (commId != null && !commId.isBlank() ? commId : "default");
             conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
 
-            if (currentMode == Mode.COMMUNITY && activeCommunity != null && activeCommunity.getId().equals(commId)) {
-                renderMessageNode(msg);
+            if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.getId().equals(commId)) {
+                messageView.render(msg);
                 scrollToBottom();
             } else {
                 for (CommunityModel c : allCommunities) {
@@ -1063,7 +688,7 @@ public class ChatController implements ClientEventListener {
         conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
 
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peer)) {
-            renderMessageNode(msg);
+            messageView.render(msg);
             scrollToBottom();
         } else {
             for (UserModel u : allUsers) {
@@ -1078,7 +703,7 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onPeerDisconnected(String peerUsername) {
-        if (activePeer != null && activePeer.getUsername().equals(peerUsername)) {
+        if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
             targetMetaLabel.setText("Peer disconnected");
             inputContainer.setDisable(true);
         }
@@ -1090,8 +715,9 @@ public class ChatController implements ClientEventListener {
     }
 
     @Override public void onSystemNotification(String message, boolean isError) {
-        if (isError) JavaFxUtils.showErrorAlert("Connection Error", message);
+        if (isError) {
+            joinLeaveCommunityBtn.setDisable(false);
+            JavaFxUtils.showErrorAlert("Connection Error", message);
+        }
     }
-    @Override public void onLoginSuccess(String username) {}
-    @Override public void onLoginFailed(String reason) {}
 }

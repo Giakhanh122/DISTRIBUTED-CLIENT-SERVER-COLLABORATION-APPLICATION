@@ -1,8 +1,6 @@
 package ui.controller;
 
-import client.Client;
 import java.io.IOException;
-import java.util.List;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -17,8 +15,6 @@ import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import ui.adapter.ChatClientAdapter;
 import ui.adapter.ClientEventListener;
-import ui.model.CommunityModel;
-import ui.model.FileOfferModel;
 import ui.util.IconUtils;
 import ui.util.WindowDragHelper;
 
@@ -190,17 +186,6 @@ public class LoginController implements ClientEventListener {
         showError(reason != null ? reason : "Login failed. Check your credentials.");
     }
 
-    @Override public void onUserListUpdated(List<String> onlineUsers) {}
-    @Override public void onPeerConnected(String peerUsername) {}
-    @Override public void onPeerOffline(String peerUsername) {}
-    @Override public void onPeerConnectionFailed(String peerUsername, String reason) {}
-    @Override public void onMessageReceived(String peerUsername, String message) {}
-    @Override public void onBroadcastMessageReceived(String communityId, String sender, String message) {}
-    @Override public void onCommunityListUpdated(List<CommunityModel> communities) {}
-    @Override public void onCommunityJoined(String communityId, String communityName) {}
-    @Override public void onCommunityLeft(String communityId) {}
-    @Override public void onFileOfferReceived(FileOfferModel offer) {}
-    @Override public void onPeerDisconnected(String peerUsername) {}
     @Override public void onConnectionClosed() { setLoading(false); }
     @Override public void onSystemNotification(String message, boolean isError) {
         if (isError && loadingIndicator.isVisible()) {

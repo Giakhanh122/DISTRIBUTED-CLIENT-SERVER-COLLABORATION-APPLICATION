@@ -44,6 +44,8 @@ public class BroadcastFileMeta {
         recipientStates.put(username, state);
     }
 
+    public boolean isRecipient(String username) { return recipientStates.containsKey(username); }
+
     public RecipientState getRecipientState(String username) {
         return recipientStates.getOrDefault(username, RecipientState.PENDING);
     }

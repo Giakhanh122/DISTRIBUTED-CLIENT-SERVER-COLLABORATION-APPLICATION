@@ -51,23 +51,21 @@ public class CommunityModel {
         return n.length() <= 2 ? n.toUpperCase() : n.substring(0, 2).toUpperCase();
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        CommunityModel that = (CommunityModel) o;
-        return memberCount.get() == that.memberCount.get()
-                && joined.get() == that.joined.get()
-                && unreadCount.get() == that.unreadCount.get()
-                && java.util.Objects.equals(getId(), that.getId())
-                && java.util.Objects.equals(getName(), that.getName())
-                && java.util.Objects.equals(getOwner(), that.getOwner());
+    public void updateFrom(CommunityModel latest) {
+        name.set(latest.getName());
+        owner.set(latest.getOwner());
+        memberCount.set(latest.getMemberCount());
+        joined.set(latest.isJoined());
     }
 
     @Override
-    public int hashCode() {
-        return java.util.Objects.hash(getId(), getName(), getOwner(), memberCount.get(), joined.get(), unreadCount.get());
+    public boolean equals(Object other) {
+        return this == other || other instanceof CommunityModel community
+                && java.util.Objects.equals(getId(), community.getId());
     }
+
+    @Override
+    public int hashCode() { return java.util.Objects.hashCode(getId()); }
 
     @Override
     public String toString() {

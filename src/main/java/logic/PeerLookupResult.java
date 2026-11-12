@@ -4,9 +4,9 @@ import java.net.InetSocketAddress;
 
 public record PeerLookupResult(
         Status status,
-        InetSocketAddress address) implements ReturnTypes {
+        InetSocketAddress address) {
 
-    public static enum Status {
+    public enum Status {
         SUCCESS,
         USER_OFFLINE,
         ALREADY_CONNECTED

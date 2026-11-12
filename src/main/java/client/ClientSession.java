@@ -162,16 +162,23 @@ public final class ClientSession implements AutoCloseable {
     }
 
     public void broadcastMessage(String message) throws IOException {
+        broadcastMessage(communities.requireSelection().id(), message);
+    }
+
+    public void broadcastMessage(String communityId, String message) throws IOException {
         if (message.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) {
             throw new IOException("Message exceeds limit: 65536");
         }
-        CommunityClient.Selection community = communities.requireSelection();
         server.send(Packet.json(OpCode.CHAT_MESSAGE_BROADCAST,
-                Json.object("communityId", community.id(), "content", message)));
+                Json.object("communityId", communityId, "content", message)));
     }
 
     public void broadcastFile(File file) throws IOException {
-        broadcasts.upload(file, communities.requireSelection());
+        broadcastFile(communities.requireSelection(), file);
+    }
+
+    public void broadcastFile(CommunityClient.Selection community, File file) throws IOException {
+        broadcasts.upload(file, community);
     }
 
     public void ensurePeer(String target) throws IOException {
@@ -222,9 +229,15 @@ public final class ClientSession implements AutoCloseable {
             synchronized (peerLock) {
                 rejected = closing.get();
                 if (!rejected) {
-                    boolean firstPeer = peers.isEmpty();
-                    previous = peers.put(name, connection);
-                    if (selectedPeer == null && firstPeer) selectedPeer = name;
+                    PeerConnection existing = peers.get(name);
+                    // Both ends choose the same UUID when outgoing handshakes cross.
+                    rejected = existing != null && !existing.isClosed()
+                            && existing.sessionId().compareTo(connection.sessionId()) <= 0;
+                    if (!rejected) {
+                        boolean firstPeer = peers.isEmpty();
+                        previous = peers.put(name, connection);
+                        if (selectedPeer == null && firstPeer) selectedPeer = name;
+                    }
                 }
             }
             if (rejected) {

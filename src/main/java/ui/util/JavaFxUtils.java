@@ -1,13 +1,13 @@
 package ui.util;
 
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
-import javafx.scene.paint.Color;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
@@ -36,32 +36,25 @@ public final class JavaFxUtils {
     private JavaFxUtils() {}
 
     public static void runOnFxThread(Runnable action) {
-        try {
-            if (Platform.isFxApplicationThread()) {
-                action.run();
-            } else {
-                Platform.runLater(action);
-            }
-        } catch (IllegalStateException e) {
-            action.run();
-        }
+        if (Platform.isFxApplicationThread()) action.run();
+        else Platform.runLater(action);
     }
 
     public static void runOnFxThreadAndWait(Runnable action) {
         if (Platform.isFxApplicationThread()) {
             action.run();
-        } else {
-            CountDownLatch latch = new CountDownLatch(1);
-            Platform.runLater(() -> {
-                try {
-                    action.run();
-                } finally {
-                    latch.countDown();
-                }
-            });
-            try {
-                latch.await();
-            } catch (InterruptedException ignored) {}
+            return;
+        }
+        FutureTask<Void> task = new FutureTask<>(action, null);
+        Platform.runLater(task);
+        try {
+            task.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            task.cancel(false);
+            throw new IllegalStateException("Interrupted while waiting for JavaFX", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("JavaFX action failed", e.getCause());
         }
     }
 
@@ -69,8 +62,7 @@ public final class JavaFxUtils {
         if (identifier == null || identifier.isEmpty()) {
             return AVATAR_COLORS[0];
         }
-        int hash = Math.abs(identifier.hashCode());
-        return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+        return AVATAR_COLORS[Math.floorMod(identifier.hashCode(), AVATAR_COLORS.length)];
     }
 
     private static Stage createCustomDialogStage(Window owner) {
@@ -143,10 +135,23 @@ public final class JavaFxUtils {
         });
     }
 
+    private static void showDialog(Stage stage, Window owner, String title, Node content, Node actions) {
+        Scene scene = new Scene(createDialogRoot(createDialogTitleBar(stage, title), content, actions));
+        var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
+        if (css != null) scene.getStylesheets().add(css.toExternalForm());
+        stage.setScene(scene);
+        stage.setResizable(false);
+        centerOnOwner(stage, owner);
+        stage.showAndWait();
+    }
+
     public static void showErrorAlert(Window owner, String title, String message) {
+        showMessageDialog(owner, title, message);
+    }
+
+    private static void showMessageDialog(Window owner, String title, String message) {
         runOnFxThread(() -> {
             Stage stage = createCustomDialogStage(owner);
-            HBox titleBar = createDialogTitleBar(stage, title);
 
             VBox content = new VBox(8);
             Label msgLbl = new Label(message);
@@ -164,17 +169,7 @@ public final class JavaFxUtils {
             okBtn.setOnAction(e -> stage.close());
             actions.getChildren().add(okBtn);
 
-            VBox root = createDialogRoot(titleBar, content, actions);
-            Scene scene = new Scene(root);
-            var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
-            if (css != null) {
-                scene.getStylesheets().add(css.toExternalForm());
-            }
-
-            stage.setScene(scene);
-            stage.setResizable(false);
-            centerOnOwner(stage, owner);
-            stage.showAndWait();
+            showDialog(stage, owner, title, content, actions);
         });
     }
 
@@ -183,38 +178,7 @@ public final class JavaFxUtils {
     }
 
     public static void showInfoAlert(Window owner, String title, String message) {
-        runOnFxThread(() -> {
-            Stage stage = createCustomDialogStage(owner);
-            HBox titleBar = createDialogTitleBar(stage, title);
-
-            VBox content = new VBox(8);
-            Label msgLbl = new Label(message);
-            msgLbl.setWrapText(true);
-            msgLbl.setPrefWidth(340);
-            msgLbl.setStyle("-fx-text-fill: #18181B; -fx-font-size: 13px;");
-            content.getChildren().add(msgLbl);
-
-            HBox actions = new HBox(10);
-            actions.setAlignment(Pos.CENTER_RIGHT);
-
-            Button okBtn = new Button("OK");
-            okBtn.getStyleClass().add("btn-primary");
-            okBtn.setDefaultButton(true);
-            okBtn.setOnAction(e -> stage.close());
-            actions.getChildren().add(okBtn);
-
-            VBox root = createDialogRoot(titleBar, content, actions);
-            Scene scene = new Scene(root);
-            var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
-            if (css != null) {
-                scene.getStylesheets().add(css.toExternalForm());
-            }
-
-            stage.setScene(scene);
-            stage.setResizable(false);
-            centerOnOwner(stage, owner);
-            stage.showAndWait();
-        });
+        showMessageDialog(owner, title, message);
     }
 
     public static void showInfoAlert(String title, String message) {
@@ -225,7 +189,6 @@ public final class JavaFxUtils {
         final boolean[] result = new boolean[1];
         runOnFxThreadAndWait(() -> {
             Stage stage = createCustomDialogStage(owner);
-            HBox titleBar = createDialogTitleBar(stage, title);
 
             VBox content = new VBox(8);
             Label msgLbl = new Label(message);
@@ -255,17 +218,7 @@ public final class JavaFxUtils {
 
             actions.getChildren().addAll(noBtn, yesBtn);
 
-            VBox root = createDialogRoot(titleBar, content, actions);
-            Scene scene = new Scene(root);
-            var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
-            if (css != null) {
-                scene.getStylesheets().add(css.toExternalForm());
-            }
-
-            stage.setScene(scene);
-            stage.setResizable(false);
-            centerOnOwner(stage, owner);
-            stage.showAndWait();
+            showDialog(stage, owner, title, content, actions);
         });
 
         return result[0];
@@ -275,7 +228,6 @@ public final class JavaFxUtils {
         final String[] result = new String[1];
         runOnFxThreadAndWait(() -> {
             Stage stage = createCustomDialogStage(owner);
-            HBox titleBar = createDialogTitleBar(stage, title);
 
             VBox content = new VBox(8);
             Label promptLbl = new Label(promptText != null ? promptText : "Enter value:");
@@ -306,18 +258,8 @@ public final class JavaFxUtils {
 
             actions.getChildren().addAll(cancelBtn, okBtn);
 
-            VBox root = createDialogRoot(titleBar, content, actions);
-            Scene scene = new Scene(root);
-            var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
-            if (css != null) {
-                scene.getStylesheets().add(css.toExternalForm());
-            }
-
-            stage.setScene(scene);
-            stage.setResizable(false);
-            centerOnOwner(stage, owner);
             Platform.runLater(inputField::requestFocus);
-            stage.showAndWait();
+            showDialog(stage, owner, title, content, actions);
         });
 
         return Optional.ofNullable(result[0]);

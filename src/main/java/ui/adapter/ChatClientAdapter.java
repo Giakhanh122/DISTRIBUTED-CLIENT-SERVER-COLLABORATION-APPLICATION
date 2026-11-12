@@ -45,10 +45,6 @@ public final class ChatClientAdapter {
     private volatile boolean connected;
     private volatile boolean loggingIn;
     private volatile String currentUsername;
-    private volatile String serverHost;
-    private volatile int serverPort;
-    private volatile String activeCommunityId;
-    private volatile String activeCommunityName;
     private volatile List<String> onlineUsers = List.of();
     private volatile List<CommunityModel> communities = List.of();
     private ScheduledFuture<?> poller;
@@ -60,14 +56,8 @@ public final class ChatClientAdapter {
     public void addListener(ClientEventListener listener) { if (!listeners.contains(listener)) listeners.add(listener); }
     public void removeListener(ClientEventListener listener) { listeners.remove(listener); }
     public String getCurrentUsername() { return currentUsername; }
-    public String getServerHost() { return serverHost; }
-    public int getServerPort() { return serverPort; }
-    public boolean isConnected() { return connected; }
-    public String getActiveCommunityId() { return activeCommunityId; }
-    public String getActiveCommunityName() { return activeCommunityName; }
     public List<String> getLastKnownOnlineUsers() { return onlineUsers; }
     public List<CommunityModel> getLastKnownCommunities() { return communities; }
-    public FileOfferModel getFileOffer(String id) { return fileOffers.get(id); }
 
     private void dispatch(long token, Consumer<ClientEventListener> event) {
         JavaFxUtils.runOnFxThread(() -> {
@@ -93,8 +83,6 @@ public final class ChatClientAdapter {
         session = null;
         if (previous != null) executor.execute(previous::close);
         currentUsername = username;
-        serverHost = host;
-        serverPort = port;
         executor.execute(() -> {
             try {
                 ClientSession opened = new Client().login(host, port, username, password, events(token));
@@ -167,16 +155,22 @@ public final class ChatClientAdapter {
                 listeners.forEach(l -> l.onSystemNotification(e.getMessage(), true));
                 return;
             }
-            if (snapshot.equals(communities)) return;
-            communities = List.copyOf(snapshot);
+            Map<String, CommunityModel> existing = new java.util.HashMap<>();
+            communities.forEach(model -> existing.put(model.getId(), model));
+            List<CommunityModel> updated = new ArrayList<>();
+            for (CommunityModel latest : snapshot) {
+                CommunityModel model = existing.get(latest.getId());
+                if (model == null) model = latest;
+                else model.updateFrom(latest);
+                updated.add(model);
+            }
+            communities = List.copyOf(updated);
             listeners.forEach(l -> l.onCommunityListUpdated(communities));
         });
     }
 
     private void selected(CommunityClient.Selection selection) {
         if (generation.get() != commandToken) return;
-        activeCommunityId = selection.id();
-        activeCommunityName = selection.name();
         dispatch(commandToken, l -> l.onCommunityJoined(selection.id(), selection.name()));
         requestCommunityList();
     }
@@ -184,12 +178,10 @@ public final class ChatClientAdapter {
     public void createCommunity(String name) { submit(s -> selected(s.communities().create(name.trim()))); }
     public void joinCommunity(String id) { submit(s -> selected(s.communities().join(id))); }
     public void selectCommunity(String id) { submit(s -> selected(s.communities().select(id))); }
-    public void leaveCommunity() { leaveCommunity(activeCommunityId); }
     public void leaveCommunity(String id) {
         submit(s -> {
             s.communities().leave(id);
             if (generation.get() != commandToken) return;
-            if (id.equals(activeCommunityId)) { activeCommunityId = null; activeCommunityName = null; }
             dispatch(commandToken, l -> l.onCommunityLeft(id));
             requestCommunityList();
         });
@@ -203,8 +195,11 @@ public final class ChatClientAdapter {
     }
     public void sendChatMessage(String peer, String text) { submit(s -> s.sendMessage(peer, text)); }
     public void sendFile(String peer, File file) { submit(s -> { s.ensurePeer(peer); s.sendFile(peer, file); }); }
-    public void broadcastMessage(String text) { submit(s -> s.broadcastMessage(text)); }
-    public void broadcastFile(File file) { submit(s -> s.broadcastFile(file)); }
+    public void broadcastMessage(String communityId, String text) { submit(s -> s.broadcastMessage(communityId, text)); }
+    public void broadcastFile(String communityId, String communityName, File file) {
+        CommunityClient.Selection target = new CommunityClient.Selection(communityId, communityName);
+        submit(s -> s.broadcastFile(target, file));
+    }
     public void acceptFileOffer(String id) { decideFile(id, true); }
     public void rejectFileOffer(String id) { decideFile(id, false); }
     private void decideFile(String id, boolean accept) {
@@ -212,7 +207,7 @@ public final class ChatClientAdapter {
             try {
                 if (accept) s.accept(id); else s.reject(id);
             } catch (IOException | RuntimeException e) {
-                events(commandToken).onFileState(id, "FAILED", e.getMessage());
+                events(commandToken).onFileState(id, ClientEvents.FileState.FAILED, e.getMessage());
             }
         });
     }
@@ -241,16 +236,21 @@ public final class ChatClientAdapter {
                     listeners.forEach(l -> l.onFileOfferReceived(model));
                 });
             }
-            public void onFileState(String id, String state, String detail) {
+            public void onFileState(String id, FileState state, String detail) {
                 JavaFxUtils.runOnFxThread(() -> {
                     if (generation.get() != token) return;
                     FileOfferModel model = fileOffers.get(id);
                     if (model == null) {
-                        if (state.equals("FAILED")) listeners.forEach(l -> l.onSystemNotification(detail, true));
+                        if (state == FileState.FAILED) listeners.forEach(l -> l.onSystemNotification(detail, true));
                         return;
                     }
-                    model.setStatus(FileOfferModel.Status.valueOf(state));
-                    if (state.equals("COMPLETED")) {
+                    model.setStatus(switch (state) {
+                        case TRANSFERRING -> FileOfferModel.Status.TRANSFERRING;
+                        case REJECTED -> FileOfferModel.Status.REJECTED;
+                        case COMPLETED -> FileOfferModel.Status.COMPLETED;
+                        case FAILED -> FileOfferModel.Status.FAILED;
+                    });
+                    if (state == FileState.COMPLETED) {
                         model.setLocalPath(detail);
                         model.setProgress(1);
                     } else if (detail != null) model.setStatusText(detail);
@@ -266,8 +266,6 @@ public final class ChatClientAdapter {
         if (poller != null) { poller.cancel(false); poller = null; }
         ClientSession closing = session;
         session = null;
-        activeCommunityId = null;
-        activeCommunityName = null;
         onlineUsers = List.of();
         communities = List.of();
         fileOffers.clear();

@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import protocols.FileTransferMeta;
 import protocols.OpCode;
@@ -37,16 +36,6 @@ public final class FileTransferController implements AutoCloseable {
     private final Map<String, String> incomingOfferIds = new HashMap<>();
     private final LongSupplier nextOfferNumber;
     private boolean closingTransfers;
-
-    public FileTransferController(String username, int peerPort, File downloadDir,
-                                  Map<String, PeerConnection> peers) {
-        this(username, peerPort, downloadDir, peers, new AtomicLong()::incrementAndGet);
-    }
-
-    public FileTransferController(String username, int peerPort, File downloadDir,
-                                  Map<String, PeerConnection> peers, LongSupplier nextOfferNumber) {
-        this(username, peerPort, downloadDir, peers, nextOfferNumber, ClientEvents.NONE);
-    }
 
     FileTransferController(String username, int peerPort, File downloadDir,
                            Map<String, PeerConnection> peers, LongSupplier nextOfferNumber, ClientEvents events) {
@@ -92,13 +81,13 @@ public final class FileTransferController implements AutoCloseable {
         if (decision.equals("ACCEPT")) {
             File file = transferManager.getOutboundFile(session.transferId());
             session.accept();
-            events.onFileState(transferId, "TRANSFERRING", "Accepted by " + session.meta().receiver());
+            events.onFileState(transferId, ClientEvents.FileState.TRANSFERRING, "Accepted by " + session.meta().receiver());
             System.out.println("\n[FILE] Transfer '" + session.meta().fileName()
                     + "' was ACCEPTED by " + session.meta().receiver() + ".");
             Thread.startVirtualThread(() -> runP2PSend(file, session, peer));
         } else {
             session.reject();
-            events.onFileState(transferId, "REJECTED", "Rejected by " + session.meta().receiver());
+            events.onFileState(transferId, ClientEvents.FileState.REJECTED, "Rejected by " + session.meta().receiver());
             finishTransfer(session);
             System.out.println("\n[FILE] Transfer '" + session.meta().fileName()
                     + "' was REJECTED by " + session.meta().receiver() + ".");
@@ -115,11 +104,11 @@ public final class FileTransferController implements AutoCloseable {
             FileSender sender = new FileSender(file, session.transferId(), channel, session, null);
             String checksum = sender.send();
             sender.awaitResult();
-            events.onFileState(session.transferId(), "COMPLETED", file.getAbsolutePath());
+            events.onFileState(session.transferId(), ClientEvents.FileState.COMPLETED, file.getAbsolutePath());
             System.out.println("\n[P2P SENT] " + file.getName() + " completed! SHA-256: " + checksum);
         } catch (IOException | RuntimeException e) {
             session.fail();
-            events.onFileState(session.transferId(), "FAILED", e.getMessage());
+            events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
             System.err.println("\n[P2P SEND ERROR] " + e.getMessage());
         } finally {
             finishTransfer(session);
@@ -145,50 +134,56 @@ public final class FileTransferController implements AutoCloseable {
                 }
                 FileTransferMeta meta = FileTransferMeta.create(username, receiver, file.getName(), size, checksum);
                 session = new FileTransferSession(meta);
-                registerTransfer(session, peer, file);
-                events.onFileOffer(meta.transferId(), meta, null, false);
+                synchronized (this) {
+                    registerTransfer(session, peer, file);
+                    events.onFileOffer(meta.transferId(), meta, null, false);
+                }
                 peer.sendPacket(Packet.json(OpCode.FILE_OFFER, meta.toJson()),
                         sequence -> recordOfferSequence(meta.transferId(), sequence));
                 System.out.println("[FILE] Offer sent to " + receiver + ": '" + file.getName() + "'.");
             } catch (IOException | RuntimeException e) {
                 if (session != null) {
                     session.fail();
-                    events.onFileState(session.transferId(), "FAILED", e.getMessage());
+                    events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
                     finishTransfer(session);
                 }
-                if (session == null) events.onFileState("", "FAILED", e.getMessage());
+                if (session == null) events.onFileState("", ClientEvents.FileState.FAILED, e.getMessage());
                 System.err.println("[FILE OFFER ERROR] " + e.getMessage());
             }
         });
     }
 
-    public synchronized void sendDecision(String offerNumber, String decision) throws IOException {
-        // Keep accepting UUIDs for existing console callers; packets always use the UUID.
-        String transferId = incomingOfferIds.getOrDefault(offerNumber, offerNumber);
-        FileTransferSession session = transferManager.getSession(transferId).orElse(null);
-        if (session == null || session.isTerminal()) {
-            System.out.println("Offer not found: " + offerNumber);
-            return;
+    public void sendDecision(String offerNumber, String decision) throws IOException {
+        if (!decision.equals("ACCEPT") && !decision.equals("REJECT")) {
+            throw new IllegalArgumentException("Invalid file decision");
         }
-        if (!session.meta().receiver().equals(username) || session.state() != FileTransferSession.State.OFFERED) {
-            throw new IllegalStateException("This is not a pending incoming offer");
-        }
-        PeerConnection peer = transferPeers.get(transferId);
-        try {
-            if (decision.equals("ACCEPT")) {
-                session.accept();
-            } else {
-                session.reject();
+        String transferId;
+        FileTransferSession session;
+        PeerConnection peer;
+        Packet response;
+        synchronized (this) {
+            transferId = incomingOfferIds.getOrDefault(offerNumber, offerNumber);
+            session = transferManager.getSession(transferId).orElseThrow(
+                    () -> new IOException("Offer not found: " + offerNumber));
+            if (!session.meta().receiver().equals(username)
+                    || session.state() != FileTransferSession.State.OFFERED) {
+                throw new IOException("This is not a pending incoming offer");
             }
-            peer.sendPacket(Packet.reply(OpCode.FILE_DECISION, offerSequences.get(transferId),
-                    Json.object("transferId", transferId, "decision", decision)));
+            peer = transferPeers.get(transferId);
+            response = Packet.reply(OpCode.FILE_DECISION, offerSequences.get(transferId),
+                    Json.object("transferId", transferId, "decision", decision));
+            if (decision.equals("ACCEPT")) session.accept();
+            else session.reject();
+            events.onFileState(transferId, decision.equals("REJECT") ? ClientEvents.FileState.REJECTED : ClientEvents.FileState.TRANSFERRING, decision);
+        }
+        try {
+            peer.sendPacket(response);
         } catch (IOException | RuntimeException e) {
             session.fail();
-            events.onFileState(transferId, "FAILED", e.getMessage());
+            events.onFileState(transferId, ClientEvents.FileState.FAILED, e.getMessage());
             finishTransfer(session);
             throw e;
         }
-        events.onFileState(transferId, decision.equals("REJECT") ? "REJECTED" : "TRANSFERRING", decision);
         if (decision.equals("REJECT")) {
             finishTransfer(session);
             System.out.println("[FILE] Rejected offer #" + offerNumber + ".");
@@ -197,7 +192,7 @@ public final class FileTransferController implements AutoCloseable {
                 synchronized (FileTransferController.this) {
                     if (session.state() == FileTransferSession.State.ACCEPTED) {
                         session.fail();
-                        events.onFileState(transferId, "FAILED", "Accepted offer expired");
+                        events.onFileState(transferId, ClientEvents.FileState.FAILED, "Accepted offer expired");
                         finishTransfer(session);
                         System.err.println("[FILE] Accepted offer expired: #" + offerNumber);
                     }
@@ -220,12 +215,12 @@ public final class FileTransferController implements AutoCloseable {
             claimed = true;
             File saved = new FileReceiver(channel,
                     downloadDir, session.meta(), session, null).receive();
-            events.onFileState(session.transferId(), "COMPLETED", saved.getAbsolutePath());
+            events.onFileState(session.transferId(), ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
             System.out.println("\n[P2P RECEIVED] Saved to: " + saved.getAbsolutePath());
         } catch (IOException | RuntimeException e) {
             if (claimed) {
                 session.fail();
-                events.onFileState(session.transferId(), "FAILED", e.getMessage());
+                events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
             } else {
                 try {
                     channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));
@@ -295,7 +290,7 @@ public final class FileTransferController implements AutoCloseable {
         for (FileTransferSession session : transferManager.getActiveSessions()) {
             if (peer == null || transferPeers.get(session.transferId()) == peer) {
                 session.cancel();
-                events.onFileState(session.transferId(), "FAILED", "Peer connection closed");
+                events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, "Peer connection closed");
                 Closeable connection = transferConnections.get(session.transferId());
                 if (connection != null) {
                     try {
