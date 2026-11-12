@@ -19,7 +19,8 @@ import protocols.PacketChannel;
 import protocols.PacketValidator;
 
 /** State and resources of one login; a subsequent login creates a new session. */
-final class ClientSession implements AutoCloseable {
+public final class ClientSession implements AutoCloseable {
+    private final ClientEvents events;
     private final String username;
     private final ServerConnection server;
     private final PeerListener listener;
@@ -30,30 +31,37 @@ final class ClientSession implements AutoCloseable {
     private final Object peerLock = new Object();
     private final AtomicBoolean closing = new AtomicBoolean();
     private volatile String selectedPeer;
-    private boolean started;
+    private volatile boolean started;
 
     ClientSession(String username, String host, int port, PacketChannel channel) throws IOException {
+        this(username, host, port, channel, ClientEvents.NONE);
+    }
+
+    ClientSession(String username, String host, int port, PacketChannel channel, ClientEvents events) throws IOException {
+        this.events = java.util.Objects.requireNonNull(events);
         this.username = username;
-        server = new ServerConnection(channel, this::receiveEvent);
+        server = new ServerConnection(channel, this::receiveEvent, () -> {
+            if (started && !closing.get()) events.onServerClosed();
+        });
         listener = new PeerListener(this::registerPeer, this::receiveFile);
         AtomicLong offerNumbers = new AtomicLong();
         files = new FileTransferController(username, listener.getPort(), new File("downloads/" + username),
-                peers, offerNumbers::incrementAndGet);
-        broadcasts = new BroadcastFileController(server, host, port, username, offerNumbers::incrementAndGet);
+                peers, offerNumbers::incrementAndGet, events);
+        broadcasts = new BroadcastFileController(server, host, port, username, offerNumbers::incrementAndGet, events);
         communities = new CommunityClient(server);
     }
 
     String username() { return username; }
     int peerPort() { return listener.getPort(); }
-    CommunityClient communities() { return communities; }
+    public CommunityClient communities() { return communities; }
 
-    void start() {
+    public void start() {
         started = true;
         server.start();
         Thread.startVirtualThread(listener);
     }
 
-    JsonArray users() throws IOException {
+    public JsonArray users() throws IOException {
         return Json.array(request(Packet.empty(OpCode.USER_LIST_REQUEST), OpCode.USER_LIST_RESPONSE).jsonBody(), "users");
     }
 
@@ -141,19 +149,19 @@ final class ClientSession implements AutoCloseable {
         }
     }
 
-    void sendFile(String target, File file) {
+    public void sendFile(String target, File file) {
         files.offer(peers.get(target), target, file);
     }
 
-    void accept(String number) throws IOException {
+    public void accept(String number) throws IOException {
         if (!broadcasts.accept(number)) files.sendDecision(number, "ACCEPT");
     }
 
-    void reject(String number) throws IOException {
+    public void reject(String number) throws IOException {
         if (!broadcasts.reject(number)) files.sendDecision(number, "REJECT");
     }
 
-    void broadcastMessage(String message) throws IOException {
+    public void broadcastMessage(String message) throws IOException {
         if (message.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) {
             throw new IOException("Message exceeds limit: 65536");
         }
@@ -162,8 +170,24 @@ final class ClientSession implements AutoCloseable {
                 Json.object("communityId", community.id(), "content", message)));
     }
 
-    void broadcastFile(File file) throws IOException {
+    public void broadcastFile(File file) throws IOException {
         broadcasts.upload(file, communities.requireSelection());
+    }
+
+    public void ensurePeer(String target) throws IOException {
+        if (target == null || target.isBlank() || target.equals(username)) throw new IOException("Invalid peer username");
+        if (selectPeer(target)) return;
+        PeerLookupResult result = lookup(target);
+        if (result.status() == PeerLookupResult.Status.USER_OFFLINE) throw new IOException(target + " is offline");
+        if (result.status() == PeerLookupResult.Status.SUCCESS) connectPeer(target, result.address());
+        if (!selectPeer(target)) throw new IOException("Cannot connect to " + target);
+    }
+
+    public void sendMessage(String target, String message) throws IOException {
+        ensurePeer(target);
+        PeerConnection peer = peers.get(target);
+        if (peer == null) throw new IOException("Peer disconnected: " + target);
+        peer.sendMessage(message);
     }
 
     private Packet request(Packet packet, OpCode responseOp) throws IOException {
@@ -175,8 +199,11 @@ final class ClientSession implements AutoCloseable {
     private void receiveEvent(Packet packet) throws IOException {
         switch (packet.op()) {
             case CHAT_MESSAGE -> System.out.println(packet.string("content"));
-            case CHAT_MESSAGE_BROADCAST -> System.out.println("(" + packet.string("communityId") + ":broadcast) "
-                    + packet.string("sender") + " : " + packet.string("content"));
+            case CHAT_MESSAGE_BROADCAST -> {
+                events.onBroadcast(packet.string("communityId"), packet.string("sender"), packet.string("content"));
+                System.out.println("(" + packet.string("communityId") + ":broadcast) "
+                        + packet.string("sender") + " : " + packet.string("content"));
+            }
             case FILE_BROADCAST_OFFER -> broadcasts.onOffer(packet);
             default -> throw new IOException("Unexpected server event: " + packet.op());
         }
@@ -210,13 +237,14 @@ final class ClientSession implements AutoCloseable {
             closePeer(previous);
             reportChatSession(name, previous, "DISCONNECTED");
         }
+        events.onPeerConnected(name);
         Thread.startVirtualThread(() -> readPeer(name, connection));
         return true;
     }
 
     private void readPeer(String name, PeerConnection connection) {
         try {
-            connection.readMessages(name, packet -> {
+            connection.readMessages(name, content -> events.onMessage(name, content), packet -> {
                 try {
                     if (packet.op() == OpCode.FILE_OFFER) files.handleIncomingOffer(name, connection, packet);
                     else files.handleIncomingDecision(connection, packet);
@@ -230,7 +258,10 @@ final class ClientSession implements AutoCloseable {
             files.closeForPeer(connection);
             reportChatSession(name, connection, "DISCONNECTED");
             synchronized (peerLock) {
-                if (peers.remove(name, connection) && name.equals(selectedPeer)) selectedPeer = null;
+                if (peers.remove(name, connection)) {
+                    if (name.equals(selectedPeer)) selectedPeer = null;
+                    events.onPeerDisconnected(name);
+                }
             }
             closePeer(connection);
         }

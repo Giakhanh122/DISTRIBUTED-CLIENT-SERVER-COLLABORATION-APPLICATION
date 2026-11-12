@@ -1,7 +1,16 @@
 /out/
 /target/
+/dist/
 /downloads/
+/server_storage/
+src/main/java/server_storage/
+*.bin
 *.class
+*.log
 __pycache__/
-
+.vscode/
+.settings/
+.classpath
+.project
 .deps/
+report/.auctex-auto/

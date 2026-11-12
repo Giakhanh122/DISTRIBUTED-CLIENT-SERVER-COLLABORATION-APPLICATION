@@ -5,7 +5,9 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 import ui.adapter.ChatClientAdapter;
 
 public class MainApp extends Application {
@@ -15,14 +17,26 @@ public class MainApp extends Application {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/login.fxml"));
         Parent root = loader.load();
 
-        Scene scene = new Scene(root, 850, 600);
-        primaryStage.setTitle("PulseChat — Login");
+        Scene scene = new Scene(root, 860, 600);
+        primaryStage.initStyle(StageStyle.UNDECORATED);
+        primaryStage.setTitle("DL-Chat");
+
+        try {
+            primaryStage.getIcons().addAll(
+                new Image(getClass().getResourceAsStream("/assets/DL-Chat-icon-16.png")),
+                new Image(getClass().getResourceAsStream("/assets/DL-Chat-icon-32.png")),
+                new Image(getClass().getResourceAsStream("/assets/DL-Chat-icon-64.png")),
+                new Image(getClass().getResourceAsStream("/assets/DL-Chat-icon-128.png")),
+                new Image(getClass().getResourceAsStream("/assets/DL-Chat-icon-256.png"))
+            );
+        } catch (Exception ignored) {}
+
         primaryStage.setScene(scene);
-        primaryStage.setMinWidth(750);
-        primaryStage.setMinHeight(520);
+        primaryStage.setMinWidth(800);
+        primaryStage.setMinHeight(540);
 
         primaryStage.setOnCloseRequest(e -> {
-            ChatClientAdapter.getInstance().disconnect();
+            ChatClientAdapter.getInstance().logout();
             Platform.exit();
             System.exit(0);
         });

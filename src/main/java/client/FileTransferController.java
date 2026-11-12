@@ -25,6 +25,7 @@ import transfer.FileTransferSession;
 public final class FileTransferController implements AutoCloseable {
     private static final int TRANSFER_TIMEOUT_MS = 30000;
 
+    private final ClientEvents events;
     private final String username;
     private final int peerPort;
     private final File downloadDir;
@@ -44,6 +45,12 @@ public final class FileTransferController implements AutoCloseable {
 
     public FileTransferController(String username, int peerPort, File downloadDir,
                                   Map<String, PeerConnection> peers, LongSupplier nextOfferNumber) {
+        this(username, peerPort, downloadDir, peers, nextOfferNumber, ClientEvents.NONE);
+    }
+
+    FileTransferController(String username, int peerPort, File downloadDir,
+                           Map<String, PeerConnection> peers, LongSupplier nextOfferNumber, ClientEvents events) {
+        this.events = events;
         this.nextOfferNumber = Objects.requireNonNull(nextOfferNumber);
         this.username = Objects.requireNonNull(username);
         this.peerPort = peerPort;
@@ -62,6 +69,7 @@ public final class FileTransferController implements AutoCloseable {
         offerSequences.put(meta.transferId(), packet.sequence());
         String offerNumber = Long.toString(nextOfferNumber.getAsLong());
         incomingOfferIds.put(offerNumber, meta.transferId());
+        events.onFileOffer(meta.transferId(), meta, null, true);
         System.out.println("\n[FILE OFFER #" + offerNumber + "] " + meta.sender() + " wants to send '" + meta.fileName()
                 + "' (" + meta.fileSize() + " bytes).");
         System.out.println("SHA-256: " + meta.checksum());
@@ -84,11 +92,13 @@ public final class FileTransferController implements AutoCloseable {
         if (decision.equals("ACCEPT")) {
             File file = transferManager.getOutboundFile(session.transferId());
             session.accept();
+            events.onFileState(transferId, "TRANSFERRING", "Accepted by " + session.meta().receiver());
             System.out.println("\n[FILE] Transfer '" + session.meta().fileName()
                     + "' was ACCEPTED by " + session.meta().receiver() + ".");
             Thread.startVirtualThread(() -> runP2PSend(file, session, peer));
         } else {
             session.reject();
+            events.onFileState(transferId, "REJECTED", "Rejected by " + session.meta().receiver());
             finishTransfer(session);
             System.out.println("\n[FILE] Transfer '" + session.meta().fileName()
                     + "' was REJECTED by " + session.meta().receiver() + ".");
@@ -105,9 +115,11 @@ public final class FileTransferController implements AutoCloseable {
             FileSender sender = new FileSender(file, session.transferId(), channel, session, null);
             String checksum = sender.send();
             sender.awaitResult();
+            events.onFileState(session.transferId(), "COMPLETED", file.getAbsolutePath());
             System.out.println("\n[P2P SENT] " + file.getName() + " completed! SHA-256: " + checksum);
         } catch (IOException | RuntimeException e) {
             session.fail();
+            events.onFileState(session.transferId(), "FAILED", e.getMessage());
             System.err.println("\n[P2P SEND ERROR] " + e.getMessage());
         } finally {
             finishTransfer(session);
@@ -134,14 +146,17 @@ public final class FileTransferController implements AutoCloseable {
                 FileTransferMeta meta = FileTransferMeta.create(username, receiver, file.getName(), size, checksum);
                 session = new FileTransferSession(meta);
                 registerTransfer(session, peer, file);
+                events.onFileOffer(meta.transferId(), meta, null, false);
                 peer.sendPacket(Packet.json(OpCode.FILE_OFFER, meta.toJson()),
                         sequence -> recordOfferSequence(meta.transferId(), sequence));
                 System.out.println("[FILE] Offer sent to " + receiver + ": '" + file.getName() + "'.");
             } catch (IOException | RuntimeException e) {
                 if (session != null) {
                     session.fail();
+                    events.onFileState(session.transferId(), "FAILED", e.getMessage());
                     finishTransfer(session);
                 }
+                if (session == null) events.onFileState("", "FAILED", e.getMessage());
                 System.err.println("[FILE OFFER ERROR] " + e.getMessage());
             }
         });
@@ -169,9 +184,11 @@ public final class FileTransferController implements AutoCloseable {
                     Json.object("transferId", transferId, "decision", decision)));
         } catch (IOException | RuntimeException e) {
             session.fail();
+            events.onFileState(transferId, "FAILED", e.getMessage());
             finishTransfer(session);
             throw e;
         }
+        events.onFileState(transferId, decision.equals("REJECT") ? "REJECTED" : "TRANSFERRING", decision);
         if (decision.equals("REJECT")) {
             finishTransfer(session);
             System.out.println("[FILE] Rejected offer #" + offerNumber + ".");
@@ -180,6 +197,7 @@ public final class FileTransferController implements AutoCloseable {
                 synchronized (FileTransferController.this) {
                     if (session.state() == FileTransferSession.State.ACCEPTED) {
                         session.fail();
+                        events.onFileState(transferId, "FAILED", "Accepted offer expired");
                         finishTransfer(session);
                         System.err.println("[FILE] Accepted offer expired: #" + offerNumber);
                     }
@@ -202,10 +220,12 @@ public final class FileTransferController implements AutoCloseable {
             claimed = true;
             File saved = new FileReceiver(channel,
                     downloadDir, session.meta(), session, null).receive();
+            events.onFileState(session.transferId(), "COMPLETED", saved.getAbsolutePath());
             System.out.println("\n[P2P RECEIVED] Saved to: " + saved.getAbsolutePath());
         } catch (IOException | RuntimeException e) {
             if (claimed) {
                 session.fail();
+                events.onFileState(session.transferId(), "FAILED", e.getMessage());
             } else {
                 try {
                     channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));
@@ -275,6 +295,7 @@ public final class FileTransferController implements AutoCloseable {
         for (FileTransferSession session : transferManager.getActiveSessions()) {
             if (peer == null || transferPeers.get(session.transferId()) == peer) {
                 session.cancel();
+                events.onFileState(session.transferId(), "FAILED", "Peer connection closed");
                 Closeable connection = transferConnections.get(session.transferId());
                 if (connection != null) {
                     try {

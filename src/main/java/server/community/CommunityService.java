@@ -21,15 +21,21 @@ public class CommunityService {
         return Json.object("status", "OK", "communities", communities);
     }
 
-    public JsonObject createCommunity(String name, String ownerUsername) {
+    public synchronized JsonObject createCommunity(String name, String ownerUsername) {
         if (name == null || name.isBlank()) return status("INVALID_NAME");
         if (name.length() > 100) return status("NAME_TOO_LONG");
-        Community community = new Community(name.trim(), ownerUsername);
+        String trimmed = name.trim();
+        for (Community existing : registry.listAll()) {
+            if (existing.name().equalsIgnoreCase(trimmed) && existing.ownerUsername().equalsIgnoreCase(ownerUsername)) {
+                return selected(existing);
+            }
+        }
+        Community community = new Community(trimmed, ownerUsername);
         registry.register(community);
         return selected(community);
     }
 
-    public JsonObject joinCommunity(String communityId, String username) {
+    public synchronized JsonObject joinCommunity(String communityId, String username) {
         Optional<Community> found = registry.find(communityId);
         if (found.isEmpty()) return status("NOT_FOUND");
         Community community = found.get();
@@ -38,13 +44,16 @@ public class CommunityService {
         return selected(community);
     }
 
-    public JsonObject leaveCommunity(String communityId, String username) {
+    public synchronized JsonObject leaveCommunity(String communityId, String username) {
         Optional<Community> found = registry.find(communityId);
         if (found.isEmpty()) return status("NOT_FOUND");
         Community community = found.get();
         if (!community.isMember(username)) return status("NOT_MEMBER");
-        if (community.isOwner(username)) return status("OWNER_CANNOT_LEAVE");
         community.removeMember(username);
+        if (community.memberCount() == 0) registry.remove(communityId);
+        else if (community.isOwner(username)) {
+            community.setOwnerUsername(community.members().stream().sorted().findFirst().orElseThrow());
+        }
         return status("OK");
     }
 

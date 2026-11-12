@@ -31,6 +31,8 @@ public class FileOfferModel {
     private final BooleanProperty incoming = new SimpleBooleanProperty(true);
     private final DoubleProperty progress = new SimpleDoubleProperty(0.0);
     private final StringProperty localPath = new SimpleStringProperty("");
+    private final BooleanProperty broadcast = new SimpleBooleanProperty(false);
+    private final StringProperty communityId = new SimpleStringProperty("");
     private long fileSizeInBytes = 0;
 
     public FileOfferModel(String offerNumber, String sender, String receiver, String fileName, long fileSize, String checksum, boolean incoming) {
@@ -100,4 +102,12 @@ public class FileOfferModel {
     public String getLocalPath() { return localPath.get(); }
     public StringProperty localPathProperty() { return localPath; }
     public void setLocalPath(String path) { this.localPath.set(path); }
+
+    public boolean isBroadcast() { return broadcast.get(); }
+    public BooleanProperty broadcastProperty() { return broadcast; }
+    public void setBroadcast(boolean broadcast) { this.broadcast.set(broadcast); }
+
+    public String getCommunityId() { return communityId.get(); }
+    public StringProperty communityIdProperty() { return communityId; }
+    public void setCommunityId(String communityId) { this.communityId.set(communityId); }
 }

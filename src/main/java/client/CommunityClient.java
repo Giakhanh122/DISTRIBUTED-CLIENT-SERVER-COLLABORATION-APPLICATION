@@ -9,8 +9,8 @@ import protocols.Packet;
 import protocols.PacketValidator;
 
 /** Community requests and the current selection for one login. */
-final class CommunityClient {
-    record Selection(String id, String name) {}
+public final class CommunityClient {
+    public record Selection(String id, String name) {}
 
     private final ServerConnection server;
     private volatile Selection selected;
@@ -19,7 +19,7 @@ final class CommunityClient {
         this.server = server;
     }
 
-    Selection selected() { return selected; }
+    public Selection selected() { return selected; }
 
     Selection requireSelection() throws IOException {
         Selection selection = selected;
@@ -27,31 +27,35 @@ final class CommunityClient {
         return selection;
     }
 
-    JsonArray list() throws IOException {
+    public JsonArray list() throws IOException {
         Packet response = request(Packet.empty(OpCode.COMMUNITY_LIST_REQUEST), OpCode.COMMUNITY_LIST_RESPONSE);
         return Json.array(response.jsonBody(), "communities");
     }
 
-    Selection create(String name) throws IOException {
+    public Selection create(String name) throws IOException {
         return selectFrom(request(Packet.json(OpCode.COMMUNITY_CREATE_REQUEST, Json.object("name", name)),
                 OpCode.COMMUNITY_CREATE_RESPONSE));
     }
 
-    Selection join(String id) throws IOException {
+    public Selection join(String id) throws IOException {
         return selectFrom(request(Packet.json(OpCode.COMMUNITY_JOIN_REQUEST, Json.object("communityId", id)),
                 OpCode.COMMUNITY_JOIN_RESPONSE));
     }
 
-    Selection select(String id) throws IOException {
+    public Selection select(String id) throws IOException {
         return selectFrom(request(Packet.json(OpCode.COMMUNITY_SELECT_REQUEST, Json.object("communityId", id)),
                 OpCode.COMMUNITY_SELECT_RESPONSE));
     }
 
-    Selection leave() throws IOException {
-        Selection selection = requireSelection();
-        request(Packet.json(OpCode.COMMUNITY_LEAVE_REQUEST, Json.object("communityId", selection.id())),
+    public Selection leave() throws IOException {
+        return leave(requireSelection().id());
+    }
+
+    public Selection leave(String id) throws IOException {
+        Selection selection = selected;
+        request(Packet.json(OpCode.COMMUNITY_LEAVE_REQUEST, Json.object("communityId", id)),
                 OpCode.COMMUNITY_LEAVE_RESPONSE);
-        selected = null;
+        if (selection != null && selection.id().equals(id)) selected = null;
         return selection;
     }
 

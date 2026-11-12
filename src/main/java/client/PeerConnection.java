@@ -103,14 +103,18 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void readMessages(String peerUsername, Consumer<Packet> onFilePacket) throws IOException {
-        Packet packet;
+        readMessages(peerUsername, content -> {}, onFilePacket);
+    }
 
+    public void readMessages(String peerUsername, Consumer<String> onMessage, Consumer<Packet> onFilePacket) throws IOException {
+        Packet packet;
         while ((packet = channel.read()) != null) {
             switch (packet.op()) {
                 case CHAT_MESSAGE -> {
                     if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
+                    onMessage.accept(packet.string("content"));
                     System.out.println(peerUsername + ": " + packet.string("content"));
                 }
                 case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);

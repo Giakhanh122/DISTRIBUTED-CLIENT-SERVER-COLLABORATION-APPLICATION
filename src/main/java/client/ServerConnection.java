@@ -21,6 +21,7 @@ final class ServerConnection implements AutoCloseable {
     private static final int RESPONSE_TIMEOUT_SECONDS = 10;
     private record Pending(OpCode opcode, long sequence, CompletableFuture<Packet> future) {}
 
+    private final Runnable onClosed;
     private final PacketChannel channel;
     private final EventHandler events;
     private final AtomicBoolean started = new AtomicBoolean();
@@ -29,6 +30,11 @@ final class ServerConnection implements AutoCloseable {
     private volatile Pending pending;
 
     ServerConnection(PacketChannel channel, EventHandler events) {
+        this(channel, events, () -> {});
+    }
+
+    ServerConnection(PacketChannel channel, EventHandler events, Runnable onClosed) {
+        this.onClosed = Objects.requireNonNull(onClosed);
         this.channel = Objects.requireNonNull(channel);
         this.events = Objects.requireNonNull(events);
     }
@@ -109,7 +115,7 @@ final class ServerConnection implements AutoCloseable {
         if (closed.compareAndSet(false, true)) {
             Pending request = pending;
             if (request != null) request.future().completeExceptionally(new IOException("Server connection closed"));
-            channel.close();
+            try { channel.close(); } finally { onClosed.run(); }
         }
     }
 }

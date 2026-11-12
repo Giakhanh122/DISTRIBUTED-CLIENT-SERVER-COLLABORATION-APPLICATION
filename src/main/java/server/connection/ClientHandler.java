@@ -34,7 +34,7 @@ public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private static final int MAX_AUTH_BYTES = 4096;
     private static final int MAX_COMMUNITY_BYTES = 4096;
-    private static final long MAX_BROADCAST_FILE_SIZE = 100L * 1024 * 1024;
+    private static final long MAX_BROADCAST_FILE_SIZE = 500L * 1024 * 1024;
 
 
     private final Socket socket;

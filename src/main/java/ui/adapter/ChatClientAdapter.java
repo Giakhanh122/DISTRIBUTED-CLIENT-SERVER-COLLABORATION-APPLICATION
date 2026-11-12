@@ -1,688 +1,276 @@
 package ui.adapter;
 
 import client.Client;
-import java.io.ByteArrayOutputStream;
+import client.ClientEvents;
+import client.ClientSession;
+import client.CommunityClient;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
-import java.io.PrintStream;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import protocols.FileTransferMeta;
+import protocols.Json;
+import ui.model.CommunityModel;
 import ui.model.FileOfferModel;
 import ui.util.JavaFxUtils;
 
-public class ChatClientAdapter {
-
-    // Global line listeners so any active adapter receives captured stdout/stderr
-    private static final List<Consumer<String>> globalLineListeners = new CopyOnWriteArrayList<>();
-    private static volatile boolean streamsIntercepted = false;
-
+/** Maps session data to JavaFX models; all network operations run off the FX thread. */
+public final class ChatClientAdapter {
     private static final ChatClientAdapter INSTANCE = new ChatClientAdapter();
+    public static ChatClientAdapter getInstance() { return INSTANCE; }
 
-    public static ChatClientAdapter getInstance() {
-        return INSTANCE;
-    }
-
-    private static synchronized void interceptSystemStreams() {
-        if (streamsIntercepted) return;
-        streamsIntercepted = true;
-
-        PrintStream origOut = System.out;
-        PrintStream origErr = System.err;
-
-        System.setOut(new PrintStream(new LineSplittingOutputStream(origOut, line -> {
-            for (Consumer<String> l : globalLineListeners) {
-                l.accept(line);
-            }
-        }), true, StandardCharsets.UTF_8));
-
-        System.setErr(new PrintStream(new LineSplittingOutputStream(origErr, line -> {
-            for (Consumer<String> l : globalLineListeners) {
-                l.accept(line);
-            }
-        }), true, StandardCharsets.UTF_8));
-    }
+    @FunctionalInterface
+    private interface SessionTask { void run(ClientSession session) throws IOException; }
 
     private final List<ClientEventListener> listeners = new CopyOnWriteArrayList<>();
     private final Map<String, FileOfferModel> fileOffers = new ConcurrentHashMap<>();
-
-    private Client client;
-    private PipedOutputStream commandPipeOut;
-    private PrintWriter commandWriter;
-    private Thread clientThread;
-
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "UI-Client-Commands");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicLong generation = new AtomicLong();
+    private volatile ClientSession session;
+    private volatile boolean connected;
+    private volatile boolean loggingIn;
     private volatile String currentUsername;
-    private volatile String selectedPeer;
     private volatile String serverHost;
     private volatile int serverPort;
-    private volatile boolean connected = false;
-    private volatile boolean loggingIn = false;
+    private volatile String activeCommunityId;
+    private volatile String activeCommunityName;
+    private volatile List<String> onlineUsers = List.of();
+    private volatile List<CommunityModel> communities = List.of();
+    private ScheduledFuture<?> poller;
+    // Only accessed on the command executor.
+    private long commandToken;
 
-    // Line parser state per adapter
-    private boolean collectingUserList = false;
-    private final List<String> userListBuffer = new ArrayList<>();
-    private String pendingOfferNum = null;
-    private String pendingOfferSender = null;
-    private String pendingOfferFile = null;
-    private long pendingOfferSize = 0;
+    private ChatClientAdapter() {}
 
-    private ScheduledExecutorService userListPollExecutor;
-    private final AtomicBoolean flushScheduled = new AtomicBoolean(false);
-    private volatile long lastUserListLineTime = 0;
-    private final List<String> lastKnownOnlineUsers = new CopyOnWriteArrayList<>();
+    public void addListener(ClientEventListener listener) { if (!listeners.contains(listener)) listeners.add(listener); }
+    public void removeListener(ClientEventListener listener) { listeners.remove(listener); }
+    public String getCurrentUsername() { return currentUsername; }
+    public String getServerHost() { return serverHost; }
+    public int getServerPort() { return serverPort; }
+    public boolean isConnected() { return connected; }
+    public String getActiveCommunityId() { return activeCommunityId; }
+    public String getActiveCommunityName() { return activeCommunityName; }
+    public List<String> getLastKnownOnlineUsers() { return onlineUsers; }
+    public List<CommunityModel> getLastKnownCommunities() { return communities; }
+    public FileOfferModel getFileOffer(String id) { return fileOffers.get(id); }
 
-    private void scheduleUserListFlush() {
-        lastUserListLineTime = System.currentTimeMillis();
-        if (flushScheduled.compareAndSet(false, true)) {
-            CompletableFuture.delayedExecutor(150, TimeUnit.MILLISECONDS).execute(() -> {
-                synchronized (ChatClientAdapter.this) {
-                    flushScheduled.set(false);
-                    long elapsed = System.currentTimeMillis() - lastUserListLineTime;
-                    if (elapsed < 120) {
-                        scheduleUserListFlush();
-                    } else if (collectingUserList || !userListBuffer.isEmpty()) {
-                        flushUserList();
-                    }
-                }
-            });
-        }
+    private void dispatch(long token, Consumer<ClientEventListener> event) {
+        JavaFxUtils.runOnFxThread(() -> {
+            if (generation.get() == token) listeners.forEach(event);
+        });
     }
 
-    public List<String> getLastKnownOnlineUsers() {
-        return Collections.unmodifiableList(lastKnownOnlineUsers);
-    }
-
-    public ChatClientAdapter() {
-        interceptSystemStreams();
-        globalLineListeners.add(this::handleCapturedLine);
-    }
-
-    public void addListener(ClientEventListener listener) {
-        if (!listeners.contains(listener)) {
-            listeners.add(listener);
-        }
-    }
-
-    public void removeListener(ClientEventListener listener) {
-        listeners.remove(listener);
-    }
-
-    public synchronized void discoverServer(Consumer<Client.ServerInfo> callback) {
+    public void discoverServer(Consumer<Client.ServerInfo> callback) {
         Thread.startVirtualThread(() -> {
-            try {
-                Client c = new Client();
-                Client.ServerInfo info = c.discover();
-                JavaFxUtils.runOnFxThread(() -> callback.accept(info));
-            } catch (Exception e) {
-                JavaFxUtils.runOnFxThread(() -> callback.accept(null));
-            }
+            Client.ServerInfo result;
+            try { result = new Client().discover(); } catch (IOException e) { result = null; }
+            Client.ServerInfo found = result;
+            JavaFxUtils.runOnFxThread(() -> callback.accept(found));
         });
     }
 
     public synchronized void login(String host, int port, String username, String password) {
-        if (connected || loggingIn) {
-            return;
-        }
-        this.serverHost = host;
-        this.serverPort = port;
-        this.currentUsername = username;
-        this.loggingIn = true;
-        this.client = new Client();
-
-        try {
-            commandPipeOut = new PipedOutputStream();
-            PipedInputStream commandPipeIn = new PipedInputStream(commandPipeOut, 8192);
-            commandWriter = new PrintWriter(commandPipeOut, true, StandardCharsets.UTF_8);
-            Scanner scanner = new Scanner(commandPipeIn, StandardCharsets.UTF_8);
-
-            clientThread = Thread.ofVirtual().name("Client-Runner-" + username).start(() -> {
-                try {
-                    // Feed login credentials
-                    commandWriter.println(username);
-                    commandWriter.println(password);
-
-                    client.connectToServer(host, port, scanner);
-                } catch (Exception e) {
-                    notifySystem("Connection failed: " + e.getMessage(), true);
-                    notifyLoginFailed(e.getMessage());
-                } finally {
-                    connected = false;
+        if (connected || loggingIn) return;
+        long token = generation.incrementAndGet();
+        loggingIn = true;
+        if (poller != null) { poller.cancel(false); poller = null; }
+        ClientSession previous = session;
+        session = null;
+        if (previous != null) executor.execute(previous::close);
+        currentUsername = username;
+        serverHost = host;
+        serverPort = port;
+        executor.execute(() -> {
+            try {
+                ClientSession opened = new Client().login(host, port, username, password, events(token));
+                synchronized (this) {
+                    if (generation.get() != token) { opened.close(); return; }
+                    session = opened;
+                    connected = true;
                     loggingIn = false;
-                    stopUserListPolling();
-                    notifyConnectionClosed();
+                    dispatch(token, listener -> listener.onLoginSuccess(username));
+                    opened.start();
+                    poller = executor.scheduleWithFixedDelay(() -> {
+                        if (generation.get() != token || !connected) return;
+                        try { refresh(opened, token); }
+                        catch (IOException e) { dispatch(token, l -> l.onSystemNotification(e.getMessage(), true)); }
+                    }, 0, 3, TimeUnit.SECONDS);
                 }
-            });
-
-        } catch (IOException e) {
-            loggingIn = false;
-            notifyLoginFailed("Failed to initialize communication stream: " + e.getMessage());
-        }
+            } catch (IOException | RuntimeException e) {
+                if (generation.get() == token) {
+                    loggingIn = false;
+                    connected = false;
+                    dispatch(token, listener -> listener.onLoginFailed(e.getMessage()));
+                }
+            }
+        });
     }
 
-    public void requestUserList() {
-        if (commandWriter != null && connected) {
-            commandWriter.println("/users");
-        }
+    private void submit(SessionTask task) {
+        long token = generation.get();
+        ClientSession current = session;
+        executor.execute(() -> {
+            if (current == null || current != session || generation.get() != token) return;
+            commandToken = token;
+            try { task.run(current); }
+            catch (IOException | RuntimeException e) {
+                dispatch(token, l -> l.onSystemNotification(e.getMessage(), true));
+            }
+        });
     }
 
-    public void selectPeer(String peerUsername) {
-        if (peerUsername == null || peerUsername.isBlank() || peerUsername.equals(currentUsername)) {
-            return;
-        }
-        this.selectedPeer = peerUsername;
-        if (commandWriter != null && connected) {
-            commandWriter.println("/lookup " + peerUsername);
-        }
+    public void requestUserList() { submit(s -> refreshUsers(s, commandToken)); }
+    public void requestCommunityList() { submit(s -> refreshCommunities(s, commandToken)); }
+
+    private void refresh(ClientSession current, long token) throws IOException {
+        refreshUsers(current, token);
+        refreshCommunities(current, token);
     }
 
-    public void sendChatMessage(String targetPeer, String text) {
-        if (commandWriter == null || !connected) {
-            notifySystem("Not connected to server", true);
-            return;
-        }
-        if (text == null || text.isBlank()) {
-            return;
-        }
+    private void refreshUsers(ClientSession current, long token) throws IOException {
+        List<String> users = new ArrayList<>();
+        for (JsonElement entry : current.users()) users.add(entry.getAsString());
+        List<String> snapshot = List.copyOf(users);
+        JavaFxUtils.runOnFxThread(() -> {
+            if (generation.get() != token || snapshot.equals(onlineUsers)) return;
+            onlineUsers = snapshot;
+            listeners.forEach(l -> l.onUserListUpdated(snapshot));
+        });
+    }
 
-        if (!targetPeer.equals(selectedPeer)) {
-            this.selectedPeer = targetPeer;
-            commandWriter.println("/lookup " + targetPeer);
+    private void refreshCommunities(ClientSession current, long token) throws IOException {
+        List<JsonObject> data = new ArrayList<>();
+        for (JsonElement entry : current.communities().list()) data.add(Json.asObject(entry));
+        JavaFxUtils.runOnFxThread(() -> {
+            if (generation.get() != token) return;
+            List<CommunityModel> snapshot = new ArrayList<>();
             try {
-                Thread.sleep(100);
-            } catch (InterruptedException ignored) {}
-        }
-
-        commandWriter.println(text);
+                for (JsonObject entry : data) snapshot.add(new CommunityModel(Json.string(entry, "communityId"),
+                        Json.string(entry, "name"), Json.string(entry, "owner"),
+                        Json.integer(entry, "memberCount"), Json.bool(entry, "isMember")));
+            } catch (IOException e) {
+                listeners.forEach(l -> l.onSystemNotification(e.getMessage(), true));
+                return;
+            }
+            if (snapshot.equals(communities)) return;
+            communities = List.copyOf(snapshot);
+            listeners.forEach(l -> l.onCommunityListUpdated(communities));
+        });
     }
 
-    public void sendFile(String targetPeer, File file) {
-        if (commandWriter == null || !connected) {
-            notifySystem("Not connected to server", true);
-            return;
-        }
-        if (file == null || !file.exists()) {
-            notifySystem("File does not exist", true);
-            return;
-        }
+    private void selected(CommunityClient.Selection selection) {
+        if (generation.get() != commandToken) return;
+        activeCommunityId = selection.id();
+        activeCommunityName = selection.name();
+        dispatch(commandToken, l -> l.onCommunityJoined(selection.id(), selection.name()));
+        requestCommunityList();
+    }
 
-        if (!targetPeer.equals(selectedPeer)) {
-            this.selectedPeer = targetPeer;
-            commandWriter.println("/lookup " + targetPeer);
+    public void createCommunity(String name) { submit(s -> selected(s.communities().create(name.trim()))); }
+    public void joinCommunity(String id) { submit(s -> selected(s.communities().join(id))); }
+    public void selectCommunity(String id) { submit(s -> selected(s.communities().select(id))); }
+    public void leaveCommunity() { leaveCommunity(activeCommunityId); }
+    public void leaveCommunity(String id) {
+        submit(s -> {
+            s.communities().leave(id);
+            if (generation.get() != commandToken) return;
+            if (id.equals(activeCommunityId)) { activeCommunityId = null; activeCommunityName = null; }
+            dispatch(commandToken, l -> l.onCommunityLeft(id));
+            requestCommunityList();
+        });
+    }
+
+    public void selectPeer(String peer) {
+        submit(s -> {
+            try { s.ensurePeer(peer); dispatch(commandToken, l -> l.onPeerConnected(peer)); }
+            catch (IOException e) { dispatch(commandToken, l -> l.onPeerConnectionFailed(peer, e.getMessage())); }
+        });
+    }
+    public void sendChatMessage(String peer, String text) { submit(s -> s.sendMessage(peer, text)); }
+    public void sendFile(String peer, File file) { submit(s -> { s.ensurePeer(peer); s.sendFile(peer, file); }); }
+    public void broadcastMessage(String text) { submit(s -> s.broadcastMessage(text)); }
+    public void broadcastFile(File file) { submit(s -> s.broadcastFile(file)); }
+    public void acceptFileOffer(String id) { decideFile(id, true); }
+    public void rejectFileOffer(String id) { decideFile(id, false); }
+    private void decideFile(String id, boolean accept) {
+        submit(s -> {
             try {
-                Thread.sleep(100);
-            } catch (InterruptedException ignored) {}
-        }
-
-        commandWriter.println("/sendfile " + targetPeer + " " + file.getAbsolutePath());
+                if (accept) s.accept(id); else s.reject(id);
+            } catch (IOException | RuntimeException e) {
+                events(commandToken).onFileState(id, "FAILED", e.getMessage());
+            }
+        });
     }
 
-    public void acceptFileOffer(String offerNumber) {
-        if (commandWriter != null && connected) {
-            commandWriter.println("/accept " + offerNumber);
-        }
-    }
-
-    public void rejectFileOffer(String offerNumber) {
-        if (commandWriter != null && connected) {
-            commandWriter.println("/reject " + offerNumber);
-        }
+    private ClientEvents events(long token) {
+        return new ClientEvents() {
+            public void onMessage(String peer, String content) { dispatch(token, l -> l.onMessageReceived(peer, content)); }
+            public void onBroadcast(String id, String sender, String content) {
+                dispatch(token, l -> l.onBroadcastMessageReceived(id, sender, content));
+            }
+            public void onPeerConnected(String peer) { dispatch(token, l -> l.onPeerConnected(peer)); }
+            public void onPeerDisconnected(String peer) { dispatch(token, l -> l.onPeerDisconnected(peer)); }
+            public void onServerClosed() {
+                if (generation.get() != token) return;
+                connected = false;
+                dispatch(token, ClientEventListener::onConnectionClosed);
+            }
+            public void onFileOffer(String id, FileTransferMeta meta, String communityId, boolean incoming) {
+                JavaFxUtils.runOnFxThread(() -> {
+                    if (generation.get() != token) return;
+                    FileOfferModel model = new FileOfferModel(id, meta.sender(), meta.receiver(), meta.fileName(),
+                            meta.fileSize(), meta.checksum(), incoming);
+                    model.setBroadcast(communityId != null);
+                    if (communityId != null) model.setCommunityId(communityId);
+                    fileOffers.put(id, model);
+                    listeners.forEach(l -> l.onFileOfferReceived(model));
+                });
+            }
+            public void onFileState(String id, String state, String detail) {
+                JavaFxUtils.runOnFxThread(() -> {
+                    if (generation.get() != token) return;
+                    FileOfferModel model = fileOffers.get(id);
+                    if (model == null) {
+                        if (state.equals("FAILED")) listeners.forEach(l -> l.onSystemNotification(detail, true));
+                        return;
+                    }
+                    model.setStatus(FileOfferModel.Status.valueOf(state));
+                    if (state.equals("COMPLETED")) {
+                        model.setLocalPath(detail);
+                        model.setProgress(1);
+                    } else if (detail != null) model.setStatusText(detail);
+                });
+            }
+        };
     }
 
     public synchronized void logout() {
-        if (commandWriter != null && connected) {
-            commandWriter.println("/logout");
-        }
+        generation.incrementAndGet();
         connected = false;
         loggingIn = false;
-        stopUserListPolling();
-    }
-
-    public void disconnect() {
-        logout();
-        if (commandWriter != null) {
-            try {
-                commandPipeOut.close();
-            } catch (IOException ignored) {}
-        }
-        if (clientThread != null) {
-            clientThread.interrupt();
-        }
-    }
-
-    public String getCurrentUsername() {
-        return currentUsername;
-    }
-
-    public String getSelectedPeer() {
-        return selectedPeer;
-    }
-
-    public boolean isConnected() {
-        return connected;
-    }
-
-    public String getServerHost() {
-        return serverHost;
-    }
-
-    public int getServerPort() {
-        return serverPort;
-    }
-
-    public FileOfferModel getFileOffer(String offerNumber) {
-        return fileOffers.get(offerNumber);
-    }
-
-    private void startUserListPolling() {
-        stopUserListPolling();
-        userListPollExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "UserList-Poller-" + currentUsername);
-            t.setDaemon(true);
-            return t;
-        });
-        userListPollExecutor.scheduleWithFixedDelay(() -> {
-            if (connected) {
-                requestUserList();
-            }
-        }, 1, 3, TimeUnit.SECONDS);
-    }
-
-    private void stopUserListPolling() {
-        if (userListPollExecutor != null && !userListPollExecutor.isShutdown()) {
-            userListPollExecutor.shutdownNow();
-            userListPollExecutor = null;
-        }
-    }
-
-    // --- Stream Output Handling ---
-
-    private synchronized void handleCapturedLine(String line) {
-        if (line == null) return;
-        String trimmed = line.trim();
-        if (trimmed.isEmpty()) return;
-
-        // Login events
-        if (trimmed.contains("Login successful!")) {
-            if (loggingIn) {
-                connected = true;
-                loggingIn = false;
-                startUserListPolling();
-                JavaFxUtils.runOnFxThread(() -> {
-                    for (ClientEventListener l : listeners) {
-                        l.onLoginSuccess(currentUsername);
-                    }
-                });
-                requestUserList();
-            }
-            return;
-        }
-
-        if (trimmed.contains("Login failed:") || trimmed.contains("Invalid or missing AUTH_RESPONSE")
-                || trimmed.contains("Username and password must not be empty")) {
-            if (loggingIn) {
-                connected = false;
-                loggingIn = false;
-                String reason = trimmed;
-                JavaFxUtils.runOnFxThread(() -> {
-                    for (ClientEventListener l : listeners) {
-                        l.onLoginFailed(reason);
-                    }
-                });
-            }
-            return;
-        }
-
-        // Online Users List Parsing
-        if (trimmed.contains("Online users:")) {
-            collectingUserList = true;
-            userListBuffer.clear();
-            scheduleUserListFlush();
-            return;
-        }
-
-        if (collectingUserList) {
-            if (trimmed.startsWith("- ")) {
-                String u = trimmed.substring(2).trim();
-                if (!u.isEmpty()) {
-                    userListBuffer.add(u);
-                }
-                scheduleUserListFlush();
-                return;
-            } else if (trimmed.equals("(none)")) {
-                flushUserList();
-                return;
-            } else {
-                flushUserList();
-            }
-        }
-
-        // Peer Lookup & Connection Events
-        if (trimmed.contains("Now chatting with ")) {
-            int idx = trimmed.indexOf("Now chatting with ");
-            String peer = trimmed.substring(idx + "Now chatting with ".length()).trim();
-            this.selectedPeer = peer;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onPeerConnected(peer);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.contains(" is offline")) {
-            int idx = trimmed.indexOf(" is offline");
-            String peer = trimmed.substring(0, idx).trim();
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onPeerOffline(peer);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.contains("Cannot connect to ")) {
-            String detail = trimmed;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onPeerConnectionFailed(selectedPeer, detail);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.contains("Peer handshake successful with ")) {
-            int idx = trimmed.indexOf("Peer handshake successful with ");
-            String peer = trimmed.substring(idx + "Peer handshake successful with ".length()).trim();
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onPeerConnected(peer);
-                }
-            });
-            return;
-        }
-
-        // File Offer Parsing
-        // [FILE OFFER #1] alice wants to send 'photo.png' (12345 bytes).
-        Pattern offerPattern = Pattern.compile("\\[FILE OFFER #(\\d+)\\]\\s+(\\w+)\\s+wants to send '([^']+)'\\s+\\((\\d+)\\s+bytes\\)\\.");
-        Matcher offerMatcher = offerPattern.matcher(trimmed);
-        if (offerMatcher.find()) {
-            pendingOfferNum = offerMatcher.group(1);
-            pendingOfferSender = offerMatcher.group(2);
-            pendingOfferFile = offerMatcher.group(3);
-            pendingOfferSize = Long.parseLong(offerMatcher.group(4));
-            return;
-        }
-
-        if (trimmed.startsWith("SHA-256: ") && pendingOfferNum != null) {
-            String checksum = trimmed.substring("SHA-256: ".length()).trim();
-            // Ensure this offer is intended for this receiver
-            if (currentUsername != null && !currentUsername.equals(pendingOfferSender)) {
-                FileOfferModel offer = new FileOfferModel(
-                        pendingOfferNum,
-                        pendingOfferSender,
-                        currentUsername,
-                        pendingOfferFile,
-                        pendingOfferSize,
-                        checksum,
-                        true
-                );
-                fileOffers.put(pendingOfferNum, offer);
-
-                JavaFxUtils.runOnFxThread(() -> {
-                    for (ClientEventListener l : listeners) {
-                        l.onFileOfferReceived(offer);
-                    }
-                });
-            }
-            pendingOfferNum = null;
-            return;
-        }
-
-        // Outbound offer sent: "[FILE] Offer sent to bob: 'data.zip'."
-        Pattern outOfferPattern = Pattern.compile("\\[FILE\\]\\s+Offer sent to\\s+(\\w+):\\s+'([^']+)'.*");
-        Matcher outOfferMatcher = outOfferPattern.matcher(trimmed);
-        if (outOfferMatcher.find()) {
-            String receiver = outOfferMatcher.group(1);
-            String fileName = outOfferMatcher.group(2);
-            // Only the sender gets the outbound notification
-            if (currentUsername != null && !currentUsername.equals(receiver)) {
-                FileOfferModel offer = new FileOfferModel(
-                        "out-" + System.currentTimeMillis(),
-                        currentUsername,
-                        receiver,
-                        fileName,
-                        0,
-                        "",
-                        false
-                );
-                JavaFxUtils.runOnFxThread(() -> {
-                    for (ClientEventListener l : listeners) {
-                        l.onFileOfferReceived(offer);
-                    }
-                });
-            }
-            return;
-        }
-
-        // File Decision: Accepted / Rejected
-        Pattern decisionPattern = Pattern.compile("\\[FILE\\]\\s+Transfer\\s+'([^']+)'\\s+was\\s+(ACCEPTED|REJECTED)\\s+by\\s+(\\w+)\\.");
-        Matcher decisionMatcher = decisionPattern.matcher(trimmed);
-        if (decisionMatcher.find()) {
-            String fileName = decisionMatcher.group(1);
-            String action = decisionMatcher.group(2);
-            String peer = decisionMatcher.group(3);
-            String msg = "Transfer '" + fileName + "' was " + action + " by " + peer;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileOfferStateChanged(fileName, msg);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.startsWith("[FILE] Accepted offer #")) {
-            String msg = trimmed;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileOfferStateChanged("", msg);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.startsWith("[FILE] Rejected offer #")) {
-            String msg = trimmed;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileOfferStateChanged("", msg);
-                }
-            });
-            return;
-        }
-
-        // File Transfer Completion
-        // [P2P SENT] test.txt completed! SHA-256: ...
-        if (trimmed.startsWith("[P2P SENT] ")) {
-            String rest = trimmed.substring("[P2P SENT] ".length());
-            String fileName = rest.contains(" completed!") ? rest.substring(0, rest.indexOf(" completed!")) : rest;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileTransferCompleted(fileName, rest, true);
-                }
-            });
-            return;
-        }
-
-        // [P2P RECEIVED] Saved to: /path/to/downloads/file
-        if (trimmed.startsWith("[P2P RECEIVED] Saved to: ")) {
-            String path = trimmed.substring("[P2P RECEIVED] Saved to: ".length()).trim();
-            File f = new File(path);
-            String fileName = f.getName();
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileTransferCompleted(fileName, path, false);
-                }
-            });
-            return;
-        }
-
-        if (trimmed.startsWith("[P2P SEND ERROR] ") || trimmed.startsWith("[P2P RECEIVE ERROR] ") || trimmed.startsWith("[FILE OFFER ERROR] ")) {
-            String err = trimmed;
-            JavaFxUtils.runOnFxThread(() -> {
-                for (ClientEventListener l : listeners) {
-                    l.onFileTransferError(err);
-                }
-            });
-            return;
-        }
-
-        // Incoming Chat Message: "<peerUsername>: <message>"
-        if (!trimmed.startsWith("Commands:") && !trimmed.startsWith("Finding server:")
-                && !trimmed.startsWith("Handshake successful") && !trimmed.startsWith("Server found:")
-                && !trimmed.startsWith("Type '/accept") && !trimmed.contains("error:")
-                && !trimmed.startsWith("Usage:") && !trimmed.startsWith("PASS:")
-                && !trimmed.startsWith("FAIL:") && !trimmed.startsWith("===")
-                && !trimmed.startsWith("Username:") && !trimmed.startsWith("Password:")
-                && !trimmed.startsWith("[FILE") && !trimmed.startsWith("[P2P")
-                && !trimmed.startsWith("Online users:") && !trimmed.startsWith("Peer ")
-                && !trimmed.startsWith("Now chatting with") && !trimmed.startsWith("Cannot ")) {
-
-            int colonIdx = trimmed.indexOf(": ");
-            if (colonIdx > 0) {
-                String senderCandidate = trimmed.substring(0, colonIdx).trim();
-                String content = trimmed.substring(colonIdx + 2);
-                if (senderCandidate.matches("^[a-zA-Z0-9_-]+$") && !senderCandidate.equals("SHA-256")
-                        && !senderCandidate.equalsIgnoreCase(currentUsername)) {
-                    JavaFxUtils.runOnFxThread(() -> {
-                        for (ClientEventListener l : listeners) {
-                            l.onMessageReceived(senderCandidate, content);
-                        }
-                    });
-                    return;
-                }
-            }
-        }
-    }
-
-    private synchronized void flushUserList() {
-        collectingUserList = false;
-        flushScheduled.set(false);
-        List<String> list = new ArrayList<>(userListBuffer);
-        userListBuffer.clear();
-        lastKnownOnlineUsers.clear();
-        lastKnownOnlineUsers.addAll(list);
-        JavaFxUtils.runOnFxThread(() -> {
-            for (ClientEventListener l : listeners) {
-                l.onUserListUpdated(list);
-            }
-        });
-    }
-
-    private void notifyLoginFailed(String reason) {
-        JavaFxUtils.runOnFxThread(() -> {
-            for (ClientEventListener l : listeners) {
-                l.onLoginFailed(reason);
-            }
-        });
-    }
-
-    private void notifyConnectionClosed() {
-        JavaFxUtils.runOnFxThread(() -> {
-            for (ClientEventListener l : listeners) {
-                l.onConnectionClosed();
-            }
-        });
-    }
-
-    private void notifySystem(String message, boolean isError) {
-        JavaFxUtils.runOnFxThread(() -> {
-            for (ClientEventListener l : listeners) {
-                l.onSystemNotification(message, isError);
-            }
-        });
-    }
-
-    // --- Helper LineSplittingOutputStream ---
-    private static class LineSplittingOutputStream extends OutputStream {
-        private final PrintStream target;
-        private final Consumer<String> lineConsumer;
-        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-
-        public LineSplittingOutputStream(PrintStream target, Consumer<String> lineConsumer) {
-            this.target = target;
-            this.lineConsumer = lineConsumer;
-        }
-
-        @Override
-        public void write(int b) throws IOException {
-            String lineToEmit = null;
-            synchronized (this) {
-                target.write(b);
-                if (b == '\n') {
-                    target.flush();
-                    byte[] bytes = buffer.toByteArray();
-                    buffer.reset();
-                    lineToEmit = new String(bytes, StandardCharsets.UTF_8);
-                } else if (b != '\r') {
-                    buffer.write(b);
-                }
-            }
-            if (lineToEmit != null) {
-                lineConsumer.accept(lineToEmit);
-            }
-        }
-
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            List<String> linesToEmit = null;
-            synchronized (this) {
-                target.write(b, off, len);
-                boolean hasNewline = false;
-                for (int i = off; i < off + len; i++) {
-                    byte val = b[i];
-                    if (val == '\n') {
-                        hasNewline = true;
-                        byte[] bytes = buffer.toByteArray();
-                        buffer.reset();
-                        if (linesToEmit == null) linesToEmit = new ArrayList<>();
-                        linesToEmit.add(new String(bytes, StandardCharsets.UTF_8));
-                    } else if (val != '\r') {
-                        buffer.write(val);
-                    }
-                }
-                if (hasNewline) {
-                    target.flush();
-                }
-            }
-            if (linesToEmit != null) {
-                for (String line : linesToEmit) {
-                    lineConsumer.accept(line);
-                }
-            }
-        }
-
-        @Override
-        public void flush() throws IOException {
-            synchronized (this) {
-                target.flush();
-            }
-        }
+        if (poller != null) { poller.cancel(false); poller = null; }
+        ClientSession closing = session;
+        session = null;
+        activeCommunityId = null;
+        activeCommunityName = null;
+        onlineUsers = List.of();
+        communities = List.of();
+        fileOffers.clear();
+        if (closing != null) executor.execute(closing::close);
     }
 }

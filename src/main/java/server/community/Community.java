@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class Community {
     private final String communityId;
     private final String name;
-    private final String ownerUsername;
+    private volatile String ownerUsername;
     private final Instant createdAt;
     private final Set<String> members = ConcurrentHashMap.newKeySet();
 
@@ -24,6 +24,7 @@ public class Community {
     public String communityId() { return communityId; }
     public String name() { return name; }
     public String ownerUsername() { return ownerUsername; }
+    public void setOwnerUsername(String ownerUsername) { this.ownerUsername = ownerUsername; }
     public Instant createdAt() { return createdAt; }
 
     public Set<String> members() {

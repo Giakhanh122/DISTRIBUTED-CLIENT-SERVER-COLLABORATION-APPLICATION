@@ -49,6 +49,28 @@ public class Client {
         }
     }
 
+    public ClientSession login(String host, int port, String username, String password, ClientEvents events)
+            throws IOException {
+        Socket socket = new Socket();
+        ClientSession session = null;
+        try {
+            socket.connect(new java.net.InetSocketAddress(host, port), 10000);
+            socket.setSoTimeout(10000);
+            PacketChannel channel = new PacketChannel(socket);
+            if (!handshake(channel)) throw new IOException("Server handshake failed");
+            session = new ClientSession(username, host, port, channel, events);
+            if (!authenticate(channel, new ClientConsole.Credentials(username, password), session.peerPort())) {
+                throw new IOException("Login failed");
+            }
+            socket.setSoTimeout(0);
+            return session;
+        } catch (IOException | RuntimeException e) {
+            if (session != null) session.close();
+            try { socket.close(); } catch (IOException closeError) { e.addSuppressed(closeError); }
+            throw e;
+        }
+    }
+
     public ServerInfo discover() throws IOException {
         return new ServerDiscovery().discover();
     }
