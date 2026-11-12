@@ -1,40 +1,27 @@
-# DISTRIBUTED-CLIENT-SERVER-COLLABORATION-APPLICATION
+# DL-Chat - Distributed Collaboration Messenger
 
-Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP socket.
+Ứng dụng chat và chia sẻ tệp phân tán Client-Server & Peer-to-Peer (P2P). Giao diện tối giản tông màu Vàng Hổ Phách & Đen (`#F59E0B` & `#09090B`).
 
-## Hiện trạng
+---
 
-- Handshake HELLO/HELLO_ACK, chat nhóm qua server và logout bằng packet nhị phân.
-- Server xử lý nhiều client bằng virtual thread; yêu cầu Java 21 trở lên.
-- Client nhận tin bằng virtual thread trong khi người dùng nhập tin.
-- Đăng nhập, peer chat, truyền file và UDP mới có khai báo opcode.
+## 🚀 Khởi chạy nhanh
 
-## Chạy chương trình
+### Cách 1: Chạy từ mã nguồn
+- **Server**:
+  ```powershell
+  .\app.ps1 -Mode server
+  ```
+- **Client UI**:
+  - Windows: Nhấp đúp **`run_ui.bat`** (hoặc chạy `.\app.ps1`).
+  - Linux / macOS: Chạy `./app.sh`.
 
-Yêu cầu JDK 21 trở lên. Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
+---
 
-```bash
-./run.sh
-```
+### Cách 2: Chạy trực tiếp file EXE
+- Đường dẫn: **`dist\DLChat\DLChat.exe`**
+- Nhấp đúp file **`DLChat.exe`** để mở ngay mà không cần cài đặt môi trường Java.
 
-Chọn `s` ở terminal thứ nhất để chạy server. Mở terminal khác, chạy lại script và
-chọn `c` để chạy client. Khi không truyền địa chỉ, client dùng UDP discovery để tìm server.
+---
 
-Để chỉ định server và bỏ qua discovery:
-
-```bash
-./run.sh localhost
-./run.sh 192.168.1.10
-```
-
-Thay IP ví dụ bằng IP thật của máy server. Sau khi chọn `c`, đăng nhập bằng tài khoản
-trong `AuthService`. Dùng `/users` để xem danh sách online, `/lookup bob` để tìm và
-kết nối peer Bob, `/logout` để thoát. Dùng Ctrl+C tại terminal server để dừng.
-
-Script biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
-tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
-
-## Tài liệu
-
-Xem [Giao thức và kiến trúc hiện tại](docs/protocol.md) để biết định dạng packet nhị phân,
-bảng opcode, sơ đồ trạng thái và các phần chưa triển khai.
+### Cách 3: Build lại EXE
+- Chạy **`build-exe.bat`** (hoặc `.\build-exe.ps1`). Bản build mới sẽ được tạo trong `dist\DLChat\`.

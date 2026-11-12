@@ -7,20 +7,29 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-
-import javax.xml.crypto.Data;
+import java.nio.file.Path;
 
 import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
+import protocols.PacketValidator;
 import server.auth.AuthService;
+import server.broadcast.BroadcastFileRegistry;
+import server.community.CommunityRegistry;
+import server.community.CommunityService;
 import server.connection.ClientHandler;
-import server.session.SessionRegistry;
+import server.session.ChatSessionRegistry;
+import server.session.UserSessionRegistry;
+import server.storage.FileStorageService;
 
 public class Server {
-    private final SessionRegistry sessions = new SessionRegistry();
+    private final UserSessionRegistry userSessions = new UserSessionRegistry();
+    private final ChatSessionRegistry chatSessions = new ChatSessionRegistry();
     private final AuthService authService = new AuthService();
+    private final CommunityRegistry communityRegistry = new CommunityRegistry();
+    private final CommunityService communityService = new CommunityService(communityRegistry, userSessions);
+    private final BroadcastFileRegistry broadcastFileRegistry = new BroadcastFileRegistry();
+    private final FileStorageService fileStorageService = new FileStorageService(Path.of("server_storage"));
 
     private static final int PORT = 8080;
     private static final int DISCOVERY_PORT = 41234;
@@ -35,7 +44,8 @@ public class Server {
             System.out.println("Server started on port " + portNumber);
             while (true) {
                 Socket socket = listener.accept();
-                ClientHandler handler = new ClientHandler(socket, sessions, authService);
+                ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions,
+                        authService, communityService, broadcastFileRegistry, fileStorageService);
                 Thread.startVirtualThread(handler);
             }
         } catch (IOException e) {
@@ -45,7 +55,7 @@ public class Server {
 
     private void listenDiscovery(DatagramSocket socket, int tcpPort) {
         byte[] buffer = new byte[4096];
-        byte[] portData = Integer.toString(tcpPort).getBytes(StandardCharsets.UTF_8);
+        String portData = Integer.toString(tcpPort);
 
         while (!socket.isClosed()) {
             DatagramPacket incoming = new DatagramPacket(buffer, buffer.length);
@@ -68,10 +78,8 @@ public class Server {
                 );
 
                 request = PacketCodec.read(input);
-                if (request == null
-                    || input.available() != 0
-                    || request.op() != OpCode.DISCOVER_REQUEST
-                    || request.requestId() <= 0) {
+                PacketValidator.validateRequest(request, OpCode.DISCOVER_REQUEST, 0, PacketCodec.MAX_PAYLOAD_LENGTH);
+                if (input.available() != 0) {
                     continue;
                 }
             } catch (IOException e) {
@@ -79,7 +87,7 @@ public class Server {
             }
 
             try {
-                Packet response = new Packet(OpCode.DISCOVER_RESPONSE, request.requestId(), portData);
+                Packet response = Packet.text(OpCode.DISCOVER_RESPONSE, request.requestId(), portData);
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 PacketCodec.write(output, response);
                 byte[] bytes = output.toByteArray();

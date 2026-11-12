@@ -1,0 +1,12 @@
+
+\section{Tổng quan hệ thống}
+
+Hệ thống được xây dựng dựa lấy ý tưởng từ hai nền tảng giao tiếp và cộng tác phổ biến là Slack và Discord. Đây là những nền tảng cho phép nhiều người dùng kết nối, trao đổi thông tin và làm việc cùng nhau trong thời gian thực thông qua các không gian giao tiếp được tổ chức một cách có hệ thống.
+
+Slack tập trung vào nhu cầu cộng tác trong môi trường làm việc, cung cấp các chức năng như không gian làm việc (Workspace), kênh giao tiếp (Channel), nhắn tin trực tiếp và chia sẻ tập tin. Trong khi đó, Discord hướng đến việc xây dựng cộng đồng trực tuyến thông qua các máy chủ (Server), kênh giao tiếp, quản lý thành viên và khả năng trao đổi thông tin theo thời gian thực.
+
+Dựa trên những đặc điểm đó, hệ thống hướng đến việc kết hợp các mô hình giao tiếp tiêu biểu của cả hai nền tảng để xây dựng một ứng dụng cộng tác có khả năng hỗ trợ nhiều người dùng đồng thời. Người dùng có thể tạo và tham gia các cộng đồng, tổ chức hoạt động trao đổi thông tin theo từng kênh, gửi tin nhắn nhóm, nhắn tin trực tiếp và chia sẻ tập tin.
+
+Về mặt kiến trúc mạng, hệ thống sử dụng mô hình kết hợp giữa Client--Server và Peer-to-Peer (P2P). Trong đó, mô hình Client--Server chịu trách nhiệm xử lý các chức năng tập trung như xác thực người dùng, quản lý cộng đồng, quản lý kênh và phân phối tin nhắn trong các cuộc hội thoại nhóm. Đối với giao tiếp trực tiếp giữa hai người dùng, hệ thống sử dụng mô hình P2P để thiết lập kết nối và trao đổi dữ liệu trực tiếp giữa các máy khách.
+
+Mục tiêu của hệ thống không phải là xây dựng một bản sao hoàn chỉnh của Slack hay Discord, mà là vận dụng những ý tưởng cốt lõi của hai nền tảng này vào một ứng dụng cộng tác phục vụ mục đích học tập và thực hành các kiến thức về mạng máy tính. Thông qua quá trình triển khai, hệ thống tập trung thể hiện các kỹ thuật lập trình socket TCP, giao tiếp Client--Server, thiết lập kết nối P2P, xử lý đa luồng và truyền tập tin giữa các máy khách.

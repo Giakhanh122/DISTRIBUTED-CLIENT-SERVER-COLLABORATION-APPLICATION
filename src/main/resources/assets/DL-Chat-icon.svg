@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="105" fill="#0B0C10"/>
+<path d="M256 106 C157 106 87 176 87 263 C87 354 158 420 256 420 C287 420 317 412 342 398 L396 414 Q414 420 408 400 L385 351 C407 326 425 295 425 263 C425 176 354 106 256 106Z" fill="#FFB900"/>
+<text x="256" y="285" font-family="DejaVu Sans,Arial,sans-serif" font-size="103" font-weight="bold" fill="#0B0C10" text-anchor="middle">DL</text>
+</svg>
