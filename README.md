@@ -66,7 +66,7 @@ Số thứ tự tăng dần trong mỗi phiên đăng nhập và không dùng l�
 UUID vẫn được dùng trong giao thức để nhận diện lần truyền giữa hai máy.
 
 File được lưu vào `downloads/<username>/` trong thư mục làm việc của receiver. File trùng tên
-được thêm hậu tố `(1)`, `(2)`, …; giới hạn mỗi file là 100 MiB. Bob có thể gửi
+được thêm hậu tố `(1)`, `(2)`, …; giới hạn mỗi file là 500 MiB. Bob có thể gửi
 ngược lại Alice trên cùng kết nối chat, không cần lookup lại. Có thể chat và dùng
 `/users` trong lúc truyền (các lệnh quản lý vẫn cần server).
 Hai peer cần kết nối trực tiếp được tới cổng TCP của nhau, chẳng hạn cùng LAN.
@@ -77,6 +77,15 @@ không đóng chat/file P2P đã thiết lập.
 Script lấy Gson từ Maven cache hoặc tải vào `.deps/` (có thể đặt `GSON_JAR` để dùng jar có sẵn), rồi biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
 tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
 `out/`, `target/`, file `.class` và `downloads/` được Git bỏ qua.
+
+Các script mở app dùng `-DskipTests` để không chạy bộ kiểm thử trước mỗi lần mở.
+Các kết quả kiểm thử trước khi dọn được ghi trong báo cáo sửa lỗi.
+
+| Lệnh | Chế độ |
+| --- | --- |
+| `./run.sh` hoặc `./app.sh cli` | Chạy `Main`, chọn server/client trong terminal |
+| `./app.sh server` | Chạy server trực tiếp |
+| `./app.sh` hoặc `./app.sh ui` hoặc `./run_ui.sh` | Mở JavaFX |
 
 ## Khởi động giao diện UI
 
@@ -113,11 +122,15 @@ Client/server phải chạy cùng phiên bản mới. Xem docs/protocol.md để
 broadcast ở worker, theo dõi socket và hủy khi phiên đóng. File P2P dùng
 `FileTransferController`; cả hai loại offer dùng chung bộ cấp số trong mỗi phiên.
 
-## Kiểm thử và UI
+## Kiểm tra build
 
-Đợt thay đổi protocol này chỉ cập nhật phần protocol và CLI. Bộ test hiện có còn
-tham chiếu schema/API cũ và cần chuyển đổi trước khi chạy; việc này cùng công việc
-UI được để sau. Chưa chạy kiểm thử runtime cho schema sequence mới.
+```bash
+mvn -DskipTests package
+```
+
+Bộ test tạm và dữ liệu sinh ra trong đợt sửa lỗi đã được dọn theo yêu cầu.
+Hiện repository không giữ bộ test tự động; `mvn test` không chạy lại các bài test cũ.
+Kết quả kiểm thử trước khi dọn được lưu trong [báo cáo sửa lỗi](docs/BAO_CAO_SUA_LOI.md).
 
 ## Tài liệu
 

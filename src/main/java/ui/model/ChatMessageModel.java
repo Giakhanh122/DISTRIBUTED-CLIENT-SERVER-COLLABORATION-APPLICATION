@@ -1,6 +1,8 @@
 package ui.model;
 
 import java.time.LocalTime;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import java.time.format.DateTimeFormatter;
 
 public class ChatMessageModel {
@@ -11,6 +13,11 @@ public class ChatMessageModel {
         FILE_OFFER,
         SYSTEM
     }
+
+    private final StringProperty sendStatus = new SimpleStringProperty("");
+    public StringProperty sendStatusProperty() { return sendStatus; }
+    public void sending() { sendStatus.set("Sending..."); }
+    public void sent(String error) { sendStatus.set(error == null ? "Sent (unconfirmed)" : "Failed: " + error); }
 
     private final Type type;
     private final String sender;

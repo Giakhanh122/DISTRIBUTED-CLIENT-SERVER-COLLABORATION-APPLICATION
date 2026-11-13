@@ -40,6 +40,11 @@ public final class ChatClientAdapter {
         thread.setDaemon(true);
         return thread;
     });
+    private final ScheduledExecutorService polling = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "UI-Client-Polling");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicLong generation = new AtomicLong();
     private volatile ClientSession session;
     private volatile boolean connected;
@@ -55,6 +60,11 @@ public final class ChatClientAdapter {
 
     public void addListener(ClientEventListener listener) { if (!listeners.contains(listener)) listeners.add(listener); }
     public void removeListener(ClientEventListener listener) { listeners.remove(listener); }
+    public boolean isServerConnected() { return connected; }
+    public boolean isPeerConnected(String peer) {
+        ClientSession current = session;
+        return current != null && current.isPeerConnected(peer);
+    }
     public String getCurrentUsername() { return currentUsername; }
     public List<String> getLastKnownOnlineUsers() { return onlineUsers; }
     public List<CommunityModel> getLastKnownCommunities() { return communities; }
@@ -81,7 +91,7 @@ public final class ChatClientAdapter {
         if (poller != null) { poller.cancel(false); poller = null; }
         ClientSession previous = session;
         session = null;
-        if (previous != null) executor.execute(previous::close);
+        if (previous != null) Thread.startVirtualThread(previous::close);
         currentUsername = username;
         executor.execute(() -> {
             try {
@@ -93,17 +103,21 @@ public final class ChatClientAdapter {
                     loggingIn = false;
                     dispatch(token, listener -> listener.onLoginSuccess(username));
                     opened.start();
-                    poller = executor.scheduleWithFixedDelay(() -> {
+                    poller = polling.scheduleWithFixedDelay(() -> {
                         if (generation.get() != token || !connected) return;
                         try { refresh(opened, token); }
-                        catch (IOException e) { dispatch(token, l -> l.onSystemNotification(e.getMessage(), true)); }
+                        catch (IOException | RuntimeException e) {
+                            if (opened.isServerConnected()) dispatch(token, l -> l.onSystemNotification(e.getMessage(), true));
+                        }
                     }, 0, 3, TimeUnit.SECONDS);
                 }
             } catch (IOException | RuntimeException e) {
-                if (generation.get() == token) {
-                    loggingIn = false;
-                    connected = false;
-                    dispatch(token, listener -> listener.onLoginFailed(e.getMessage()));
+                synchronized (this) {
+                    if (generation.get() == token) {
+                        loggingIn = false;
+                        connected = false;
+                        dispatch(token, listener -> listener.onLoginFailed(e.getMessage()));
+                    }
                 }
             }
         });
@@ -135,7 +149,7 @@ public final class ChatClientAdapter {
         for (JsonElement entry : current.users()) users.add(entry.getAsString());
         List<String> snapshot = List.copyOf(users);
         JavaFxUtils.runOnFxThread(() -> {
-            if (generation.get() != token || snapshot.equals(onlineUsers)) return;
+            if (generation.get() != token || !connected || snapshot.equals(onlineUsers)) return;
             onlineUsers = snapshot;
             listeners.forEach(l -> l.onUserListUpdated(snapshot));
         });
@@ -145,7 +159,7 @@ public final class ChatClientAdapter {
         List<JsonObject> data = new ArrayList<>();
         for (JsonElement entry : current.communities().list()) data.add(Json.asObject(entry));
         JavaFxUtils.runOnFxThread(() -> {
-            if (generation.get() != token) return;
+            if (generation.get() != token || !connected) return;
             List<CommunityModel> snapshot = new ArrayList<>();
             try {
                 for (JsonObject entry : data) snapshot.add(new CommunityModel(Json.string(entry, "communityId"),
@@ -194,6 +208,27 @@ public final class ChatClientAdapter {
         });
     }
     public void sendChatMessage(String peer, String text) { submit(s -> s.sendMessage(peer, text)); }
+    public void sendChatMessage(String peer, String text, Consumer<String> result) {
+        submitMessage(s -> s.sendMessage(peer, text), result);
+    }
+    public void broadcastMessage(String id, String text, Consumer<String> result) {
+        submitMessage(s -> s.broadcastMessage(id, text), result);
+    }
+    private void submitMessage(SessionTask task, Consumer<String> result) {
+        long token = generation.get();
+        ClientSession current = session;
+        executor.execute(() -> {
+            String failure = null;
+            try {
+                if (current == null || current != session || generation.get() != token) throw new IOException("Session closed");
+                task.run(current);
+            } catch (IOException | RuntimeException e) {
+                failure = java.util.Objects.requireNonNullElse(e.getMessage(), "Send failed");
+            }
+            String error = failure;
+            JavaFxUtils.runOnFxThread(() -> { if (generation.get() == token) result.accept(error); });
+        });
+    }
     public void sendFile(String peer, File file) { submit(s -> { s.ensurePeer(peer); s.sendFile(peer, file); }); }
     public void broadcastMessage(String communityId, String text) { submit(s -> s.broadcastMessage(communityId, text)); }
     public void broadcastFile(String communityId, String communityName, File file) {
@@ -221,8 +256,11 @@ public final class ChatClientAdapter {
             public void onPeerConnected(String peer) { dispatch(token, l -> l.onPeerConnected(peer)); }
             public void onPeerDisconnected(String peer) { dispatch(token, l -> l.onPeerDisconnected(peer)); }
             public void onServerClosed() {
-                if (generation.get() != token) return;
-                connected = false;
+                synchronized (ChatClientAdapter.this) {
+                    if (generation.get() != token) return;
+                    connected = false;
+                    if (poller != null) { poller.cancel(false); poller = null; }
+                }
                 dispatch(token, ClientEventListener::onConnectionClosed);
             }
             public void onFileOffer(String id, FileTransferMeta meta, String communityId, boolean incoming) {
@@ -244,6 +282,9 @@ public final class ChatClientAdapter {
                         if (state == FileState.FAILED) listeners.forEach(l -> l.onSystemNotification(detail, true));
                         return;
                     }
+                    if (model.getStatus() == FileOfferModel.Status.COMPLETED
+                            || model.getStatus() == FileOfferModel.Status.FAILED
+                            || model.getStatus() == FileOfferModel.Status.REJECTED) return;
                     model.setStatus(switch (state) {
                         case TRANSFERRING -> FileOfferModel.Status.TRANSFERRING;
                         case REJECTED -> FileOfferModel.Status.REJECTED;
@@ -269,6 +310,6 @@ public final class ChatClientAdapter {
         onlineUsers = List.of();
         communities = List.of();
         fileOffers.clear();
-        if (closing != null) executor.execute(closing::close);
+        if (closing != null) Thread.startVirtualThread(closing::close);
     }
 }

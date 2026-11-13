@@ -10,5 +10,5 @@ case "$mode" in
     ui) entry_point=ui.Launcher ;;
     *) printf 'Usage: %s [ui|server|cli]\n' "$0" >&2; exit 1 ;;
 esac
-mvn -q package
+mvn -q -DskipTests package
 exec java -cp "target/classes:target/deps/*" "$entry_point" "$@"

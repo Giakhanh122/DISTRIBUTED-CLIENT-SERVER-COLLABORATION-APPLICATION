@@ -108,7 +108,9 @@ protocolVersion hiện là 1. Version không khớp trả status UNSUPPORTED_PRO
 Port từ 1 tới 65535; UUID là chuỗi canonical. Nội dung chat tối đa 64 KiB theo
 byte UTF-8; body đăng nhập tối đa 4096 byte. Danh sách user được sắp xếp.
 AUTH_RESPONSE có status OK, INVALID_AUTH_REQUEST, INVALID_CREDENTIALS hoặc
-ALREADY_LOGGED_IN. Lookup trả OK, USER_OFFLINE hoặc ALREADY_CONNECTED.
+ALREADY_LOGGED_IN. Server trả OK kèm địa chỉ khi target online, USER_OFFLINE khi offline.
+CONNECTED trong metadata không chặn lookup vì có thể cập nhật trễ sau mất P2P.
+Client vẫn hiểu ALREADY_CONNECTED từ server cũ; kết nối cục bộ sống được tái sử dụng.
 
 ### 3.2. Community và chat broadcast
 
@@ -148,7 +150,7 @@ INVALID_NAME hoặc NAME_TOO_LONG. Chat broadcast không có response riêng.
 | FILE_END | 0x43 | transferId:string, checksum:string |
 | FILE_RESULT | 0x44 | replyTo:integer, status:string OK/FAIL; FAIL có reason:string |
 
-fileSize là số byte file gốc, từ 0 tới 100 MiB. checksum là SHA-256 hex thường
+fileSize là số byte file gốc, từ 0 tới 500 MiB. checksum là SHA-256 hex thường
 64 ký tự. Mã FILE_CHUNK 0x42 được giữ chỗ, không còn dùng để truyền dữ liệu.
 
 ### 3.4. File broadcast qua server
@@ -284,12 +286,19 @@ trả FILE_RESULT FAIL theo quy tắc replyTo ở mục 2.2.
 P2P có connect timeout 10 giây, read timeout 30 giây; accepted offer chưa có
 socket hết hạn sau 30 giây. Socket dữ liệu broadcast có read timeout 60 giây.
 File nhận trùng tên được thêm hậu tố; file tạm được dọn khi thất bại.
+Công bố file và hủy dùng cùng khóa trạng thái. Khi file đã lưu hợp lệ nhưng ACK
+không gửi được, receiver vẫn tải thành công; sender chỉ thành công khi nhận ACK.
+Mỗi lần ghi packet/chunk có deadline 30 giây, bao gồm thời gian chờ khóa ghi;
+hết hạn đóng socket để giải phóng writer. Không giới hạn tổng thời gian truyền file.
 
 ### 5.4. Phiên và discovery
 
 UserSessionRegistry lưu user online, ChatSessionRegistry lưu metadata phiên P2P.
 Hai báo cáo CONNECTED cùng UUID được gộp; báo muộn không mở lại phiên đã đóng.
-Logout báo DISCONNECTED và đóng peer/transfer. Mất server chuyển metadata thành
+Báo CONNECTED/DISCONNECTED được xếp hàng FIFO riêng để không chặn peer reader.
+Logout đóng peer/transfer và handshake đang chờ, thử báo DISCONNECTED và gửi
+LOGOUT_REQUEST trong ngân sách 500 ms; sau đó đóng TCP quản lý dù server im lặng.
+Server dọn user trên EOF nếu logout không nhận được xác nhận. Mất server chuyển metadata thành
 UNKNOWN nhưng không tự đóng các kết nối P2P đã thiết lập. Registry chỉ lưu RAM.
 
 Discovery dùng một thông điệp `[len][JSON]` trên mỗi datagram UDP. Request và
@@ -312,5 +321,8 @@ Không tương thích phiên bản headerLength/header JSON/body cũ; cần cậ
 khởi động lại cả server lẫn client. File đã lưu không cần chuyển đổi.
 
 PRESENCE_UPDATE, CHAT_RECEIPT, TYPING, HEARTBEAT/ACK và ERROR vẫn là các opcode
-dự kiến. FILE_CHUNK không còn được dùng. UI và bộ test cũ chưa được chuyển đổi
-trong đợt này; chưa chạy kiểm thử runtime cho schema envelope/replyTo mới.
+dự kiến. FILE_CHUNK không còn được dùng. Framing, request/response, TCP và GUI
+đã được kiểm thử trong đợt sửa lỗi; bộ test tạm đã dọn theo yêu cầu. Xem báo cáo
+sửa lỗi để biết kết quả và giới hạn kiểm chứng. Chưa có receipt
+cho chat, nên GUI hiển thị Sent (unconfirmed) sau khi ghi ra socket, không suy ra
+người nhận đã đọc hoặc nhận được. Không tự retry tin/file để tránh tạo bản trùng.

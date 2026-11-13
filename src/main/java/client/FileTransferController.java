@@ -87,7 +87,7 @@ public final class FileTransferController implements AutoCloseable {
             Thread.startVirtualThread(() -> runP2PSend(file, session, peer));
         } else {
             session.reject();
-            events.onFileState(transferId, ClientEvents.FileState.REJECTED, "Rejected by " + session.meta().receiver());
+            reportResult(session, ClientEvents.FileState.REJECTED, "Rejected by " + session.meta().receiver());
             finishTransfer(session);
             System.out.println("\n[FILE] Transfer '" + session.meta().fileName()
                     + "' was REJECTED by " + session.meta().receiver() + ".");
@@ -104,11 +104,11 @@ public final class FileTransferController implements AutoCloseable {
             FileSender sender = new FileSender(file, session.transferId(), channel, session, null);
             String checksum = sender.send();
             sender.awaitResult();
-            events.onFileState(session.transferId(), ClientEvents.FileState.COMPLETED, file.getAbsolutePath());
+            reportResult(session, ClientEvents.FileState.COMPLETED, file.getAbsolutePath());
             System.out.println("\n[P2P SENT] " + file.getName() + " completed! SHA-256: " + checksum);
         } catch (IOException | RuntimeException e) {
             session.fail();
-            events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
+            reportResult(session, ClientEvents.FileState.FAILED, e.getMessage());
             System.err.println("\n[P2P SEND ERROR] " + e.getMessage());
         } finally {
             finishTransfer(session);
@@ -144,7 +144,7 @@ public final class FileTransferController implements AutoCloseable {
             } catch (IOException | RuntimeException e) {
                 if (session != null) {
                     session.fail();
-                    events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
+                    reportResult(session, ClientEvents.FileState.FAILED, e.getMessage());
                     finishTransfer(session);
                 }
                 if (session == null) events.onFileState("", ClientEvents.FileState.FAILED, e.getMessage());
@@ -174,17 +174,18 @@ public final class FileTransferController implements AutoCloseable {
                     Json.object("transferId", transferId, "decision", decision));
             if (decision.equals("ACCEPT")) session.accept();
             else session.reject();
-            events.onFileState(transferId, decision.equals("REJECT") ? ClientEvents.FileState.REJECTED : ClientEvents.FileState.TRANSFERRING, decision);
+            if (decision.equals("ACCEPT")) events.onFileState(transferId, ClientEvents.FileState.TRANSFERRING, decision);
         }
         try {
             peer.sendPacket(response);
         } catch (IOException | RuntimeException e) {
             session.fail();
-            events.onFileState(transferId, ClientEvents.FileState.FAILED, e.getMessage());
+            reportResult(session, ClientEvents.FileState.FAILED, e.getMessage());
             finishTransfer(session);
             throw e;
         }
         if (decision.equals("REJECT")) {
+            reportResult(session, ClientEvents.FileState.REJECTED, "Rejected");
             finishTransfer(session);
             System.out.println("[FILE] Rejected offer #" + offerNumber + ".");
         } else {
@@ -192,7 +193,7 @@ public final class FileTransferController implements AutoCloseable {
                 synchronized (FileTransferController.this) {
                     if (session.state() == FileTransferSession.State.ACCEPTED) {
                         session.fail();
-                        events.onFileState(transferId, ClientEvents.FileState.FAILED, "Accepted offer expired");
+                        reportResult(session, ClientEvents.FileState.FAILED, "Accepted offer expired");
                         finishTransfer(session);
                         System.err.println("[FILE] Accepted offer expired: #" + offerNumber);
                     }
@@ -215,12 +216,12 @@ public final class FileTransferController implements AutoCloseable {
             claimed = true;
             File saved = new FileReceiver(channel,
                     downloadDir, session.meta(), session, null).receive();
-            events.onFileState(session.transferId(), ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
+            reportResult(session, ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
             System.out.println("\n[P2P RECEIVED] Saved to: " + saved.getAbsolutePath());
         } catch (IOException | RuntimeException e) {
             if (claimed) {
                 session.fail();
-                events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, e.getMessage());
+                reportResult(session, ClientEvents.FileState.FAILED, e.getMessage());
             } else {
                 try {
                     channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));
@@ -277,6 +278,10 @@ public final class FileTransferController implements AutoCloseable {
         }
     }
 
+    private void reportResult(FileTransferSession session, ClientEvents.FileState state, String detail) {
+        if (session.markResultReported()) events.onFileState(session.transferId(), state, detail);
+    }
+
     private synchronized void finishTransfer(FileTransferSession session) {
         if (transferManager.removeSession(session)) {
             incomingOfferIds.values().removeIf(session.transferId()::equals);
@@ -289,8 +294,9 @@ public final class FileTransferController implements AutoCloseable {
     public synchronized void closeForPeer(PeerConnection peer) {
         for (FileTransferSession session : transferManager.getActiveSessions()) {
             if (peer == null || transferPeers.get(session.transferId()) == peer) {
+                if (session.state() == FileTransferSession.State.COMPLETED) continue;
                 session.cancel();
-                events.onFileState(session.transferId(), ClientEvents.FileState.FAILED, "Peer connection closed");
+                reportResult(session, ClientEvents.FileState.FAILED, "Peer connection closed");
                 Closeable connection = transferConnections.get(session.transferId());
                 if (connection != null) {
                     try {

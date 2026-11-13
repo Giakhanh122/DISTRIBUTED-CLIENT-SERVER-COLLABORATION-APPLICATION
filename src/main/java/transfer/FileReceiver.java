@@ -69,11 +69,23 @@ public class FileReceiver {
                         });
             }
 
-            Path target = publishFile(tempFile, directory, safeName);
+            Path target;
+            if (session == null) target = publishFile(tempFile, directory, safeName);
+            else {
+                synchronized (session) {
+                    if (session.state() != FileTransferSession.State.TRANSFERRING) {
+                        throw new IOException("Transfer canceled before publishing");
+                    }
+                    target = publishFile(tempFile, directory, safeName);
+                    session.complete();
+                }
+            }
             tempFile = null;
-            channel.send(Packet.status(OpCode.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
-            if (session != null) {
-                session.complete();
+            try {
+                channel.send(Packet.status(OpCode.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
+            } catch (IOException e) {
+                // Local save is committed. Sender still needs this ACK to confirm delivery.
+                System.err.println("File saved; confirmation failed: " + e.getMessage());
             }
             return target.toFile();
         } catch (IOException | RuntimeException e) {

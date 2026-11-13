@@ -334,7 +334,7 @@ public class ChatController implements ClientEventListener {
         messageScrollPane.setVisible(true);
         messageScrollPane.setManaged(true);
 
-        inputContainer.setDisable(!comm.isJoined());
+        inputContainer.setDisable(!comm.isJoined() || !adapter.isServerConnected());
         messageInput.setPromptText(comm.isJoined() ? "Broadcast to #" + comm.getName() + "..." : "Join community to participate...");
 
         loadConversation("comm-" + comm.getId());
@@ -372,7 +372,7 @@ public class ChatController implements ClientEventListener {
     }
 
     private void updateJoinLeaveButton(boolean isJoined) {
-        joinLeaveCommunityBtn.setDisable(false);
+        joinLeaveCommunityBtn.setDisable(!adapter.isServerConnected());
         if (isJoined) {
             joinLeaveCommunityBtn.setText("Leave");
             joinLeaveCommunityBtn.getStyleClass().clear();
@@ -417,21 +417,16 @@ public class ChatController implements ClientEventListener {
                 || (currentMode != Mode.DIRECT && activeCommunity == null)) return;
         messageInput.clear();
 
-        if (currentMode != Mode.DIRECT && activeCommunity != null) {
-            adapter.broadcastMessage(activeCommunity.getId(), text);
-            ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
-            String convKey = "comm-" + activeCommunity.getId();
-            conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
-            messageView.render(msg);
-            scrollToBottom();
-        } else if (currentMode == Mode.DIRECT && activePeer != null) {
-            adapter.sendChatMessage(activePeer.getUsername(), text);
-            ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
-            String convKey = "peer-" + activePeer.getUsername();
-            conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
-            messageView.render(msg);
-            scrollToBottom();
-        }
+        boolean direct = currentMode == Mode.DIRECT;
+        String target = direct ? activePeer.getUsername() : activeCommunity.getId();
+        ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
+        msg.sending();
+        String convKey = (direct ? "peer-" : "comm-") + target;
+        conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
+        messageView.render(msg);
+        if (direct) adapter.sendChatMessage(target, text, msg::sent);
+        else adapter.broadcastMessage(target, text, msg::sent);
+        scrollToBottom();
     }
 
     @FXML
@@ -446,7 +441,7 @@ public class ChatController implements ClientEventListener {
         File file = chooser.showOpenDialog(stage);
 
         if (file != null) {
-            if (file.length() > 500L * 1024 * 1024) {
+            if (file.length() > protocols.FileTransferMeta.MAX_FILE_SIZE) {
                 JavaFxUtils.showErrorAlert("File Too Large", "Maximum supported file size is 500 MiB.");
                 return;
             }
@@ -530,7 +525,7 @@ public class ChatController implements ClientEventListener {
         if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.getId().equals(communityId)) {
             activeCommunity.setJoined(true);
             updateJoinLeaveButton(true);
-            inputContainer.setDisable(false);
+            inputContainer.setDisable(!adapter.isServerConnected());
         }
         applyFilter(searchField.getText());
     }
@@ -557,11 +552,15 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onBroadcastMessageReceived(String communityId, String sender, String message) {
+        if (communityId == null || communityId.isBlank()) {
+            onSystemNotification("Broadcast missing community ID", true);
+            return;
+        }
         ChatMessageModel msg = new ChatMessageModel(sender, message, sender.equals(adapter.getCurrentUsername()));
-        String convKey = "comm-" + (communityId != null ? communityId : (activeCommunity != null ? activeCommunity.getId() : "default"));
+        String convKey = "comm-" + communityId;
         conversations.computeIfAbsent(convKey, k -> FXCollections.observableArrayList()).add(msg);
 
-        if (currentMode != Mode.DIRECT && activeCommunity != null && (communityId == null || activeCommunity.getId().equals(communityId))) {
+        if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.getId().equals(communityId)) {
             messageView.render(msg);
             scrollToBottom();
         } else {
@@ -593,6 +592,13 @@ public class ChatController implements ClientEventListener {
                 updated.add(existing);
             } else {
                 updated.add(new UserModel(u, true));
+            }
+        }
+        for (UserModel existing : allUsers) {
+            if (adapter.isPeerConnected(existing.getUsername())
+                    && updated.stream().noneMatch(user -> user.getUsername().equals(existing.getUsername()))) {
+                existing.setOnline(true);
+                updated.add(existing);
             }
         }
         allUsers.setAll(updated);
@@ -711,12 +717,14 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onConnectionClosed() {
-        JavaFxUtils.showErrorAlert("Disconnected", "Server connection closed.");
+        connectionStatusLabel.setText("Server offline");
+        joinLeaveCommunityBtn.setDisable(true);
+        if (currentMode != Mode.DIRECT) inputContainer.setDisable(true);
     }
 
     @Override public void onSystemNotification(String message, boolean isError) {
         if (isError) {
-            joinLeaveCommunityBtn.setDisable(false);
+            joinLeaveCommunityBtn.setDisable(!adapter.isServerConnected());
             JavaFxUtils.showErrorAlert("Connection Error", message);
         }
     }

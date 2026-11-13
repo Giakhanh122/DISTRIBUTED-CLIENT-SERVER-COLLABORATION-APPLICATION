@@ -8,6 +8,9 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -28,6 +31,9 @@ public final class ClientSession implements AutoCloseable {
     private final BroadcastFileController broadcasts;
     private final FileTransferController files;
     private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
+    private final Set<Socket> connectingSockets = ConcurrentHashMap.newKeySet();
+    private final ExecutorService reports = Executors.newSingleThreadExecutor(
+            Thread.ofVirtual().name("peer-reports-", 0).factory());
     private final Object peerLock = new Object();
     private final AtomicBoolean closing = new AtomicBoolean();
     private volatile String selectedPeer;
@@ -53,12 +59,20 @@ public final class ClientSession implements AutoCloseable {
 
     String username() { return username; }
     int peerPort() { return listener.getPort(); }
+    public boolean isServerConnected() { return started && server.isOpen() && !closing.get(); }
+    public boolean isPeerConnected(String target) {
+        PeerConnection peer = peers.get(target);
+        return !closing.get() && peer != null && !peer.isClosed();
+    }
     public CommunityClient communities() { return communities; }
 
     public void start() {
-        started = true;
-        server.start();
-        Thread.startVirtualThread(listener);
+        synchronized (peerLock) {
+            if (closing.get() || started) throw new IllegalStateException("Session already started or closed");
+            started = true;
+            server.start();
+            Thread.startVirtualThread(listener);
+        }
     }
 
     public JsonArray users() throws IOException {
@@ -115,6 +129,10 @@ public final class ClientSession implements AutoCloseable {
     void connectPeer(String target, InetSocketAddress address) throws IOException {
         Socket socket = new Socket();
         try {
+            synchronized (peerLock) {
+                if (closing.get()) throw new IOException("Session closed");
+                connectingSockets.add(socket);
+            }
             socket.connect(address, 10000);
             PeerConnection connection = new PeerConnection(new PacketChannel(socket));
             connection.initiateHandshake(username, peerPort());
@@ -128,7 +146,7 @@ public final class ClientSession implements AutoCloseable {
                 e.addSuppressed(closeError);
             }
             throw e;
-        }
+        } finally { connectingSockets.remove(socket); }
     }
 
     boolean sendMessage(String message) throws IOException {
@@ -140,13 +158,9 @@ public final class ClientSession implements AutoCloseable {
                 return false;
             }
         }
-        try {
-            peer.sendMessage(message);
-            return true;
-        } catch (IOException e) {
-            closePeer(peer);
-            throw e;
-        }
+        // PacketChannel closes on I/O failure; local validation must leave a healthy peer open.
+        peer.sendMessage(message);
+        return true;
     }
 
     public void sendFile(String target, File file) {
@@ -222,8 +236,8 @@ public final class ClientSession implements AutoCloseable {
 
     private boolean registerPeer(String name, PeerConnection connection) {
         PeerConnection previous = null;
-        // Publishing and the CONNECTED report are ordered against DISCONNECTED on
-        // this peer only. The registry lock is never held while waiting for I/O.
+        // Enqueue CONNECTED while publishing the peer, before its reader can enqueue
+        // DISCONNECTED. The report worker performs network I/O outside peerLock.
         synchronized (connection) {
             boolean rejected;
             synchronized (peerLock) {
@@ -236,6 +250,7 @@ public final class ClientSession implements AutoCloseable {
                     if (!rejected) {
                         boolean firstPeer = peers.isEmpty();
                         previous = peers.put(name, connection);
+                        queueChatReport(name, connection, "CONNECTED");
                         if (selectedPeer == null && firstPeer) selectedPeer = name;
                     }
                 }
@@ -244,11 +259,10 @@ public final class ClientSession implements AutoCloseable {
                 closePeer(connection);
                 return false;
             }
-            reportChatSession(name, connection, "CONNECTED");
         }
         if (previous != null) {
             closePeer(previous);
-            reportChatSession(name, previous, "DISCONNECTED");
+            queueChatReport(name, previous, "DISCONNECTED");
         }
         events.onPeerConnected(name);
         Thread.startVirtualThread(() -> readPeer(name, connection));
@@ -268,15 +282,21 @@ public final class ClientSession implements AutoCloseable {
         } catch (IOException e) {
             if (!closing.get()) System.err.println("Peer " + name + ": " + e.getMessage());
         } finally {
+            closePeer(connection);
             files.closeForPeer(connection);
-            reportChatSession(name, connection, "DISCONNECTED");
+            queueChatReport(name, connection, "DISCONNECTED");
             synchronized (peerLock) {
                 if (peers.remove(name, connection)) {
                     if (name.equals(selectedPeer)) selectedPeer = null;
                     events.onPeerDisconnected(name);
                 }
             }
-            closePeer(connection);
+        }
+    }
+
+    private void queueChatReport(String name, PeerConnection connection, String state) {
+        synchronized (peerLock) {
+            if (!closing.get()) reports.execute(() -> reportChatSession(name, connection, state));
         }
     }
 
@@ -305,33 +325,51 @@ public final class ClientSession implements AutoCloseable {
 
     @Override
     public void close() {
-        if (!closing.compareAndSet(false, true)) return;
-        try { listener.close(); } catch (IOException e) {
-            System.err.println("Peer listener error: " + e.getMessage());
-        }
-        broadcasts.close();
-        files.close();
         Map<String, PeerConnection> closingPeers;
+        Set<Socket> pendingSockets;
         synchronized (peerLock) {
+            if (!closing.compareAndSet(false, true)) return;
             closingPeers = Map.copyOf(peers);
+            pendingSockets = Set.copyOf(connectingSockets);
             peers.clear();
             selectedPeer = null;
         }
-        for (var peer : closingPeers.entrySet()) {
-            closePeer(peer.getValue());
-            reportChatSession(peer.getKey(), peer.getValue(), "DISCONNECTED");
+        try { listener.close(); } catch (IOException e) {
+            System.err.println("Peer listener error: " + e.getMessage());
         }
+        for (Socket socket : pendingSockets) {
+            try { socket.close(); } catch (IOException e) {
+                System.err.println("Cannot close pending peer: " + e.getMessage());
+            }
+        }
+        broadcasts.close();
+        files.close();
+        closingPeers.values().forEach(this::closePeer);
+        // Keep intentional logout metadata when the server responds, but never let
+        // management I/O prevent closing local sockets. The FIFO worker preserves report order.
         try {
             if (started && server.isOpen()) {
-                PacketValidator.requireSuccess(server.request(Packet.empty(OpCode.LOGOUT_REQUEST), OpCode.LOGOUT_RESPONSE));
+                var graceful = reports.submit(() -> {
+                    for (var peer : closingPeers.entrySet()) reportChatSession(peer.getKey(), peer.getValue(), "DISCONNECTED");
+                    try {
+                        if (server.isOpen()) PacketValidator.requireSuccess(server.request(
+                                Packet.empty(OpCode.LOGOUT_REQUEST), OpCode.LOGOUT_RESPONSE));
+                    } catch (IOException e) {
+                        System.err.println("Logout: " + e.getMessage());
+                    }
+                });
+                graceful.get(500, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
-        } catch (IOException e) {
-            System.err.println("Logout: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+            System.err.println("Graceful logout incomplete: " + e.getClass().getSimpleName());
         } finally {
             try { server.close(); } catch (IOException e) {
                 System.err.println("Cannot close server connection: " + e.getMessage());
             }
-            broadcasts.awaitWorkers();
+            reports.shutdownNow();
         }
+        broadcasts.awaitWorkers();
     }
 }

@@ -25,6 +25,7 @@ final class ServerConnection implements AutoCloseable {
     private final PacketChannel channel;
     private final EventHandler events;
     private final AtomicBoolean started = new AtomicBoolean();
+    private final Object lifecycleLock = new Object();
     private final Object requestLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Pending pending;
@@ -40,6 +41,7 @@ final class ServerConnection implements AutoCloseable {
     }
 
     void start() {
+        if (closed.get()) throw new IllegalStateException("Connection closed");
         if (!started.compareAndSet(false, true)) throw new IllegalStateException("Reader already started");
         Thread.startVirtualThread(this::readPackets);
     }
@@ -73,10 +75,15 @@ final class ServerConnection implements AutoCloseable {
 
     Packet request(Packet packet, OpCode responseOpcode) throws IOException {
         synchronized (requestLock) {
-            if (closed.get()) throw new IOException("Server connection closed");
+            if (!started.get() || closed.get()) throw new IOException("Server connection is not running");
             CompletableFuture<Packet> response = new CompletableFuture<>();
             try {
-                channel.send(packet, sequence -> pending = new Pending(responseOpcode, sequence, response));
+                channel.send(packet, sequence -> {
+                    synchronized (lifecycleLock) {
+                        if (closed.get()) throw new IllegalStateException("Server connection closed");
+                        pending = new Pending(responseOpcode, sequence, response);
+                    }
+                });
                 return response.get(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -84,7 +91,7 @@ final class ServerConnection implements AutoCloseable {
             } catch (TimeoutException e) {
                 // Close on timeout so a late reply cannot satisfy a later request.
                 throw abort("Timed out waiting for " + responseOpcode, e);
-            } catch (ExecutionException | IOException e) {
+            } catch (ExecutionException | IOException | IllegalStateException e) {
                 throw abort("Request failed: " + responseOpcode, e);
             } finally {
                 pending = null;
@@ -112,10 +119,12 @@ final class ServerConnection implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        if (closed.compareAndSet(false, true)) {
+        synchronized (lifecycleLock) {
+            if (!closed.compareAndSet(false, true)) return;
             Pending request = pending;
             if (request != null) request.future().completeExceptionally(new IOException("Server connection closed"));
-            try { channel.close(); } finally { onClosed.run(); }
         }
+        // Socket close must not wait for the writer lock: it releases blocked writes.
+        try { channel.close(); } finally { onClosed.run(); }
     }
 }

@@ -58,7 +58,11 @@ public final class ChatMessageView {
             contentLbl.getStyleClass().add("bubble-sent-text");
             messageBubbleBox.setAlignment(Pos.TOP_RIGHT);
             timeLbl.setAlignment(Pos.CENTER_RIGHT);
-            messageBubbleBox.getChildren().addAll(contentLbl, timeLbl);
+            Label status = new Label();
+            status.textProperty().bind(msg.sendStatusProperty());
+            status.getStyleClass().add("bubble-timestamp");
+            status.setWrapText(true);
+            messageBubbleBox.getChildren().addAll(contentLbl, timeLbl, status);
 
             HBox row = new HBox(messageBubbleBox);
             row.setAlignment(Pos.CENTER_RIGHT);
@@ -132,7 +136,8 @@ public final class ChatMessageView {
             rejectButton.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.PENDING));
             acceptButton.visibleProperty().bind(rejectButton.visibleProperty());
             rejectButton.setOnAction(event -> {
-                offer.setStatus(FileOfferModel.Status.REJECTED);
+                offer.setStatus(FileOfferModel.Status.ACCEPTED);
+                offer.setStatusText("Rejecting...");
                 reject.accept(offer.getOfferNumber());
             });
             acceptButton.setOnAction(event -> {

@@ -17,6 +17,7 @@ import protocols.PacketChannel;
 import protocols.PacketValidator;
 import transfer.FileReceiver;
 import transfer.FileSender;
+import transfer.FileTransferSession;
 
 final class BroadcastFileController implements AutoCloseable {
     private static final int CONNECT_TIMEOUT_MS = 10000;
@@ -38,6 +39,7 @@ final class BroadcastFileController implements AutoCloseable {
     private final Map<String, Offer> offers = new HashMap<>();
     private final Map<String, String> offerIds = new HashMap<>();
     private final Set<Socket> sockets = new HashSet<>();
+    private final Map<String, FileTransferSession> sessions = new HashMap<>();
     private final Set<Thread> workers = new HashSet<>();
     private volatile boolean closed;
 
@@ -128,13 +130,15 @@ final class BroadcastFileController implements AutoCloseable {
             PacketChannel channel = new PacketChannel(socket);
             channel.send(Packet.json(OpCode.FILE_BROADCAST_UPLOAD_START,
                     Json.object("fileId", fileId, "uploadToken", response.string("uploadToken"))));
-            FileSender sender = new FileSender(file, fileId, channel);
+            FileTransferSession upload = trackSession(new FileTransferMeta(fileId, username, community.name(),
+                    file.getName(), size, checksum));
+            FileSender sender = new FileSender(file, fileId, channel, upload, null);
             sender.send();
             sender.awaitResult();
         } finally {
             forgetSocket(socket);
+            synchronized (lifecycleLock) { sessions.remove(fileId); }
         }
-        requireOpen();
         events.onFileState(id, ClientEvents.FileState.COMPLETED, file.getAbsolutePath());
         System.out.println("[BROADCAST] File '" + file.getName() + "' uploaded and broadcast to community '"
                 + community.name() + "'. SHA-256: " + checksum);
@@ -151,12 +155,23 @@ final class BroadcastFileController implements AutoCloseable {
                     Json.object("fileId", offer.fileId(), "downloadToken", response.string("downloadToken"))));
             FileTransferMeta meta = new FileTransferMeta(offer.fileId(), offer.sender(), username,
                     offer.fileName(), offer.fileSize(), offer.checksum());
-            File saved = new FileReceiver(channel, downloadDir, meta).receive();
-            requireOpen();
+            FileTransferSession download = trackSession(meta);
+            File saved = new FileReceiver(channel, downloadDir, meta, download, null).receive();
             events.onFileState(offer.fileId(), ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
             System.out.println("[BROADCAST RECEIVED] Saved to: " + saved.getAbsolutePath());
         } finally {
             forgetSocket(socket);
+            synchronized (lifecycleLock) { sessions.remove(offer.fileId()); }
+        }
+    }
+
+    private FileTransferSession trackSession(FileTransferMeta meta) throws IOException {
+        synchronized (lifecycleLock) {
+            requireOpen();
+            FileTransferSession session = new FileTransferSession(meta);
+            session.accept();
+            sessions.put(meta.transferId(), session);
+            return session;
         }
     }
 
@@ -240,6 +255,7 @@ final class BroadcastFileController implements AutoCloseable {
         Set<Socket> closing;
         synchronized (lifecycleLock) {
             closed = true;
+            sessions.values().forEach(FileTransferSession::cancel);
             offers.clear();
             offerIds.clear();
             closing = Set.copyOf(sockets);

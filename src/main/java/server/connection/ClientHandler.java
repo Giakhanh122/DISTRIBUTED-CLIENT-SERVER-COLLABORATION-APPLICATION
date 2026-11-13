@@ -228,9 +228,8 @@ public class ClientHandler implements Runnable {
         JsonObject payload;
         if (target.isEmpty()) {
             payload = Json.object("status", "USER_OFFLINE");
-        } else if (chatSessions.isConnected(session.username(), targetUsername)) {
-            payload = Json.object("status", "ALREADY_CONNECTED");
         } else {
+            // Reports are advisory: stale CONNECTED metadata must not block reconnection.
             UserSession targetUser = target.get();
             payload = Json.object("status", "OK", "ip", targetUser.ip(), "peerPort", targetUser.port());
         }

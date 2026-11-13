@@ -16,6 +16,7 @@ public class FileTransferSession {
 
     private final FileTransferMeta meta;
     private State state;
+    private boolean resultReported;
     private long bytesTransferred;
 
     public FileTransferSession(FileTransferMeta meta) {
@@ -104,6 +105,12 @@ public class FileTransferSession {
             || state == State.FAILED
             || state == State.CANCELED
             || state == State.REJECTED;
+    }
+
+    public synchronized boolean markResultReported() {
+        if (resultReported) return false;
+        resultReported = true;
+        return true;
     }
 
     private void requireState(State expected, String action) {

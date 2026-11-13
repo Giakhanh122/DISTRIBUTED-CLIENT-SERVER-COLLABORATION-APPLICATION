@@ -55,7 +55,10 @@ public final class CommunityClient {
         Selection selection = selected;
         request(Packet.json(OpCode.COMMUNITY_LEAVE_REQUEST, Json.object("communityId", id)),
                 OpCode.COMMUNITY_LEAVE_RESPONSE);
-        if (selection != null && selection.id().equals(id)) selected = null;
+        synchronized (this) {
+            // Another caller may have selected a different community while leave waited for its reply.
+            if (selected != null && selected.id().equals(id)) selected = null;
+        }
         return selection;
     }
 
@@ -71,7 +74,7 @@ public final class CommunityClient {
         return Json.object(response.jsonBody(), "community");
     }
 
-    private Selection selectFrom(Packet response) throws IOException {
+    private synchronized Selection selectFrom(Packet response) throws IOException {
         Selection selection = new Selection(response.string("communityId"), response.string("name"));
         selected = selection;
         return selection;

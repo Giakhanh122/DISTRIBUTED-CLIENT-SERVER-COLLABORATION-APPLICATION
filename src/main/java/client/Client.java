@@ -32,18 +32,11 @@ public class Client {
     }
 
     public void connectToServer(String host, int port, Scanner scanner) {
-        try (Socket socket = new Socket(host, port)) {
-            socket.setSoTimeout(10000);
-            PacketChannel channel = new PacketChannel(socket);
-            if (!handshake(channel)) return;
-            ClientConsole.Credentials credentials = ClientConsole.readCredentials(scanner);
-            if (credentials == null) return;
-            try (ClientSession session = new ClientSession(credentials.username(), host, port, channel)) {
-                if (!authenticate(channel, credentials.username(), credentials.password(), session.peerPort())) return;
-                socket.setSoTimeout(0);
-                session.start();
-                new ClientConsole(session).run(scanner);
-            }
+        ClientConsole.Credentials credentials = ClientConsole.readCredentials(scanner);
+        if (credentials == null) return;
+        try (ClientSession session = login(host, port, credentials.username(), credentials.password(), ClientEvents.NONE)) {
+            session.start();
+            new ClientConsole(session).run(scanner);
         } catch (IOException e) {
             System.err.println("Client error: " + e.getMessage());
         }
