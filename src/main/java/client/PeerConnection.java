@@ -1,5 +1,7 @@
 package client;
 
+import network.PacketChannel;
+
 import java.io.IOException;
 import java.net.Socket;
 import java.net.InetSocketAddress;
@@ -115,7 +117,6 @@ public class PeerConnection implements AutoCloseable {
                         throw new IOException("Message exceeds chat limit");
                     }
                     onMessage.accept(packet.string("content"));
-                    System.out.println(peerUsername + ": " + packet.string("content"));
                 }
                 case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
                 default -> throw new IOException("Unexpected peer chat packet: " + packet.op());

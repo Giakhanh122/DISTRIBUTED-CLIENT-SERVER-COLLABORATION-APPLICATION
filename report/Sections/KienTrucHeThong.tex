@@ -19,15 +19,19 @@ không qua server, nhằm giảm tải và giảm độ trễ.
           \texttt{ChatSessionRegistry} (phiên P2P), \texttt{CommunityRegistry} (cộng đồng) và \texttt{BroadcastFileRegistry} (file broadcast).
 
     \item \textbf{Client}: Mỗi tiến trình client duy trì một kết nối TCP điều khiển (control socket) đến server
-          và một vòng lặp đọc gói tin (\texttt{receivePackets}) chạy trên virtual thread riêng.
+          và một vòng lặp đọc gói tin (\texttt{ServerConnection}) chạy trên virtual thread riêng.
           Client cũng khởi động \texttt{PeerListener} — một \texttt{ServerSocket} trên cổng ngẫu nhiên — để chấp nhận kết nối P2P đến từ các peer khác.
 
     \item \textbf{PeerListener}: Chạy trên virtual thread, lắng nghe kết nối TCP đến từ peer.
           Phân loại kết nối dựa trên gói tin đầu tiên nhận được:
           nếu là \texttt{PEER\_HELLO} thì đây là phiên chat; nếu là \texttt{FILE\_OFFER} thì đây là luồng truyền file.
 
-    \item \textbf{PeerConnectionRegistry}: Quản lý tập hợp các kết nối P2P đang hoạt động (\texttt{ConcurrentHashMap<String, PeerConnection>}).
-          Theo dõi peer đang chọn (active peer) và ngăn chặn kết nối trùng lặp qua tập \texttt{pendingLookups}.
+    \item \textbf{ClientSession}: Sở hữu trạng thái kết nối, listener và map peer.
+          Khi reconnect, thay \texttt{ServerContext} (control socket và broadcast controller), giữ P2P còn sống.
+          \texttt{ConsoleEvents} và adapter JavaFX nhận sự kiện từ \texttt{ClientEvents}.
+
+    \item \textbf{CommunityRequestHandler / BroadcastService}: Tách xử lý cộng đồng và broadcast
+          khỏi \texttt{ClientHandler}; handler giữ xác thực, dispatch và vòng đời phiên.
 
     \item \textbf{FileStorageService}: Lưu trữ file broadcast phía server trên hệ thống tệp cục bộ.
           Hỗ trợ upload từ client gửi và download cho các client nhận thông qua token xác thực tạm thời.
@@ -52,10 +56,10 @@ Hình~\ref{fig:kientruc} minh họa tổng quan cách các thành phần tương
 ]
 
 %% ---- Client A ----
-\node[box=green] (ca-con) at (-5.5, 3.2) {readConsole\\(main thread)};
-\node[box=green] (ca-rcv) at (-5.5, 1.9) {receivePackets\\(virtual thread)};
+\node[box=green] (ca-con) at (-5.5, 3.2) {ClientConsole\\(main thread)};
+\node[box=green] (ca-rcv) at (-5.5, 1.9) {ServerConnection\\(virtual thread)};
 \node[box=green] (ca-pl)  at (-5.5, 0.7) {PeerListener\\(virtual thread)};
-\node[box=green] (ca-pr)  at (-5.5,-0.5) {PeerConnection\\Registry};
+\node[box=green] (ca-pr)  at (-5.5,-0.5) {ClientSession\\peer map};
 
 \draw[dashed, gray, rounded corners=6pt]
     (-7.3,-1.2) rectangle (-3.7, 3.85);
@@ -74,10 +78,10 @@ Hình~\ref{fig:kientruc} minh họa tổng quan cách các thành phần tương
 \node[font=\bfseries\footnotesize] at (0, 4.05) {Application Server (TCP 8080 / UDP 41234)};
 
 %% ---- Client B ----
-\node[box=orange] (cb-con) at (5.5, 3.2) {readConsole\\(main thread)};
-\node[box=orange] (cb-rcv) at (5.5, 1.9) {receivePackets\\(virtual thread)};
+\node[box=orange] (cb-con) at (5.5, 3.2) {ClientConsole\\(main thread)};
+\node[box=orange] (cb-rcv) at (5.5, 1.9) {ServerConnection\\(virtual thread)};
 \node[box=orange] (cb-pl)  at (5.5, 0.7) {PeerListener\\(virtual thread)};
-\node[box=orange] (cb-pr)  at (5.5,-0.5) {PeerConnection\\Registry};
+\node[box=orange] (cb-pr)  at (5.5,-0.5) {ClientSession\\peer map};
 
 \draw[dashed, gray, rounded corners=6pt]
     (3.7,-1.2) rectangle (7.3, 3.85);
@@ -117,18 +121,12 @@ Hình~\ref{fig:kientruc} minh họa tổng quan cách các thành phần tương
 
 \subsection{Giao thức truyền thông}
 
-Toàn bộ giao tiếp giữa Client và Server sử dụng giao thức frame nhị phân tùy chỉnh với cấu trúc cố định:
-
-\[
-\underbrace{[OP: 1\text{B}]}_{\text{OpCode}} \;
-\underbrace{[ReqID: 4\text{B}]}_{\text{Request ID}} \;
-\underbrace{[Len: 4\text{B}]}_{\text{Payload length}} \;
-\underbrace{[Data: N\text{B}]}_{\text{Payload}}
-\]
-
-Phần header 9 byte được đọc trước, sau đó đọc chính xác $N$ byte payload bằng \texttt{DataInputStream.readFully()}.
-Cơ chế tương quan yêu cầu-phản hồi sử dụng \texttt{ConcurrentHashMap<Integer, CompletableFuture<Packet>>} với timeout 10 giây,
-cho phép nhiều yêu cầu đồng thời trên một kết nối mà không bị nhầm lẫn phản hồi.
+Thông điệp điều khiển có định dạng \texttt{[len:4 byte big-endian][JSON UTF-8]}.
+Envelope JSON gồm \texttt{opcode}, \texttt{sequence}, \texttt{body}.
+Mỗi chiều TCP có bộ đếm sequence riêng. Phản hồi chứa \texttt{status} và
+\texttt{replyTo} trong body để ghép đúng yêu cầu, với timeout request 10 giây.
+\texttt{ServerConnection} tuần tự hóa request quản lý trên một control socket;
+heartbeat và sự kiện chủ động được reader phân loại độc lập.
 
 \subsection{Quản lý luồng thực thi}
 
@@ -138,11 +136,13 @@ Hệ thống sử dụng \textit{virtual threads} (Project Loom, Java 21+) thay 
     \item Mỗi kết nối TCP đến server tạo một virtual thread chạy \texttt{ClientHandler}.
     \item Mỗi \texttt{PeerConnection} có một virtual thread đọc gói tin độc lập.
     \item \texttt{PeerListener} chạy trên một virtual thread riêng; mỗi kết nối mới được phân phối ngay cho virtual thread tiếp theo.
-    \item Trên client, \texttt{receivePackets} và \texttt{PeerListener} đều là virtual thread, song song với luồng chính đọc console.
+    \item Trên client, \texttt{ServerConnection} và \texttt{PeerListener} đều là virtual thread, song song với luồng chính đọc console.
 \end{itemize}
 
-Việc đồng bộ hóa ghi lên socket được thực hiện qua khóa đối tượng (object lock): \texttt{serverWriteLock} phía client,
-\texttt{synchronized(this)} trong \texttt{ClientHandler.sendPacket()}, và \texttt{synchronized(outputStream)} trong vòng lặp broadcast phía server.
+\texttt{network.PacketChannel} đồng bộ hóa toàn bộ frame khi ghi, cấp sequence và
+bảo đảm JSON không xen byte dữ liệu file. \texttt{HeartbeatMonitor} dùng timer chung,
+gửi probe ở virtual thread và đóng socket khi thiếu ACK đúng hạn.
+GUI cập nhật model và lịch sử trên JavaFX Application Thread; tác vụ mạng chạy bên ngoài luồng này.
 
 \subsection{Quản lý cộng đồng}
 

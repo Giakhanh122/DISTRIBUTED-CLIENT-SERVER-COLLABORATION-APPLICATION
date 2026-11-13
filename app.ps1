@@ -5,11 +5,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-mvn -q package
+mvn -q -DskipTests package
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $entryPoint = switch ($Mode) {
     { $_ -in "server", "s" } { "server.Server" }
-    "cli" { "Main" }
+    "cli" { "app.Main" }
     "ui" { "ui.Launcher" }
 }
 java -cp "target\classes;target\deps\*" $entryPoint @AppArgs

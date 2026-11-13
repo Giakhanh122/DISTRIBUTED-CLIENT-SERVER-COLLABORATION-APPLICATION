@@ -1,4 +1,4 @@
-package logic;
+package client;
 
 import java.net.InetSocketAddress;
 

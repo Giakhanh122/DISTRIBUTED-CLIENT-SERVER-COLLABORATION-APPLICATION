@@ -12,7 +12,7 @@ import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Json;
 import protocols.Packet;
-import protocols.PacketChannel;
+import network.PacketChannel;
 import protocols.PacketValidator;
 
 public class FileSender {

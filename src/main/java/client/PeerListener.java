@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import protocols.OpCode;
 import protocols.Packet;
-import protocols.PacketChannel;
+import network.PacketChannel;
 
 public class PeerListener implements Runnable, AutoCloseable {
     private final ServerSocket listener;
@@ -31,8 +31,6 @@ public class PeerListener implements Runnable, AutoCloseable {
 
     @Override 
     public void run() {
-        System.out.println("Peer listener started on port " + getPort());
-
         while (!listener.isClosed()) {
             try {
                 Socket peerSocket = listener.accept();
@@ -61,7 +59,6 @@ public class PeerListener implements Runnable, AutoCloseable {
                 PeerConnection connection = new PeerConnection(channel);
                 String peerUsername = connection.acceptHandshake(first);
                 onConnected.accept(peerUsername, connection);
-                System.out.println("Peer handshake successful with " + peerUsername);
             } else if (first != null && first.op() == OpCode.FILE_OFFER) {
                 try (socket) {
                     onFileConnection.accept(channel, first);

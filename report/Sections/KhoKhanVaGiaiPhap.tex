@@ -13,25 +13,18 @@ phân biệt rõ giữa những vấn đề đã được giải quyết và nh�
 TCP là giao thức hướng luồng (stream-oriented): không có ranh giới gói tin tự nhiên, dữ liệu có thể đến theo từng mảnh nhỏ hoặc bị ghép lại tùy ý.
 Nếu không có cơ chế phân tách gói tin rõ ràng, bên nhận sẽ không thể xác định điểm bắt đầu và kết thúc của mỗi thông điệp.
 
-\textbf{Giải pháp:} Hệ thống sử dụng giao thức frame nhị phân tùy chỉnh với header 9 byte cố định:
-\texttt{[OpCode: 1B][RequestID: 4B][PayloadLen: 4B]}.
-Bên nhận luôn đọc đúng 9 byte header trước, lấy giá trị \texttt{PayloadLen}, rồi gọi \texttt{DataInputStream.readFully(buf, 0, len)}
-để đảm bảo đọc đủ $N$ byte payload, bất kể TCP có phân mảnh như thế nào.
-Cách tiếp cận này được áp dụng nhất quán trong cả \texttt{PacketCodec.decode()} và vòng lặp nhận file (\texttt{FileReceiver}).
+\textbf{Giải pháp:} \texttt{PacketCodec} đọc độ dài 4 byte big-endian rồi đọc đủ
+JSON UTF-8. Luồng file đọc đúng số byte khai báo trước khi quay lại đọc frame
+\texttt{FILE\_END}; việc TCP chia nhỏ hoặc gộp dữ liệu không làm mất ranh giới.
 
 \subsubsection{Đồng bộ hóa ghi lên socket dùng chung}
 
 Nhiều virtual thread có thể cùng lúc muốn ghi lên cùng một \texttt{OutputStream} của một socket.
 Nếu không đồng bộ hóa, các byte từ hai gói tin khác nhau sẽ bị xen kẽ, gây lỗi phân tích giao thức ở phía nhận.
 
-\textbf{Giải pháp:} Ba lớp khóa được áp dụng ở các vị trí khác nhau:
-\begin{itemize}
-    \item Phía client: đối tượng khóa \texttt{serverWriteLock} bảo vệ toàn bộ thao tác ghi lên control socket.
-    \item Phía server: \texttt{ClientHandler.sendPacket()} được đánh dấu \texttt{synchronized(this)},
-          đảm bảo chỉ một luồng ghi vào socket của client tại một thời điểm.
-    \item Vòng lặp broadcast phía server: \texttt{synchronized(u.clientSocket().getOutputStream())}
-          khóa trực tiếp trên output stream của từng client khi ghi gói tin broadcast.
-\end{itemize}
+\textbf{Giải pháp:} Mọi nơi ghi lên một socket đều đi qua cùng \texttt{PacketChannel}.
+Khóa ghi bảo vệ thao tác cấp sequence và ghi trọn frame, bao gồm phản hồi,
+broadcast và heartbeat. Đóng socket không chờ khóa ghi để giải phóng writer đang bị kẹt.
 
 \subsubsection{Phân luồng kết nối đến trên cùng một cổng}
 
@@ -51,10 +44,10 @@ nếu là \texttt{FILE\_OFFER} → chuyển cho \texttt{FileTransferController} 
 Khi hai client cùng thực hiện \texttt{/lookup} nhau gần như đồng thời, có thể xảy ra trường hợp cả hai đều gửi yêu cầu kết nối,
 dẫn đến hai kết nối P2P song song giữa cùng một cặp client.
 
-\textbf{Giải pháp:} Trước khi gửi yêu cầu lookup, client kiểm tra \texttt{peerRegistry.isConnected(username)}.
-Nếu chưa kết nối, tên username được thêm vào \texttt{ConcurrentHashSet pendingLookups};
-nếu đã có trong tập này (đang chờ phản hồi lookup), yêu cầu mới bị bỏ qua.
-Sau khi kết nối hoàn thành hoặc thất bại, username được xóa khỏi \texttt{pendingLookups}.
+\textbf{Giải pháp:} Mỗi kết nối chat mang một UUID. Khi hai handshake giao nhau,
+cả hai phía giữ kết nối có UUID nhỏ hơn; map peer được cập nhật dưới khóa của
+\texttt{ClientSession}. Callback đóng của kết nối cũ chỉ được xóa chính kết nối đó,
+không được xóa socket thay thế. Báo cáo metadata được xếp hàng riêng theo thứ tự.
 
 \subsubsection{Tính toàn vẹn dữ liệu file}
 
@@ -70,15 +63,6 @@ nếu không khớp, file tạm bị xóa và trả về \texttt{FILE\_RESULT(CH
 \subsection{Vấn đề còn tồn tại}
 % =========================================================
 
-\subsubsection{Tiềm ẩn tranh chấp trong broadcast đa luồng}
-
-Phương thức \texttt{handleBroadcastMessage()} phía server truy cập \texttt{u.clientSocket().getOutputStream()} trực tiếp
-bằng \texttt{synchronized(u.clientSocket().getOutputStream())}.
-Tuy nhiên, nếu đồng thời có hai cuộc broadcast khác nhau (ví dụ từ hai cộng đồng khác nhau mà cùng một client là thành viên),
-mỗi broadcast sẽ khóa riêng lẻ trên output stream và vẫn có thể bị xen kẽ với các gói tin từ \texttt{ClientHandler.sendPacket()}
-vì \texttt{sendPacket()} khóa trên \texttt{this} (đối tượng \texttt{ClientHandler}), không phải trên output stream.
-Vấn đề này chưa được giải quyết triệt để và có thể dẫn đến lỗi phân tích giao thức trong điều kiện tải cao.
-
 \subsubsection{Không có cơ chế bền vững (Persistence)}
 
 Toàn bộ trạng thái hệ thống — bao gồm phiên đăng nhập, danh sách cộng đồng, thành viên, và metadata file broadcast —
@@ -87,8 +71,9 @@ Khi server khởi động lại, mọi dữ liệu đều bị mất.
 \texttt{AuthService} hiện tại sử dụng tài khoản hardcode, không có cơ sở dữ liệu hay file cấu hình.
 Đây là giới hạn thiết kế quan trọng cần giải quyết trước khi triển khai trong môi trường thực tế.
 
-\subsubsection{Không có cơ chế heartbeat và phát hiện ngắt kết nối}
+\subsubsection{Giới hạn phục hồi kết nối}
 
-Hiện tại, server chỉ phát hiện client ngắt kết nối khi thao tác đọc/ghi trên socket ném ngoại lệ \texttt{IOException}.
-Không có cơ chế heartbeat (ping/pong) chủ động để phát hiện client bị treo hoặc mất kết nối âm thầm (silent disconnect).
-Điều này có thể dẫn đến trạng thái \textit{zombie session} — client đã ngắt nhưng server vẫn coi là online.
+Heartbeat hai chiều đã phát hiện thiếu ACK trên control socket. Người dùng có thể
+kết nối lại bằng mật khẩu và tải trạng thái mới; P2P còn sống được giữ nguyên.
+App chưa tự nối lại một peer đã chết và chưa resume file theo offset; file bị ngắt
+phải gửi lại. Thử nghiệm localhost chưa thay thế được kiểm thử nhiều máy qua NAT/firewall.

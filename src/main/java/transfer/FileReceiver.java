@@ -12,7 +12,7 @@ import java.util.Objects;
 import protocols.FileTransferMeta;
 import protocols.OpCode;
 import protocols.Packet;
-import protocols.PacketChannel;
+import network.PacketChannel;
 
 public class FileReceiver {
     @FunctionalInterface

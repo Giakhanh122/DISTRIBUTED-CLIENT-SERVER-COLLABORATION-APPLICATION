@@ -103,6 +103,8 @@ Những trường ghi "khi OK" chỉ bắt buộc khi status là OK.
 | PEER_HELLO | 0x20 | P → P | protocolVersion:integer, username:string, peerPort:integer, sessionId:string |
 | PEER_HELLO_ACK | 0x21 | P → P | replyTo:integer, status:string; khi OK có protocolVersion:integer |
 | CHAT_MESSAGE | 0x30 | P → P | content:string |
+| HEARTBEAT | 0x52 | C ↔ S, TCP đã xác thực | `{}` |
+| HEARTBEAT_ACK | 0x53 | C ↔ S, TCP đã xác thực | replyTo:integer, status:`OK` |
 
 protocolVersion hiện là 1. Version không khớp trả status UNSUPPORTED_PROTOCOL_VERSION.
 Port từ 1 tới 65535; UUID là chuỗi canonical. Nội dung chat tối đa 64 KiB theo
@@ -301,11 +303,51 @@ LOGOUT_REQUEST trong ngân sách 500 ms; sau đó đóng TCP quản lý dù serv
 Server dọn user trên EOF nếu logout không nhận được xác nhận. Mất server chuyển metadata thành
 UNKNOWN nhưng không tự đóng các kết nối P2P đã thiết lập. Registry chỉ lưu RAM.
 
+Sau tái xác thực, report CONNECTED có cùng UUID và cặp username có thể gắn lại
+metadata UNKNOWN với các UserSession mới. Report không mở lại bản ghi DISCONNECTED.
+Nếu server restart, report tạo lại metadata cho P2P còn sống khi cả hai user online.
+
 Discovery dùng một thông điệp `[len][JSON]` trên mỗi datagram UDP. Request và
 response đều có sequence 1 vì mỗi datagram được xử lý độc lập; response replyTo 1.
 Datagram thừa byte bị bỏ. Client broadcast tới 255.255.255.255:41234 tối đa 5 lần,
 chờ 3 giây mỗi lần; lấy IP từ datagram và TCP port từ body. Truyền host cho run.sh
 để bỏ qua discovery.
+
+### 5.5. Heartbeat và kết nối lại
+
+Heartbeat bắt đầu sau AUTH OK, độc lập với request quản lý nhưng dùng cùng
+PacketChannel và bộ đếm sequence. Mỗi phía có tối đa một probe chờ ACK; gửi mỗi
+5 giây khi không còn probe pending. Hết 30 giây kể từ lúc chuẩn bị gửi mà chưa có
+ACK đúng replyTo thì đóng socket. Timer kiểm tra mỗi 5 giây nên phát hiện gián đoạn
+im lặng thường trong khoảng 30–35 giây, chưa tính độ trễ lập lịch. Timeout request
+hoặc EOF có thể đóng sớm hơn. Không áp dụng heartbeat cho socket chat/file P2P
+hoặc socket dữ liệu broadcast; các socket này giữ cơ chế lỗi/timeout riêng.
+
+Reader sẵn có trả lời HEARTBEAT và tiêu thụ HEARTBEAT_ACK trước khi ghép response
+quản lý. Không tạo reader thứ hai và không để ACK heartbeat thỏa mãn request khác.
+Timer không thực hiện I/O blocking; mỗi lần ghi probe chạy ở virtual thread,
+và đóng monitor sẽ hủy/gỡ timer. Phát hiện timeout đóng socket để giải phóng reader,
+writer và future pending. Server sau đó xóa UserSession; client dừng polling và
+hủy controller broadcast cũ, giữ PeerListener, peer map và transfer P2P.
+
+```text
+ONLINE → EOF / socket error / heartbeat timeout → SERVER_OFFLINE
+SERVER_OFFLINE → bấm Kết nối lại + mật khẩu → RECONNECTING
+RECONNECTING → HELLO + AUTH → ONLINE (GUI tải users/community trước khi mở chức năng server)
+RECONNECTING → lỗi / mật khẩu sai → SERVER_OFFLINE (cho thử lại)
+mọi trạng thái → logout → CLOSED (không được tái sinh bởi callback cũ)
+```
+
+Kết nối lại tạo TCP quản lý mới tới cùng endpoint, dùng lại username và cổng P2P.
+Không giữ mật khẩu, không tự retry, không replay message/request/offer cũ. Thay
+controller broadcast theo kết nối mới, giữ bộ cấp số offer dùng chung tăng liên tục.
+Callback/response/snapshot của kết nối cũ không được sửa trạng thái của kết nối mới.
+Community selection cũ được xóa; GUI chọn theo danh sách mới và giữ lịch sử theo ID.
+Reconnect đang handshake cũng được theo dõi socket để logout có thể hủy ngay.
+
+Đây không phải phục hồi dữ liệu qua một TCP P2P đã chết. File đang có đường P2P
+sống tiếp tục; file bị ngắt phải gửi lại từ đầu. Không tự dựng lại community hoặc
+phát lại broadcast sau server restart; registry RAM bị mất thì nhận danh sách mới.
 
 ## 6. Triển khai và tương thích
 
@@ -313,14 +355,14 @@ PacketCodec chỉ encode/decode `[len][JSON]`. PacketChannel sở hữu socket, 
 sequence và khóa đọc/ghi; nó cũng cung cấp đọc/ghi raw cho socket file riêng.
 ServerConnection phía client sở hữu reader server và quản lý request/response,
 replyTo. ClientSession giữ tài nguyên từng lần đăng nhập; console, discovery,
-community và file broadcast nằm trong các lớp riêng. Việc refactor này không đổi
-schema, opcode hoặc nội dung packet. FileDataReader
+community và file broadcast nằm trong các lớp riêng. Phiên bản 2 giữ framing/schema
+envelope, bổ sung hành vi bắt buộc cho HEARTBEAT/ACK đã dành opcode sẵn. FileDataReader
 đọc đúng fileSize byte rồi kiểm tra FILE_END, dùng chung cho P2P và broadcast.
 
 Không tương thích phiên bản headerLength/header JSON/body cũ; cần cập nhật và
 khởi động lại cả server lẫn client. File đã lưu không cần chuyển đổi.
 
-PRESENCE_UPDATE, CHAT_RECEIPT, TYPING, HEARTBEAT/ACK và ERROR vẫn là các opcode
+PRESENCE_UPDATE, CHAT_RECEIPT, TYPING và ERROR vẫn là các opcode
 dự kiến. FILE_CHUNK không còn được dùng. Framing, request/response, TCP và GUI
 đã được kiểm thử trong đợt sửa lỗi; bộ test tạm đã dọn theo yêu cầu. Xem báo cáo
 sửa lỗi để biết kết quả và giới hạn kiểm chứng. Chưa có receipt

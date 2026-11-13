@@ -9,7 +9,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import protocols.OpCode;
 import protocols.Packet;
-import protocols.PacketChannel;
+import network.PacketChannel;
+import network.HeartbeatMonitor;
 
 /** Owns the server reader and serializes correlated management requests. */
 final class ServerConnection implements AutoCloseable {
@@ -24,6 +25,7 @@ final class ServerConnection implements AutoCloseable {
     private final Runnable onClosed;
     private final PacketChannel channel;
     private final EventHandler events;
+    private final HeartbeatMonitor heartbeat;
     private final AtomicBoolean started = new AtomicBoolean();
     private final Object lifecycleLock = new Object();
     private final Object requestLock = new Object();
@@ -38,12 +40,14 @@ final class ServerConnection implements AutoCloseable {
         this.onClosed = Objects.requireNonNull(onClosed);
         this.channel = Objects.requireNonNull(channel);
         this.events = Objects.requireNonNull(events);
+        heartbeat = new HeartbeatMonitor(channel, () -> abort("Heartbeat failed", null));
     }
 
     void start() {
         if (closed.get()) throw new IllegalStateException("Connection closed");
         if (!started.compareAndSet(false, true)) throw new IllegalStateException("Reader already started");
         Thread.startVirtualThread(this::readPackets);
+        heartbeat.start();
     }
 
     boolean isOpen() { return !closed.get(); }
@@ -61,6 +65,7 @@ final class ServerConnection implements AutoCloseable {
         try {
             Packet packet;
             while ((packet = channel.read()) != null) {
+                if (heartbeat.handle(packet)) continue;
                 if (packet.op().requiresStatus()) acceptResponse(packet);
                 else events.accept(packet);
             }
@@ -125,6 +130,7 @@ final class ServerConnection implements AutoCloseable {
             if (request != null) request.future().completeExceptionally(new IOException("Server connection closed"));
         }
         // Socket close must not wait for the writer lock: it releases blocked writes.
+        heartbeat.close();
         try { channel.close(); } finally { onClosed.run(); }
     }
 }

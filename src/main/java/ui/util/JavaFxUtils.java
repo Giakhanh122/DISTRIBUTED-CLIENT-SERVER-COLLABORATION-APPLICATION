@@ -136,6 +136,7 @@ public final class JavaFxUtils {
     }
 
     private static void showDialog(Stage stage, Window owner, String title, Node content, Node actions) {
+        stage.setTitle(title);
         Scene scene = new Scene(createDialogRoot(createDialogTitleBar(stage, title), content, actions));
         var css = JavaFxUtils.class.getResource("/css/dl-chat-theme.css");
         if (css != null) scene.getStylesheets().add(css.toExternalForm());
@@ -225,6 +226,15 @@ public final class JavaFxUtils {
     }
 
     public static Optional<String> showInputDialog(Window owner, String title, String promptText, String defaultValue) {
+        return showTextInputDialog(owner, title, promptText, defaultValue, false);
+    }
+
+    public static Optional<String> showPasswordDialog(Window owner, String title, String promptText) {
+        return showTextInputDialog(owner, title, promptText, "", true);
+    }
+
+    private static Optional<String> showTextInputDialog(Window owner, String title, String promptText,
+                                                      String defaultValue, boolean password) {
         final String[] result = new String[1];
         runOnFxThreadAndWait(() -> {
             Stage stage = createCustomDialogStage(owner);
@@ -233,7 +243,8 @@ public final class JavaFxUtils {
             Label promptLbl = new Label(promptText != null ? promptText : "Enter value:");
             promptLbl.setStyle("-fx-text-fill: #18181B; -fx-font-size: 13px; -fx-font-weight: bold;");
 
-            TextField inputField = new TextField(defaultValue != null ? defaultValue : "");
+            TextField inputField = password ? new javafx.scene.control.PasswordField() : new TextField();
+            inputField.setText(defaultValue != null ? defaultValue : "");
             inputField.getStyleClass().add("text-input");
             inputField.setPrefWidth(340);
             content.getChildren().addAll(promptLbl, inputField);

@@ -1,6 +1,6 @@
 package server.session;
 
-import protocols.PacketChannel;
+import network.PacketChannel;
 
 public record UserSession(
         String username,

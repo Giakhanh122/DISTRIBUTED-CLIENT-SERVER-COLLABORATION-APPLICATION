@@ -7,7 +7,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import protocols.OpCode;
 import protocols.Packet;
-import protocols.PacketChannel;
+import network.PacketChannel;
 
 /** Receives exactly fileSize raw bytes, followed by a FILE_END JSON message. */
 public final class FileDataReader {

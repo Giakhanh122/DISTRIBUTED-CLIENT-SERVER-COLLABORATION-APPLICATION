@@ -90,9 +90,11 @@
                 <VBox alignment="CENTER_LEFT" spacing="1.0" HBox.hgrow="ALWAYS">
                     <Label fx:id="currentUsernameLabel" text="Username" style="-fx-font-weight: bold; -fx-text-fill: #18181B; -fx-font-size: 13px;"/>
                     <HBox alignment="CENTER_LEFT" spacing="4.0">
-                        <Circle radius="3.5" styleClass="status-dot-online"/>
-                        <Label fx:id="connectionStatusLabel" text="Online" style="-fx-font-size: 10px; -fx-text-fill: #10B981;"/>
+                        <Circle fx:id="connectionStatusDot" radius="3.5" styleClass="status-dot-online"/>
+                        <Label fx:id="connectionStatusLabel" text="Online" wrapText="true" maxWidth="170.0" style="-fx-font-size: 10px; -fx-text-fill: #10B981;"/>
                     </HBox>
+                    <Button fx:id="reconnectBtn" text="Kết nối lại" onAction="#handleReconnect"
+                            styleClass="btn-secondary" visible="false" managed="false"/>
                 </VBox>
                 <Button fx:id="logoutBtn" onAction="#handleLogout" styleClass="btn-icon"/>
             </HBox>

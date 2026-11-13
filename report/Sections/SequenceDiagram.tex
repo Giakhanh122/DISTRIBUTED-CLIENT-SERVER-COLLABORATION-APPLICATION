@@ -90,19 +90,18 @@ Toàn bộ luồng dữ liệu không đi qua server.
 %% Existing P2P connection: A sends FILE_OFFER
 \draw[msg] (\xA,9.3)--(\xB,9.3) node[midway,above,font=\tiny]{FILE\_OFFER (tên, kích thước, transferId)};
 \node[notelbl] at (\xB+1.6,8.85) {B lưu offer \#N\\(transferId, sender)};
-\draw[msg] (\xB,8.6)--(\xA,8.6) node[midway,above,font=\tiny]{FILE\_OFFER\_ACK};
 
 \node[notelbl] at (\xB+1.6,8.1) {Người dùng gõ \lstinline{/accept N}};
 \draw[msg] (\xB,7.7)--(\xA,7.7) node[midway,above,font=\tiny]{FILE\_DECISION (ACCEPT, transferId)};
 
 %% New TCP connection for data
 \node[notelbl] at (5.0,7.2) {A mở kết nối TCP mới đến peerPort của B};
-\draw[msg] (\xA,6.9)--(\xB,6.9) node[midway,above,font=\tiny]{FILE\_OFFER (requestId=0) — header luồng data};
+\draw[msg] (\xA,6.9)--(\xB,6.9) node[midway,above,font=\tiny]{FILE\_OFFER (transferId) — header luồng data};
 
 %% Chunks
-\draw[msg] (\xA,6.5)--(\xB,6.5) node[midway,above,font=\tiny]{FILE\_CHUNK \#1};
-\draw[msg] (\xA,6.2)--(\xB,6.2) node[midway,above,font=\tiny]{FILE\_CHUNK \#2 \ldots};
-\draw[msg] (\xA,5.9)--(\xB,5.9) node[midway,above,font=\tiny]{FILE\_CHUNK \#N};
+\draw[msg] (\xA,6.5)--(\xB,6.5) node[midway,above,font=\tiny]{Byte nhị phân (buffer đầu)};
+\draw[msg] (\xA,6.2)--(\xB,6.2) node[midway,above,font=\tiny]{Byte nhị phân (buffer tiếp)};
+\draw[msg] (\xA,5.9)--(\xB,5.9) node[midway,above,font=\tiny]{Byte nhị phân (buffer cuối)};
 
 %% End and result
 \draw[msg] (\xA,5.5)--(\xB,5.5) node[midway,above,font=\tiny]{FILE\_END (SHA-256 checksum)};
@@ -154,7 +153,7 @@ Mỗi client nhận tải file xuống qua một kết nối TCP riêng biệt �
 \draw[msg] (\xA,9.8)--(\xS,9.8)
     node[midway,above,font=\tiny]{FILE\_BROADCAST\_UPLOAD\_START (uploadToken)};
 \draw[msg] (\xA,9.5)--(\xS,9.5)
-    node[midway,above,font=\tiny]{FILE\_CHUNK \#1 \ldots \#N};
+    node[midway,above,font=\tiny]{Đúng fileSize byte nhị phân};
 \draw[msg] (\xA,9.2)--(\xS,9.2)
     node[midway,above,font=\tiny]{FILE\_END (SHA-256)};
 \draw[msg] (\xS,8.9)--(\xA,8.9)
@@ -178,7 +177,7 @@ Mỗi client nhận tải file xuống qua một kết nối TCP riêng biệt �
 \draw[msg] (\xB,6.2)--(\xS,6.2)
     node[midway,above,font=\tiny]{FILE\_BROADCAST\_DOWNLOAD\_START (downloadToken)};
 \draw[msg] (\xS,5.9)--(\xB,5.9)
-    node[midway,above,font=\tiny]{FILE\_CHUNK \#1 \ldots \#N (FileSender stream)};
+    node[midway,above,font=\tiny]{Đúng fileSize byte nhị phân (FileSender stream)};
 \draw[msg] (\xS,5.6)--(\xB,5.6)
     node[midway,above,font=\tiny]{FILE\_END (SHA-256)};
 \draw[msg] (\xB,5.3)--(\xS,5.3)

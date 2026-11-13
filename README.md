@@ -16,7 +16,7 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
 
 ## Chạy chương trình
 
-Yêu cầu JDK 21 trở lên và curl (nếu cần tải Gson lần đầu). Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
+Yêu cầu JDK 21 trở lên và Maven. Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
 
 ```bash
 ./run.sh
@@ -74,53 +74,94 @@ Offer được accept chờ socket dữ liệu tối đa 30 giây; socket dữ l
 30 giây. Logout hoặc đóng chat peer dọn các transfer liên quan. Mất kết nối server
 không đóng chat/file P2P đã thiết lập.
 
-Script lấy Gson từ Maven cache hoặc tải vào `.deps/` (có thể đặt `GSON_JAR` để dùng jar có sẵn), rồi biên dịch lại vào `out/` mỗi lần chạy, dừng nếu biên dịch lỗi và chuyển các
-tham số cho `Main`. Script cũng chạy được khi được gọi bằng đường dẫn từ thư mục khác.
-`out/`, `target/`, file `.class` và `downloads/` được Git bỏ qua.
+Script dùng Maven để biên dịch vào `target/classes/` và chép thư viện vào
+`target/deps/`, dừng nếu build lỗi rồi chuyển tham số cho entry point đã chọn.
+Maven cần tải dependency trong lần đầu. Script chạy được khi gọi từ thư mục khác.
+`target/`, file `.class` và `downloads/` được Git bỏ qua.
 
 Các script mở app dùng `-DskipTests` để không chạy bộ kiểm thử trước mỗi lần mở.
-Các kết quả kiểm thử trước khi dọn được ghi trong báo cáo sửa lỗi.
+File kiểm thử tạm và dữ liệu sinh ra được dọn sau khi chạy.
 
 | Lệnh | Chế độ |
 | --- | --- |
-| `./run.sh` hoặc `./app.sh cli` | Chạy `Main`, chọn server/client trong terminal |
+| `./run.sh` hoặc `./app.sh cli` | Chạy `app.Main`, chọn server/client trong terminal |
 | `./app.sh server` | Chạy server trực tiếp |
 | `./app.sh` hoặc `./app.sh ui` hoặc `./run_ui.sh` | Mở JavaFX |
 
 ## Khởi động giao diện UI
 
-1. Chạy server qua lệnh
+Chạy `./app.sh server` ở một terminal, sau đó chạy `./app.sh` ở terminal khác
+để mở JavaFX. Trên Windows dùng `app.ps1 server` và `app.ps1 ui` tương ứng.
 
-```bash
-./run.sh
-```
+## Mất kết nối và kết nối lại
 
-Sau đó chọn tùy chọn "s" (server) 2. Khởi động giao diện đồ họa qua lệnh
+Server và client trao đổi heartbeat trên **TCP quản lý** mỗi 5 giây. Một probe
+không có ACK đúng `replyTo` trong 30 giây sẽ làm đóng kết nối đó; mất mạng âm thầm
+thường được phát hiện trong khoảng 30–35 giây, tùy thời điểm probe và lịch chạy.
+EOF, lỗi socket hoặc timeout request có thể phát hiện sớm hơn. UDP discovery giữ nguyên.
 
-```bash
-./run_ui.sh
-```
+Khi mất server, GUI hiện **Mất kết nối server**, khóa tạo/join/leave community và
+broadcast. Chat/file P2P với peer còn kết nối vẫn dùng được, gồm cả accept offer P2P.
+Offer/transfer broadcast thuộc kết nối server cũ bị hủy, không bị gửi lại tự động.
+
+Trong GUI, bấm **Kết nối lại**, nhập lại mật khẩu. Trong CLI dùng `/reconnect`,
+rồi nhập mật khẩu khi được hỏi. App dùng lại host/port, username và cổng P2P hiện có;
+không lưu mật khẩu để tự retry. Trong lúc nối lại, nút bị khóa để tránh nhiều lần đăng nhập.
+
+Sau đăng nhập thành công, GUI tải lại users/community và đồng bộ metadata P2P còn
+sống lên server; lịch sử chat và socket P2P được giữ. Community đang chọn phải
+được chọn lại ở CLI. Nếu server restart, các community RAM cũ không còn thì GUI
+bỏ lựa chọn cũ, không gửi nhầm sang community khác. Sai mật khẩu hoặc server chưa
+sẵn sàng sẽ giữ trạng thái offline và cho thử lại. Nếu gặp `ALREADY_LOGGED_IN`,
+phiên cũ có thể chưa hết hạn heartbeat hoặc đang được dùng ở nơi khác; không tự chiếm phiên.
+
+Đây là kết nối lại phần quản lý, không phải resume file theo offset: file P2P còn
+sống tiếp tục trên socket cũ; file có socket dữ liệu đã đứt phải gửi lại từ đầu.
 
 ## Protocol hiện tại
 
 Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len đếm toàn bộ
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
-Handshake trao đổi protocolVersion 1. Không có magic bytes hoặc header JSON riêng.
+Handshake trao đổi `protocolVersion = 1`. Server và client cần chạy cùng bản code;
+chưa có thương lượng khả năng để tương thích với bản cũ thiếu heartbeat.
+Không có magic bytes hoặc header JSON riêng.
 
 Socket file riêng gửi đúng fileSize byte nhị phân rồi FILE_END JSON; receiver
 kiểm tra SHA-256 và trả FILE_RESULT. Không đóng gói từng buffer thành FILE_CHUNK.
 Client/server phải chạy cùng phiên bản mới. Xem docs/protocol.md để biết chi tiết.
 
-## Tổ chức client
+## Tổ chức source
 
-`Client` giữ API khởi chạy, handshake và đăng nhập. Mỗi lần đăng nhập tạo một
-`ClientSession` riêng để quản lý peer và dọn tài nguyên khi logout. `ClientConsole`
-đọc lệnh và hiển thị kết quả; `ServerDiscovery` phụ trách tìm server UDP.
-`ServerConnection` sở hữu reader server, ghép response bằng replyTo và xử lý timeout.
-`CommunityClient` giữ community đang chọn; `BroadcastFileController` xử lý file
-broadcast ở worker, theo dõi socket và hủy khi phiên đóng. File P2P dùng
-`FileTransferController`; cả hai loại offer dùng chung bộ cấp số trong mỗi phiên.
+```text
+src/main/java/
+├── app/          Main: entry point terminal
+├── protocols/    Opcode, packet, JSON codec, validation, metadata file
+├── network/      PacketChannel và HeartbeatMonitor: I/O, sequence, liveness
+├── client/       Đăng nhập, vòng đời phiên, P2P, community, điều phối truyền file
+├── server/       connection, auth, session, community, broadcast, storage
+├── transfer/     Registry transfer và đọc/ghi dữ liệu file dùng chung
+└── ui/           adapter, controller, model, view, util; Launcher mở GUI
+```
+
+`Client` cung cấp discovery/handshake/đăng nhập. `ClientSession` sở hữu trạng thái
+`ConnectionState`, peer, listener và vòng đời tài nguyên. `ServerContext` nội bộ
+nhóm control connection và broadcast controller của một lần kết nối server;
+reconnect thay nhóm này và giữ các peer còn sống. `ServerConnection` có một reader,
+ghép response bằng `replyTo`, tách ACK heartbeat khỏi request quản lý.
+
+`ClientEvents` chuyển sự kiện có cấu trúc tới `ConsoleEvents` hoặc adapter GUI.
+`ClientConsole` xử lý lệnh terminal; code mạng không in hướng dẫn CLI.
+`CommunityInfo` và danh sách username là snapshot có kiểu, GUI không giải mã JSON.
+`FileOffer` mang cả ID, số offer ngắn và community ID; hai loại offer dùng chung
+bộ cấp số trong phiên. `FileTransferRegistry` chỉ giữ/tra cứu transfer và offer.
+
+Trên server, `ClientHandler` giữ handshake, auth, dispatch và dọn phiên;
+`CommunityRequestHandler` xử lý request community; `BroadcastService` xử lý
+nhắn nhóm, upload và download. Trên GUI, `ConversationStore` giữ lịch sử theo
+peer/community ID, `ConnectionStatusView` render trạng thái; `ChatController`
+điều phối thao tác màn hình. Adapter giữ token phiên và revision control connection
+để chặn callback cũ; đây là hàng rào bất đồng bộ, không phải trạng thái kết nối thứ hai.
 
 ## Kiểm tra build
 
@@ -128,9 +169,19 @@ broadcast ở worker, theo dõi socket và hủy khi phiên đóng. File P2P dù
 mvn -DskipTests package
 ```
 
-Bộ test tạm và dữ liệu sinh ra trong đợt sửa lỗi đã được dọn theo yêu cầu.
-Hiện repository không giữ bộ test tự động; `mvn test` không chạy lại các bài test cũ.
-Kết quả kiểm thử trước khi dọn được lưu trong [báo cáo sửa lỗi](docs/BAO_CAO_SUA_LOI.md).
+Repository không giữ source test hoặc dependency kiểm thử theo yêu cầu;
+`mvn test` không chạy lại các bài thử tạm đã dọn.
+
+Đợt refactor đã kiểm tra bằng TCP localhost và GUI JavaFX thật: danh sách user và
+community có kiểu, chuyển peer, broadcast vào hai nhóm, file P2P/broadcast 2 MiB
+đúng dữ liệu, file rỗng/trùng tên/từ chối, số offer chung, hủy offer broadcast khi
+mất server, chat/file P2P lúc offline, sai mật khẩu rồi reconnect, server restart,
+logout giữa handshake, 320 request xen heartbeat, thiếu ACK/sai replyTo, tải FXML,
+lịch sử và định tuyến file theo community ID, khóa/mở chức năng server và thử lại login.
+Script cũng được kiểm tra chế độ GUI mặc định, CLI, server, chuyển host và dừng khi build lỗi.
+Dữ liệu và chương trình thử nằm trong thư mục tạm, được dọn sau kiểm thử.
+Chưa kiểm chứng nhiều máy, NAT/firewall, đóng gói Windows hoặc biên dịch PDF LaTeX.
+Các thử nghiệm này không phải benchmark.
 
 ## Tài liệu
 

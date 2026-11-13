@@ -1,4 +1,7 @@
-package protocols;
+package network;
+
+import protocols.Packet;
+import protocols.PacketCodec;
 
 import java.io.IOException;
 import java.io.InputStream;

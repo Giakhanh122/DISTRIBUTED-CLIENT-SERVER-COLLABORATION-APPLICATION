@@ -6,7 +6,7 @@ mode="${1:-ui}"
 if [[ $# -gt 0 ]]; then shift; fi
 case "$mode" in
     server|s) entry_point=server.Server ;;
-    cli) entry_point=Main ;;
+    cli) entry_point=app.Main ;;
     ui) entry_point=ui.Launcher ;;
     *) printf 'Usage: %s [ui|server|cli]\n' "$0" >&2; exit 1 ;;
 esac

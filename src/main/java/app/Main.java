@@ -1,4 +1,6 @@
-import client.Client;
+package app;
+
+import client.ClientConsole;
 import java.util.Scanner;
 import server.Server;
 
@@ -20,10 +22,11 @@ public class Main {
             if (choice.equalsIgnoreCase("s")) {
                 new Server().start(PORT);
             } else if (choice.equalsIgnoreCase("c")) {
-                new Client().start(serverHost, PORT, scanner);
+                ClientConsole.start(serverHost, PORT, scanner);
             } else {
                 System.out.println("Invalid choice!");
             }
         }
     }
 }
+

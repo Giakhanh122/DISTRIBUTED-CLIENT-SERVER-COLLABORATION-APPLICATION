@@ -16,6 +16,12 @@ public class ChatSessionRegistry {
             sessions.put(id, new ChatSession(id, reporter, peer, ChatSession.State.CONNECTED));
             return true;
         }
+        if (current.state() == ChatSession.State.UNKNOWN
+                && ((current.userA().username().equals(reporter.username()) && current.userB().username().equals(peer.username()))
+                || (current.userB().username().equals(reporter.username()) && current.userA().username().equals(peer.username())))) {
+            sessions.put(id, new ChatSession(id, reporter, peer, ChatSession.State.CONNECTED));
+            return true;
+        }
         return matches(current, reporter, peer);
     }
 

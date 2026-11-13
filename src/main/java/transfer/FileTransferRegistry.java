@@ -6,7 +6,8 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class FileTransferManager {
+/** Lookup and ownership of active transfers and their source files. */
+public final class FileTransferRegistry {
     private final ConcurrentHashMap<String, FileTransferSession> activeSessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, File> outboundFiles = new ConcurrentHashMap<>();
 

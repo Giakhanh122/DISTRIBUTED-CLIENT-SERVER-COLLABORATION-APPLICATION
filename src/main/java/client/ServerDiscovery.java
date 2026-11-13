@@ -58,7 +58,8 @@ final class ServerDiscovery {
             }
             if (endpoints.isEmpty()) throw new IOException("No IPv4 LAN interface available for discovery");
 
-            System.out.println("Finding server: scanning " + endpoints.size() + " network interface(s)");
+            System.getLogger(ServerDiscovery.class.getName()).log(System.Logger.Level.DEBUG,
+                    "Finding server: scanning " + endpoints.size() + " network interface(s)");
             long deadline = System.nanoTime()
                     + TimeUnit.MILLISECONDS.toNanos((long) ATTEMPTS * RESPONSE_TIMEOUT_MS);
             var results = new ExecutorCompletionService<Client.ServerInfo>(executor);

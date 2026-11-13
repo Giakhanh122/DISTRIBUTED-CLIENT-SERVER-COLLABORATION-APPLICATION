@@ -18,5 +18,8 @@ public interface ClientEventListener {
     default void onFileOfferReceived(FileOfferModel offer) {}
     default void onPeerDisconnected(String peerUsername) {}
     default void onConnectionClosed() {}
+    default void onReconnecting() {}
+    default void onReconnected() {}
+    default void onReconnectFailed(String reason) {}
     default void onSystemNotification(String message, boolean isError) {}
 }

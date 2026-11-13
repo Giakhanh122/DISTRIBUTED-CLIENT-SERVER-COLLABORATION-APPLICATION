@@ -2,10 +2,11 @@ package ui.adapter;
 
 import client.Client;
 import client.ClientEvents;
+import client.ConnectionState;
+import client.FileOffer;
 import client.ClientSession;
 import client.CommunityClient;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
+import client.CommunityInfo;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -20,7 +21,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import protocols.FileTransferMeta;
-import protocols.Json;
 import ui.model.CommunityModel;
 import ui.model.FileOfferModel;
 import ui.util.JavaFxUtils;
@@ -46,21 +46,34 @@ public final class ChatClientAdapter {
         return thread;
     });
     private final AtomicLong generation = new AtomicLong();
+    private final AtomicLong connectionRevision = new AtomicLong();
     private volatile ClientSession session;
-    private volatile boolean connected;
     private volatile boolean loggingIn;
+    // UI synchronization phase; transport lifecycle is owned by ClientSession.
+    private volatile boolean refreshing;
     private volatile String currentUsername;
     private volatile List<String> onlineUsers = List.of();
     private volatile List<CommunityModel> communities = List.of();
     private ScheduledFuture<?> poller;
     // Only accessed on the command executor.
     private long commandToken;
+    private long commandRevision;
 
     private ChatClientAdapter() {}
 
     public void addListener(ClientEventListener listener) { if (!listeners.contains(listener)) listeners.add(listener); }
     public void removeListener(ClientEventListener listener) { listeners.remove(listener); }
-    public boolean isServerConnected() { return connected; }
+    public ConnectionState connectionState() {
+        ClientSession current = session;
+        if (loggingIn) return ConnectionState.CONNECTING;
+        if (current == null) return ConnectionState.CLOSED;
+        return refreshing ? ConnectionState.RECONNECTING : current.connectionState();
+    }
+    public boolean isServerConnected() {
+        ClientSession current = session;
+        return current != null && current.isServerConnected() && !refreshing;
+    }
+    public boolean isReconnecting() { return connectionState() == ConnectionState.RECONNECTING; }
     public boolean isPeerConnected(String peer) {
         ClientSession current = session;
         return current != null && current.isPeerConnected(peer);
@@ -85,13 +98,10 @@ public final class ChatClientAdapter {
     }
 
     public synchronized void login(String host, int port, String username, String password) {
-        if (connected || loggingIn) return;
+        if (session != null || loggingIn || refreshing) return;
         long token = generation.incrementAndGet();
         loggingIn = true;
         if (poller != null) { poller.cancel(false); poller = null; }
-        ClientSession previous = session;
-        session = null;
-        if (previous != null) Thread.startVirtualThread(previous::close);
         currentUsername = username;
         executor.execute(() -> {
             try {
@@ -99,25 +109,64 @@ public final class ChatClientAdapter {
                 synchronized (this) {
                     if (generation.get() != token) { opened.close(); return; }
                     session = opened;
-                    connected = true;
+                    opened.start();
                     loggingIn = false;
                     dispatch(token, listener -> listener.onLoginSuccess(username));
-                    opened.start();
-                    poller = polling.scheduleWithFixedDelay(() -> {
-                        if (generation.get() != token || !connected) return;
-                        try { refresh(opened, token); }
-                        catch (IOException | RuntimeException e) {
-                            if (opened.isServerConnected()) dispatch(token, l -> l.onSystemNotification(e.getMessage(), true));
-                        }
-                    }, 0, 3, TimeUnit.SECONDS);
+                    startPolling(opened, token);
                 }
             } catch (IOException | RuntimeException e) {
                 synchronized (this) {
                     if (generation.get() == token) {
+                        ClientSession failed = session;
+                        session = null;
+                        if (failed != null) failed.close();
                         loggingIn = false;
-                        connected = false;
                         dispatch(token, listener -> listener.onLoginFailed(e.getMessage()));
                     }
+                }
+            }
+        });
+    }
+
+    private void startPolling(ClientSession current, long token) {
+        if (poller != null) poller.cancel(false);
+        poller = polling.scheduleWithFixedDelay(() -> {
+            if (generation.get() != token || !current.isServerConnected()) return;
+            try { refresh(current, token); }
+            catch (IOException | RuntimeException e) {
+                if (current.isServerConnected()) dispatch(token, l -> l.onSystemNotification(e.getMessage(), true));
+            }
+        }, 0, 3, TimeUnit.SECONDS);
+    }
+
+    public synchronized void reconnect(String password) {
+        ClientSession current = session;
+        if (current == null || current.connectionState() != ConnectionState.SERVER_OFFLINE || loggingIn || refreshing) return;
+        long token = generation.get();
+        refreshing = true;
+        dispatch(token, ClientEventListener::onReconnecting);
+        executor.execute(() -> {
+            try {
+                if (current != session || generation.get() != token) return;
+                current.reconnect(password);
+                synchronized (this) {
+                    if (current != session || generation.get() != token) return;
+                    if (!current.isServerConnected()) throw new IOException("Server disconnected during reconnect");
+                }
+                refresh(current, token);
+                synchronized (this) {
+                    if (current != session || generation.get() != token) return;
+                    if (!current.isServerConnected()) throw new IOException("Server disconnected during refresh");
+                    refreshing = false;
+                    startPolling(current, token);
+                    dispatch(token, ClientEventListener::onReconnected);
+                }
+            } catch (IOException | RuntimeException e) {
+                try { current.disconnectServer(); } catch (IOException closeError) { e.addSuppressed(closeError); }
+                synchronized (this) {
+                    if (current != session || generation.get() != token) return;
+                    refreshing = false;
+                    dispatch(token, listener -> listener.onReconnectFailed(e.getMessage()));
                 }
             }
         });
@@ -136,8 +185,27 @@ public final class ChatClientAdapter {
         });
     }
 
-    public void requestUserList() { submit(s -> refreshUsers(s, commandToken)); }
-    public void requestCommunityList() { submit(s -> refreshCommunities(s, commandToken)); }
+    private void submitServer(SessionTask task) {
+        long revision = connectionRevision.get();
+        submit(current -> {
+            if (!isServerConnected() || revision != connectionRevision.get()) {
+                throw new IOException("Server unavailable; operation canceled");
+            }
+            commandRevision = revision;
+            task.run(current);
+        });
+    }
+
+    private void dispatchServer(Consumer<ClientEventListener> event) {
+        long token = commandToken;
+        long revision = commandRevision;
+        dispatch(token, listener -> {
+            if (isServerConnected() && revision == connectionRevision.get()) event.accept(listener);
+        });
+    }
+
+    public void requestUserList() { if (isServerConnected()) submitServer(s -> refreshUsers(s, commandToken)); }
+    public void requestCommunityList() { if (isServerConnected()) submitServer(s -> refreshCommunities(s, commandToken)); }
 
     private void refresh(ClientSession current, long token) throws IOException {
         refreshUsers(current, token);
@@ -145,30 +213,23 @@ public final class ChatClientAdapter {
     }
 
     private void refreshUsers(ClientSession current, long token) throws IOException {
-        List<String> users = new ArrayList<>();
-        for (JsonElement entry : current.users()) users.add(entry.getAsString());
-        List<String> snapshot = List.copyOf(users);
+        long revision = connectionRevision.get();
+        List<String> snapshot = current.users();
         JavaFxUtils.runOnFxThread(() -> {
-            if (generation.get() != token || !connected || snapshot.equals(onlineUsers)) return;
+            if (generation.get() != token || connectionRevision.get() != revision || !current.isServerConnected() || snapshot.equals(onlineUsers)) return;
             onlineUsers = snapshot;
             listeners.forEach(l -> l.onUserListUpdated(snapshot));
         });
     }
 
     private void refreshCommunities(ClientSession current, long token) throws IOException {
-        List<JsonObject> data = new ArrayList<>();
-        for (JsonElement entry : current.communities().list()) data.add(Json.asObject(entry));
+        long revision = connectionRevision.get();
+        List<CommunityInfo> data = current.communities().list();
         JavaFxUtils.runOnFxThread(() -> {
-            if (generation.get() != token || !connected) return;
+            if (generation.get() != token || connectionRevision.get() != revision || !current.isServerConnected()) return;
             List<CommunityModel> snapshot = new ArrayList<>();
-            try {
-                for (JsonObject entry : data) snapshot.add(new CommunityModel(Json.string(entry, "communityId"),
-                        Json.string(entry, "name"), Json.string(entry, "owner"),
-                        Json.integer(entry, "memberCount"), Json.bool(entry, "isMember")));
-            } catch (IOException e) {
-                listeners.forEach(l -> l.onSystemNotification(e.getMessage(), true));
-                return;
-            }
+            for (CommunityInfo entry : data) snapshot.add(new CommunityModel(entry.id(), entry.name(),
+                    entry.owner(), entry.memberCount(), entry.member()));
             Map<String, CommunityModel> existing = new java.util.HashMap<>();
             communities.forEach(model -> existing.put(model.getId(), model));
             List<CommunityModel> updated = new ArrayList<>();
@@ -185,18 +246,18 @@ public final class ChatClientAdapter {
 
     private void selected(CommunityClient.Selection selection) {
         if (generation.get() != commandToken) return;
-        dispatch(commandToken, l -> l.onCommunityJoined(selection.id(), selection.name()));
+        dispatchServer(l -> l.onCommunityJoined(selection.id(), selection.name()));
         requestCommunityList();
     }
 
-    public void createCommunity(String name) { submit(s -> selected(s.communities().create(name.trim()))); }
-    public void joinCommunity(String id) { submit(s -> selected(s.communities().join(id))); }
-    public void selectCommunity(String id) { submit(s -> selected(s.communities().select(id))); }
+    public void createCommunity(String name) { submitServer(s -> selected(s.communities().create(name.trim()))); }
+    public void joinCommunity(String id) { submitServer(s -> selected(s.communities().join(id))); }
+    public void selectCommunity(String id) { submitServer(s -> selected(s.communities().select(id))); }
     public void leaveCommunity(String id) {
-        submit(s -> {
+        submitServer(s -> {
             s.communities().leave(id);
             if (generation.get() != commandToken) return;
-            dispatch(commandToken, l -> l.onCommunityLeft(id));
+            dispatchServer(l -> l.onCommunityLeft(id));
             requestCommunityList();
         });
     }
@@ -212,7 +273,11 @@ public final class ChatClientAdapter {
         submitMessage(s -> s.sendMessage(peer, text), result);
     }
     public void broadcastMessage(String id, String text, Consumer<String> result) {
-        submitMessage(s -> s.broadcastMessage(id, text), result);
+        long revision = connectionRevision.get();
+        submitMessage(s -> {
+            if (!isServerConnected() || revision != connectionRevision.get()) throw new IOException("Server unavailable");
+            s.broadcastMessage(id, text);
+        }, result);
     }
     private void submitMessage(SessionTask task, Consumer<String> result) {
         long token = generation.get();
@@ -230,10 +295,10 @@ public final class ChatClientAdapter {
         });
     }
     public void sendFile(String peer, File file) { submit(s -> { s.ensurePeer(peer); s.sendFile(peer, file); }); }
-    public void broadcastMessage(String communityId, String text) { submit(s -> s.broadcastMessage(communityId, text)); }
+    public void broadcastMessage(String communityId, String text) { submitServer(s -> s.broadcastMessage(communityId, text)); }
     public void broadcastFile(String communityId, String communityName, File file) {
         CommunityClient.Selection target = new CommunityClient.Selection(communityId, communityName);
-        submit(s -> s.broadcastFile(target, file));
+        submitServer(s -> s.broadcastFile(target, file));
     }
     public void acceptFileOffer(String id) { decideFile(id, true); }
     public void rejectFileOffer(String id) { decideFile(id, false); }
@@ -249,6 +314,7 @@ public final class ChatClientAdapter {
 
     private ClientEvents events(long token) {
         return new ClientEvents() {
+            public void onSystemMessage(String content) { dispatch(token, l -> l.onSystemNotification(content, false)); }
             public void onMessage(String peer, String content) { dispatch(token, l -> l.onMessageReceived(peer, content)); }
             public void onBroadcast(String id, String sender, String content) {
                 dispatch(token, l -> l.onBroadcastMessageReceived(id, sender, content));
@@ -258,12 +324,20 @@ public final class ChatClientAdapter {
             public void onServerClosed() {
                 synchronized (ChatClientAdapter.this) {
                     if (generation.get() != token) return;
-                    connected = false;
+                    onlineUsers = List.of();
+                    connectionRevision.incrementAndGet();
                     if (poller != null) { poller.cancel(false); poller = null; }
                 }
-                dispatch(token, ClientEventListener::onConnectionClosed);
+                dispatch(token, listener -> {
+                    listener.onUserListUpdated(List.of());
+                    listener.onConnectionClosed();
+                });
             }
-            public void onFileOffer(String id, FileTransferMeta meta, String communityId, boolean incoming) {
+            public void onFileOffer(FileOffer offer) {
+                String id = offer.id();
+                FileTransferMeta meta = offer.meta();
+                String communityId = offer.communityId();
+                boolean incoming = offer.incoming();
                 JavaFxUtils.runOnFxThread(() -> {
                     if (generation.get() != token) return;
                     FileOfferModel model = new FileOfferModel(id, meta.sender(), meta.receiver(), meta.fileName(),
@@ -302,8 +376,9 @@ public final class ChatClientAdapter {
 
     public synchronized void logout() {
         generation.incrementAndGet();
-        connected = false;
         loggingIn = false;
+        refreshing = false;
+        connectionRevision.incrementAndGet();
         if (poller != null) { poller.cancel(false); poller = null; }
         ClientSession closing = session;
         session = null;

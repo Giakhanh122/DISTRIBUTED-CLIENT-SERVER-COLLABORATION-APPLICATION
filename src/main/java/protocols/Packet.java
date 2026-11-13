@@ -1,8 +1,9 @@
 package protocols;
 
-import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.util.Objects;
+
+import com.google.gson.JsonObject;
 
 /** One JSON envelope: opcode, sequence, body. */
 public final class Packet {

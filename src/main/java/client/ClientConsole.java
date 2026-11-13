@@ -6,12 +6,12 @@ import com.google.gson.JsonObject;
 import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
+import java.util.List;
 import java.util.Scanner;
-import logic.PeerLookupResult;
 import protocols.Json;
 
 /** Console input, command parsing, and presentation; networking lives in the session. */
-final class ClientConsole {
+public final class ClientConsole {
     record Credentials(String username, String password) {}
     private final ClientSession session;
     private final CommunityClient communities;
@@ -19,6 +19,25 @@ final class ClientConsole {
     ClientConsole(ClientSession session) {
         this.session = session;
         this.communities = session.communities();
+    }
+
+    public static void start(String host, int port, Scanner scanner) {
+        Client client = new Client();
+        try {
+            if (host == null || host.isBlank()) {
+                Client.ServerInfo info = client.discover();
+                if (info == null) { System.out.println("No server found"); return; }
+                host = info.address();
+                port = info.port();
+                System.out.println("Server found: " + host + ":" + port);
+            }
+            Credentials credentials = readCredentials(scanner);
+            if (credentials == null) return;
+            try (ClientSession session = client.login(host, port, credentials.username(), credentials.password(), new ConsoleEvents())) {
+                session.start();
+                new ClientConsole(session).run(scanner);
+            }
+        } catch (IOException e) { System.err.println("Client error: " + e.getMessage()); }
     }
 
     static Credentials readCredentials(Scanner scanner) {
@@ -47,6 +66,14 @@ final class ClientConsole {
             try {
                 switch (command) {
                     case "/help" -> printHelp();
+                    case "/reconnect" -> {
+                        if (session.isServerConnected()) System.out.println("Server is already connected");
+                        else {
+                            System.out.print("Password for " + session.username() + ": ");
+                            if (!scanner.hasNextLine()) return;
+                            session.reconnect(scanner.nextLine());
+                        }
+                    }
                     case "/users" -> printUsers(session.users());
                     case "/chats" -> printChats(session.chats());
                     case "/communities" -> printCommunities();
@@ -92,6 +119,7 @@ final class ClientConsole {
                 case SUCCESS -> {
                     try {
                         session.connectPeer(target, result.address());
+                        if (session.selectPeer(target)) System.out.println("Now chatting with " + target);
                     } catch (IOException e) {
                         session.clearPeerSelection();
                         System.err.println("Cannot connect to " + target + ": " + e.getMessage());
@@ -178,18 +206,16 @@ final class ClientConsole {
     }
 
     private void printCommunities() throws IOException {
-        JsonArray entries = communities.list();
+        List<CommunityInfo> entries = communities.list();
         if (entries.isEmpty()) {
             System.out.println("No communities available. Create one with /community create <name>");
             return;
         }
         System.out.println("Communities:");
-        for (JsonElement entry : entries) {
-            JsonObject community = Json.asObject(entry);
-            String marker = Json.bool(community, "isMember") ? " [JOINED]" : "";
-            System.out.println("  " + Json.string(community, "name") + " | ID: " + Json.string(community, "communityId")
-                    + " | Owner: " + Json.string(community, "owner")
-                    + " | Members: " + Json.integer(community, "memberCount") + marker);
+        for (CommunityInfo community : entries) {
+            String marker = community.member() ? " [JOINED]" : "";
+            System.out.println("  " + community.name() + " | ID: " + community.id()
+                    + " | Owner: " + community.owner() + " | Members: " + community.memberCount() + marker);
         }
     }
 
@@ -229,15 +255,10 @@ final class ClientConsole {
         System.out.println("[Community: " + selected.name() + "] selected.");
     }
 
-    private void printUsers(JsonArray users) throws IOException {
+    private void printUsers(List<String> users) {
         System.out.println("Online users:");
         if (users.isEmpty()) System.out.println("(none)");
-        for (JsonElement user : users) {
-            if (!user.isJsonPrimitive() || !user.getAsJsonPrimitive().isString()) {
-                throw new IOException("Invalid username in user list");
-            }
-            System.out.println("- " + user.getAsString());
-        }
+        users.forEach(user -> System.out.println("- " + user));
     }
 
     private void printChats(JsonArray sessions) throws IOException {
@@ -288,6 +309,7 @@ final class ClientConsole {
                     /sendfile <username> <filepath>  Send a private file through P2P
 
                   GENERAL
+                    /reconnect                      Reauthenticate server; keep existing P2P connections
                     /users                          List online users
                     /chats                          List P2P chat sessions
                     /accept <offer_number>          Accept a file offer

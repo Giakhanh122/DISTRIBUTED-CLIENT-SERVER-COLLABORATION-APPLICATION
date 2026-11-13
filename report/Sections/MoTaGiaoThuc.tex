@@ -1,0 +1,30 @@
+\section{Mô tả giao thức}
+
+\subsection{Đóng khung và phản hồi}
+Mỗi frame gồm độ dài JSON 4 byte big-endian, tiếp theo là đúng số byte JSON UTF-8.
+Envelope có ba trường: \texttt{opcode}, \texttt{sequence}, \texttt{body}.
+Sequence bắt đầu từ 1 cho mỗi chiều TCP và tăng theo từng frame. Phản hồi dùng
+\texttt{body.replyTo} để trỏ tới sequence yêu cầu, kèm \texttt{body.status}.
+Handshake \texttt{HELLO/HELLO\_ACK} hiện dùng protocolVersion 1, sau đó
+\texttt{AUTH\_REQUEST} gửi username, password và cổng lắng nghe P2P.
+
+\subsection{Chat và truyền file}
+Server tra cứu địa chỉ peer và quản lý cộng đồng. Chat trực tiếp dùng socket P2P;
+broadcast dùng control socket tới server và được phân phối theo community ID.
+Offer file P2P đi trên socket chat, người nhận quyết định accept hoặc reject.
+Sender mở socket dữ liệu riêng, gửi \texttt{FILE\_OFFER}, đúng \texttt{fileSize}
+byte nhị phân, rồi \texttt{FILE\_END}. Receiver kiểm tra kích thước và SHA-256,
+lưu file rồi trả \texttt{FILE\_RESULT}. Không có frame JSON cho từng chunk dữ liệu.
+Broadcast file có upload/download token, dữ liệu đi trên socket riêng tới server.
+
+\subsection{Phát hiện lỗi và kết nối lại}
+Hai phía gửi heartbeat trên control socket mỗi 5 giây nếu chưa có probe pending.
+Thiếu ACK đúng \texttt{replyTo} sau 30 giây làm đóng control socket; timer kiểm tra
+mỗi 5 giây. EOF, lỗi socket hoặc timeout request có thể phát hiện sớm hơn.
+Server xóa user online và đánh dấu metadata P2P chưa đóng là \texttt{UNKNOWN}.
+Client hủy broadcast của kết nối cũ, giữ chat/file P2P còn sống.
+
+Người dùng kết nối lại bằng mật khẩu; app tạo control socket mới, handshake và
+đăng nhập lại, lấy danh sách user/community mới. Không lưu mật khẩu, không tự
+phát lại yêu cầu hoặc resume file theo offset. Logout đóng toàn bộ tài nguyên.
+Đặc tả opcode và payload chi tiết được lưu trong \texttt{docs/protocol.md}.
