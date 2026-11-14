@@ -1,11 +1,24 @@
 package client;
 
+import client.community.CommunityClient;
+import client.connection.ServerConnection;
+import client.peer.PeerConnection;
+import client.peer.PeerListener;
+import client.peer.PeerLookupResult;
+import client.security.ServerKeyPinning;
+import client.transfer.BroadcastFileController;
+import client.transfer.FileTransferController;
+
 import com.google.gson.JsonArray;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.PublicKey;
+import java.util.Base64;
+import java.util.UUID;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -19,10 +32,12 @@ import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 import protocols.PacketValidator;
+import security.PeerKeyProof;
 
 /** State and resources of one login; a subsequent login creates a new session. */
 public final class ClientSession implements AutoCloseable {
     private final ClientEvents events;
+    private final ServerKeyPinning serverKeyPinning;
     private final String username;
     private final String host;
     private final int port;
@@ -64,23 +79,21 @@ public final class ClientSession implements AutoCloseable {
         if (notify) events.onServerClosed();
     }
 
-    ClientSession(String username, String host, int port, PacketChannel channel) throws IOException {
-        this(username, host, port, channel, ClientEvents.NONE);
-    }
-
-    ClientSession(String username, String host, int port, PacketChannel channel, ClientEvents events) throws IOException {
+    ClientSession(String username, String host, int port, PacketChannel channel, ClientEvents events,
+                  ServerKeyPinning serverKeyPinning) throws IOException {
         this.events = java.util.Objects.requireNonNull(events);
+        this.serverKeyPinning = java.util.Objects.requireNonNull(serverKeyPinning);
         this.username = username;
         this.host = host;
         this.port = port;
-        listener = new PeerListener(this::registerPeer, this::receiveFile);
-        files = new FileTransferController(username, listener.getPort(), new File("downloads/" + username),
+        listener = new PeerListener(serverKeyPinning, this::requestPeerKey, this::registerPeer, this::receiveFile);
+        files = new FileTransferController(username, new File("downloads/" + username),
                 peers, offerNumbers::incrementAndGet, events);
         serverContext = new ServerContext(channel);
         communities = new CommunityClient(() -> serverContext.server);
     }
 
-    String username() { return username; }
+    public String username() { return username; }
     int peerPort() { return listener.getPort(); }
     public ConnectionState connectionState() { return state.get(); }
     private boolean isClosed() { return state.get() == ConnectionState.CLOSED; }
@@ -154,9 +167,33 @@ public final class ClientSession implements AutoCloseable {
         return List.copyOf(users);
     }
 
-    JsonArray chats() throws IOException {
+    public JsonArray chats() throws IOException {
         return Json.array(request(Packet.empty(OpCode.CHAT_SESSION_LIST_REQUEST), OpCode.CHAT_SESSION_LIST_RESPONSE)
                 .jsonBody(), "sessions");
+    }
+
+    public PeerKeyProof requestPeerKey(UUID sessionId, PublicKey publicKey) throws IOException {
+        ServerContext source = serverContext;
+        if (!isServerConnected()) throw new IOException("Server connection required to certify a peer public key");
+        String id = sessionId.toString();
+        String encodedPublicKey = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+        Packet response = source.server.request(Packet.json(OpCode.PEER_KEY_REQUEST,
+                Json.object("sessionId", id, "publicKey", encodedPublicKey)), OpCode.PEER_KEY_RESPONSE);
+        PacketValidator.requireSuccess(response);
+        if (source != serverContext) throw new IOException("Server connection changed while certifying peer public key");
+
+        PeerKeyProof proof = new PeerKeyProof(response.string("username"), response.string("sessionId"),
+                response.string("publicKey"), response.string("serverSignature"));
+        if (!proof.username().equals(username) || !proof.sessionId().equals(id)
+                || !proof.publicKey().equals(encodedPublicKey)) {
+            throw new IOException("Peer public key confirmation does not match request");
+        }
+        try {
+            serverKeyPinning.verifyPeerKey(proof, username, sessionId);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot verify server confirmation of peer public key", e);
+        }
+        return proof;
     }
 
     PeerLookupResult lookup(String target) throws IOException {
@@ -175,9 +212,9 @@ public final class ClientSession implements AutoCloseable {
         };
     }
 
-    String selectedPeer() { return selectedPeer; }
+    public String selectedPeer() { return selectedPeer; }
 
-    List<String> connectedPeers() {
+    public List<String> connectedPeers() {
         synchronized (peerLock) {
             return peers.entrySet().stream()
                     .filter(entry -> !entry.getValue().isClosed())
@@ -185,7 +222,7 @@ public final class ClientSession implements AutoCloseable {
         }
     }
 
-    boolean selectPeer(String target) {
+    public boolean selectPeer(String target) {
         synchronized (peerLock) {
             PeerConnection peer = peers.get(target);
             if (isClosed() || peer == null || peer.isClosed()) {
@@ -197,10 +234,6 @@ public final class ClientSession implements AutoCloseable {
         }
     }
 
-    void clearPeerSelection() {
-        synchronized (peerLock) { selectedPeer = null; }
-    }
-
     void connectPeer(String target, InetSocketAddress address) throws IOException {
         Socket socket = new Socket();
         try {
@@ -210,7 +243,8 @@ public final class ClientSession implements AutoCloseable {
             }
             socket.connect(address, 10000);
             PeerConnection connection = new PeerConnection(new PacketChannel(socket));
-            connection.initiateHandshake(username, peerPort());
+            PeerKeyProof proof = requestPeerKey(connection.sessionId(), connection.publicKey());
+            connection.initiateHandshake(peerPort(), proof, target, serverKeyPinning);
             if (registerPeer(target, connection)) selectPeer(target);
         } catch (IOException e) {
             try {
@@ -222,7 +256,7 @@ public final class ClientSession implements AutoCloseable {
         } finally { connectingSockets.remove(socket); }
     }
 
-    boolean sendMessage(String message) throws IOException {
+    public boolean sendMessage(String message) throws IOException {
         PeerConnection peer;
         synchronized (peerLock) {
             peer = selectedPeer == null ? null : peers.get(selectedPeer);

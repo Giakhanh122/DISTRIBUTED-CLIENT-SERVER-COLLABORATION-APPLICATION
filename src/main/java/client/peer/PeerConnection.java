@@ -1,45 +1,90 @@
-package client;
+package client.peer;
 
+import client.security.ServerKeyPinning;
 import network.PacketChannel;
 
 import java.io.IOException;
 import java.net.Socket;
 import java.net.InetSocketAddress;
+import java.security.GeneralSecurityException;
+import java.security.KeyPair;
+import java.security.PublicKey;
+import java.util.Base64;
 import java.util.UUID;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.LongConsumer;
 import protocols.*;
+import security.PeerKeyProof;
+import security.SessionKeys;
+import security.X25519;
 
 public class PeerConnection implements AutoCloseable {
+    @FunctionalInterface
+    public interface KeyProofProvider {
+        PeerKeyProof request(UUID sessionId, PublicKey publicKey) throws IOException;
+    }
+
     private final Socket socket;
     private final PacketChannel channel;
+    private final KeyPair keyPair;
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private UUID sessionId = UUID.randomUUID();
     private final AtomicBoolean disconnectReported = new AtomicBoolean();
     private InetSocketAddress peerAddress;
+    private PublicKey peerPublicKey;
 
-    public PeerConnection(PacketChannel channel) {
+    public PeerConnection(PacketChannel channel) throws IOException {
         this.channel = channel;
         this.socket = channel.socket();
+        this.keyPair = createKeyPair();
     }
 
-    public void initiateHandshake(String username, int listeningPort) throws IOException {
+    public PublicKey publicKey() {
+        return keyPair.getPublic();
+    }
+
+    private static KeyPair createKeyPair() throws IOException {
+        try {
+            return X25519.createKeyPair();
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot create peer X25519 key pair", e);
+        }
+    }
+
+    public void initiateHandshake(int listeningPort, PeerKeyProof proof, String expectedUsername,
+                                  ServerKeyPinning serverKeyPinning) throws IOException {
+        String encodedPublicKey = Base64.getEncoder().encodeToString(publicKey().getEncoded());
+        if (!sessionId.toString().equals(proof.sessionId()) || !encodedPublicKey.equals(proof.publicKey())) {
+            throw new IOException("Peer public key confirmation does not match local connection");
+        }
         socket.setSoTimeout(10000);
         Packet hello = Packet.json(OpCode.PEER_HELLO,
-            Json.object("protocolVersion", Packet.PROTOCOL_VERSION, "username", username, "peerPort", listeningPort, "sessionId", sessionId.toString()));
+            Json.object("protocolVersion", Packet.PROTOCOL_VERSION,
+                    "username", proof.username(), "peerPort", listeningPort, "sessionId", proof.sessionId(),
+                    "publicKey", proof.publicKey(), "serverSignature", proof.serverSignature()));
         long helloSequence = channel.send(hello);
         Packet response = PacketValidator.validateResponse(channel.read(), OpCode.PEER_HELLO_ACK, helloSequence);
         PacketValidator.requireSuccess(response);
         if (response.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
             throw new IOException("Unsupported peer protocol version");
         }
+        PeerKeyProof peerProof = new PeerKeyProof(response.string("username"), response.string("sessionId"),
+                response.string("publicKey"), response.string("serverSignature"));
+        try {
+            peerPublicKey = serverKeyPinning.verifyPeerKey(peerProof, expectedUsername, sessionId);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot verify responding peer public key", e);
+        }
+        SessionKeys sessionKeys = deriveSessionKeys(hello, response);
+        channel.confirmEncryption(sessionKeys, PacketChannel.Role.INITIATOR);
         peerAddress = new InetSocketAddress(socket.getInetAddress(), socket.getPort());
         socket.setSoTimeout(0);
     }
 
-    public String acceptHandshake(Packet hello) throws IOException {
+    public String acceptHandshake(Packet hello, ServerKeyPinning serverKeyPinning,
+                                  KeyProofProvider keyProofProvider) throws IOException {
         PacketValidator.validateRequest(hello, OpCode.PEER_HELLO, 1, 4096);
 
         if (hello.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
@@ -63,13 +108,36 @@ public class PeerConnection implements AutoCloseable {
         if (port < 1 || port > 65535) {
             throw new IOException("Peer listening port is out of range");
         }
+        PeerKeyProof proof = new PeerKeyProof(peerUsername, id,
+                hello.string("publicKey"), hello.string("serverSignature"));
+        try {
+            peerPublicKey = serverKeyPinning.verifyPeerKey(proof, peerUsername, sessionId);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot verify incoming peer public key", e);
+        }
         peerAddress = new InetSocketAddress(socket.getInetAddress(), port);
 
-        Packet response = Packet.reply(OpCode.PEER_HELLO_ACK, hello.sequence(), Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION));
+        PeerKeyProof localProof = keyProofProvider.request(sessionId, publicKey());
+        Packet response = Packet.reply(OpCode.PEER_HELLO_ACK, hello.sequence(),
+                Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION,
+                        "username", localProof.username(), "sessionId", localProof.sessionId(),
+                        "publicKey", localProof.publicKey(), "serverSignature", localProof.serverSignature()));
+        SessionKeys sessionKeys = deriveSessionKeys(hello, response);
         sendPacket(response);
+        channel.confirmEncryption(sessionKeys, PacketChannel.Role.RESPONDER);
 
         socket.setSoTimeout(0);
         return peerUsername;
+    }
+
+    private SessionKeys deriveSessionKeys(Packet hello, Packet response) throws IOException {
+        try {
+            byte[] handshakeData = Json.bytes(Json.object("purpose", "peer-handshake",
+                    "hello", hello.jsonBody(), "ack", response.jsonBody()));
+            return X25519.deriveSessionKeys(keyPair, peerPublicKey, handshakeData);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot derive peer session keys", e);
+        }
     }
 
     public void sendMessage(String message) throws IOException {

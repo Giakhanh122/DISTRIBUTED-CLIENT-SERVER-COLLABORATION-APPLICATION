@@ -1,4 +1,7 @@
-package client;
+package client.console;
+
+import client.ClientEvents;
+import client.transfer.FileOffer;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

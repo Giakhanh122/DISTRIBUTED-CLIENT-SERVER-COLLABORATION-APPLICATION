@@ -3,7 +3,12 @@ package server.connection;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.KeyPair;
+import java.security.PublicKey;
+import java.util.Base64;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
@@ -24,6 +29,10 @@ import server.session.ChatSessionRegistry;
 import server.session.UserSessionRegistry;
 import server.session.UserSession;
 import server.storage.FileStorageService;
+import server.security.ServerIdentity;
+import security.SessionKeys;
+import security.X25519;
+import security.PeerKeyProof;
 
 public class ClientHandler implements Runnable {
     private static final int MAX_CHAT_BYTES = 64 * 1024;
@@ -33,6 +42,7 @@ public class ClientHandler implements Runnable {
     private final UserSessionRegistry userSessions;
     private final ChatSessionRegistry chatSessions;
     private final AuthService authService;
+    private final ServerIdentity identity;
     private final CommunityRequestHandler communityRequests;
     private final BroadcastService broadcasts;
 
@@ -41,18 +51,19 @@ public class ClientHandler implements Runnable {
     private HeartbeatMonitor heartbeat;
 
     public ClientHandler(Socket socket, UserSessionRegistry userSessions,
-            ChatSessionRegistry chatSessions, AuthService authService) {
-        this(socket, userSessions, chatSessions, authService, null, null, null);
+            ChatSessionRegistry chatSessions, AuthService authService, ServerIdentity identity) {
+        this(socket, userSessions, chatSessions, authService, null, null, null, identity);
     }
 
     public ClientHandler(Socket socket, UserSessionRegistry userSessions,
             ChatSessionRegistry chatSessions, AuthService authService,
             CommunityService communityService, BroadcastFileRegistry broadcastFileRegistry,
-            FileStorageService fileStorageService) {
+            FileStorageService fileStorageService, ServerIdentity identity) {
         this.socket = socket;
         this.userSessions = userSessions;
         this.chatSessions = chatSessions;
         this.authService = authService;
+        this.identity = Objects.requireNonNull(identity, "identity");
         communityRequests = communityService == null ? null : new CommunityRequestHandler(communityService);
         broadcasts = communityService == null || broadcastFileRegistry == null || fileStorageService == null ? null
                 : new BroadcastService(userSessions, communityService, broadcastFileRegistry, fileStorageService);
@@ -70,17 +81,6 @@ public class ClientHandler implements Runnable {
             Packet first = channel.read();
             if (first == null) return;
 
-            // Demultiplex: HELLO = normal client, upload/download start = file data connection
-            if (first.op() == OpCode.FILE_BROADCAST_UPLOAD_START) {
-                requireBroadcasts().handleBroadcastUploadConnection(first, channel);
-                return;
-            }
-            if (first.op() == OpCode.FILE_BROADCAST_DOWNLOAD_START) {
-                requireBroadcasts().handleBroadcastDownloadConnection(first, channel);
-                return;
-            }
-
-            // Normal client session
             if (first.op() != OpCode.HELLO) {
                 System.err.println("Invalid or missing HELLO from " + address);
                 return;
@@ -91,11 +91,32 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
-            Packet response = Packet.reply(OpCode.HELLO_ACK, first.sequence(), Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION));
+            KeyPair serverKeyPair = createKeyPair();
+            String encodedPublicKey = Base64.getEncoder().encodeToString(serverKeyPair.getPublic().getEncoded());
+            byte[] signedData = Json.bytes(Json.object("purpose", "server-handshake",
+                    "hello", first.jsonBody(), "serverPublicKey", encodedPublicKey));
+            String serverSignature = createServerSignature(first, signedData);
+            SessionKeys sessionKeys = createSessionKeys(serverKeyPair, first, signedData);
+            Packet response = Packet.reply(OpCode.HELLO_ACK, first.sequence(),
+                    Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION,
+                            "serverSignature", serverSignature, "publicKey", encodedPublicKey));
             channel.send(response);
+
+            channel.confirmEncryption(sessionKeys, PacketChannel.Role.RESPONDER);
             System.out.println("Handshake successful with " + address);
 
-            if (!handleAuth()) {
+            Packet request = channel.read();
+            if (request == null) return;
+            if (request.op() == OpCode.FILE_BROADCAST_UPLOAD_START) {
+                requireBroadcasts().handleBroadcastUploadConnection(request, channel);
+                return;
+            }
+            if (request.op() == OpCode.FILE_BROADCAST_DOWNLOAD_START) {
+                requireBroadcasts().handleBroadcastDownloadConnection(request, channel);
+                return;
+            }
+
+            if (!handleAuth(request)) {
                 return;
             }
 
@@ -140,6 +161,8 @@ public class ClientHandler implements Runnable {
 
                 case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
 
+                case PEER_KEY_REQUEST -> handlePeerKey(packet);
+
                 case CHAT_SESSION_REPORT -> handleChatSessionReport(packet);
 
                 case CHAT_SESSION_LIST_REQUEST -> handleChatSessionList(packet);
@@ -165,9 +188,39 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private boolean handleAuth() throws IOException {
-        Packet request = channel.read();
+    private String createServerSignature(Packet hello, byte[] signedData) throws IOException {
+        PacketValidator.validateRequest(hello, OpCode.HELLO, 1, 4096);
+        try {
+            byte[] serverVerificationChallenge = Base64.getDecoder()
+                    .decode(hello.string("serverVerificationChallenge"));
+            if (serverVerificationChallenge.length != 32) {
+                throw new IOException("Server verification challenge must be 32 bytes");
+            }
+            byte[] signature = identity.sign(signedData);
+            return Base64.getEncoder().encodeToString(signature);
+        } catch (IllegalArgumentException | GeneralSecurityException e) {
+            throw new IOException("Cannot sign server handshake", e);
+        }
+    }
 
+    private SessionKeys createSessionKeys(KeyPair serverKeyPair, Packet hello, byte[] signedData) throws IOException {
+        try {
+            PublicKey clientPublicKey = X25519.decodePublicKey(hello.string("publicKey"));
+            return X25519.deriveSessionKeys(serverKeyPair, clientPublicKey, signedData);
+        } catch (IllegalArgumentException | GeneralSecurityException e) {
+            throw new IOException("Cannot create session keys", e);
+        }
+    }
+
+    private KeyPair createKeyPair() throws IOException {
+        try {
+            return X25519.createKeyPair();
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot create server X25519 key pair", e);
+        }
+    }
+
+    private boolean handleAuth(Packet request) throws IOException {
         try {
             PacketValidator.validateRequest(request, OpCode.AUTH_REQUEST, 0, MAX_AUTH_BYTES);
         } catch (IOException e) {
@@ -215,6 +268,34 @@ public class ClientHandler implements Runnable {
                 Json.object("status", "OK", "users", usernames));
 
         channel.send(response);
+    }
+
+    private void handlePeerKey(Packet request) throws IOException {
+        PacketValidator.validateRequest(request, OpCode.PEER_KEY_REQUEST, 1, 4096);
+        String sessionId;
+        String publicKey;
+        try {
+            sessionId = request.string("sessionId");
+            if (!UUID.fromString(sessionId).toString().equals(sessionId)) {
+                throw new IllegalArgumentException("Invalid peer session ID");
+            }
+            PublicKey key = X25519.decodePublicKey(request.string("publicKey"));
+            publicKey = Base64.getEncoder().encodeToString(key.getEncoded());
+        } catch (IOException | IllegalArgumentException | GeneralSecurityException e) {
+            channel.send(Packet.status(OpCode.PEER_KEY_RESPONSE, request.sequence(), "INVALID_PEER_KEY"));
+            return;
+        }
+
+        byte[] signature;
+        try {
+            signature = identity.sign(PeerKeyProof.create(session.username(), sessionId, publicKey));
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Cannot sign peer public key", e);
+        }
+        channel.send(Packet.reply(OpCode.PEER_KEY_RESPONSE, request.sequence(),
+                Json.object("status", "OK", "username", session.username(),
+                        "sessionId", sessionId, "publicKey", publicKey,
+                        "serverSignature", Base64.getEncoder().encodeToString(signature))));
     }
 
     private void handlePeerLookup(Packet request) throws IOException {

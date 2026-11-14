@@ -1,4 +1,4 @@
-package client;
+package client.community;
 
 import com.google.gson.JsonObject;
 import java.io.IOException;

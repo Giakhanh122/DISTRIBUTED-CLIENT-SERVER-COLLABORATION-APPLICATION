@@ -1,4 +1,6 @@
-package client;
+package client.community;
+
+import client.connection.ServerConnection;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -18,19 +20,19 @@ public final class CommunityClient {
     private final Supplier<ServerConnection> server;
     private volatile Selection selected;
 
-    CommunityClient(ServerConnection server) {
+    public CommunityClient(ServerConnection server) {
         this(() -> server);
     }
 
-    CommunityClient(Supplier<ServerConnection> server) {
+    public CommunityClient(Supplier<ServerConnection> server) {
         this.server = server;
     }
 
-    synchronized void clearSelection() { selected = null; }
+    public synchronized void clearSelection() { selected = null; }
 
     public Selection selected() { return selected; }
 
-    Selection requireSelection() throws IOException {
+    public Selection requireSelection() throws IOException {
         Selection selection = selected;
         if (selection == null) throw new IOException("No community selected");
         return selection;
@@ -75,13 +77,13 @@ public final class CommunityClient {
         return selection;
     }
 
-    JsonArray members() throws IOException {
+    public JsonArray members() throws IOException {
         Packet response = request(Packet.json(OpCode.COMMUNITY_MEMBERS_REQUEST,
                 Json.object("communityId", requireSelection().id())), OpCode.COMMUNITY_MEMBERS_RESPONSE);
         return Json.array(response.jsonBody(), "members");
     }
 
-    JsonObject info() throws IOException {
+    public JsonObject info() throws IOException {
         Packet response = request(Packet.json(OpCode.COMMUNITY_INFO_REQUEST,
                 Json.object("communityId", requireSelection().id())), OpCode.COMMUNITY_INFO_RESPONSE);
         return Json.object(response.jsonBody(), "community");

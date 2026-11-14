@@ -1,4 +1,4 @@
-package client;
+package client.transfer;
 
 import protocols.FileTransferMeta;
 

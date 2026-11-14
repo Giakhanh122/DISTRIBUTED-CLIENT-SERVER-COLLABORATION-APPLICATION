@@ -1,4 +1,4 @@
-package client;
+package client.connection;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -13,9 +13,9 @@ import network.PacketChannel;
 import network.HeartbeatMonitor;
 
 /** Owns the server reader and serializes correlated management requests. */
-final class ServerConnection implements AutoCloseable {
+public final class ServerConnection implements AutoCloseable {
     @FunctionalInterface
-    interface EventHandler {
+    public interface EventHandler {
         void accept(Packet packet) throws IOException;
     }
 
@@ -32,27 +32,27 @@ final class ServerConnection implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Pending pending;
 
-    ServerConnection(PacketChannel channel, EventHandler events) {
+    public ServerConnection(PacketChannel channel, EventHandler events) {
         this(channel, events, () -> {});
     }
 
-    ServerConnection(PacketChannel channel, EventHandler events, Runnable onClosed) {
+    public ServerConnection(PacketChannel channel, EventHandler events, Runnable onClosed) {
         this.onClosed = Objects.requireNonNull(onClosed);
         this.channel = Objects.requireNonNull(channel);
         this.events = Objects.requireNonNull(events);
         heartbeat = new HeartbeatMonitor(channel, () -> abort("Heartbeat failed", null));
     }
 
-    void start() {
+    public void start() {
         if (closed.get()) throw new IllegalStateException("Connection closed");
         if (!started.compareAndSet(false, true)) throw new IllegalStateException("Reader already started");
         Thread.startVirtualThread(this::readPackets);
         heartbeat.start();
     }
 
-    boolean isOpen() { return !closed.get(); }
+    public boolean isOpen() { return !closed.get(); }
 
-    void send(Packet packet) throws IOException {
+    public void send(Packet packet) throws IOException {
         if (closed.get()) throw new IOException("Server connection closed");
         try {
             channel.send(packet);
@@ -78,7 +78,7 @@ final class ServerConnection implements AutoCloseable {
         }
     }
 
-    Packet request(Packet packet, OpCode responseOpcode) throws IOException {
+    public Packet request(Packet packet, OpCode responseOpcode) throws IOException {
         synchronized (requestLock) {
             if (!started.get() || closed.get()) throw new IOException("Server connection is not running");
             CompletableFuture<Packet> response = new CompletableFuture<>();

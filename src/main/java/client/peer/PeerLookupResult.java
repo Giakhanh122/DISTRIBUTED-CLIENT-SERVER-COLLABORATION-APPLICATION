@@ -1,4 +1,4 @@
-package client;
+package client.peer;
 
 import java.net.InetSocketAddress;
 

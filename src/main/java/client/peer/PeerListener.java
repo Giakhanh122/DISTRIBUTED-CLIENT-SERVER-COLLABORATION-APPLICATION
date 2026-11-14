@@ -1,5 +1,6 @@
-package client;
+package client.peer;
 
+import client.security.ServerKeyPinning;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -12,15 +13,21 @@ import network.PacketChannel;
 
 public class PeerListener implements Runnable, AutoCloseable {
     private final ServerSocket listener;
+    private final ServerKeyPinning serverKeyPinning;
+    private final PeerConnection.KeyProofProvider keyProofProvider;
     private final BiConsumer<String, PeerConnection> onConnected;
     private final BiConsumer<PacketChannel, Packet> onFileConnection;
     private final Set<Socket> pendingConnections = ConcurrentHashMap.newKeySet();
 
     public PeerListener(
+        ServerKeyPinning serverKeyPinning,
+        PeerConnection.KeyProofProvider keyProofProvider,
         BiConsumer<String, PeerConnection> onConnected,
         BiConsumer<PacketChannel, Packet> onFileConnection
     ) throws IOException {
         listener = new ServerSocket(0);
+        this.serverKeyPinning = serverKeyPinning;
+        this.keyProofProvider = keyProofProvider;
         this.onConnected = onConnected;
         this.onFileConnection = onFileConnection;
     }
@@ -57,14 +64,14 @@ public class PeerListener implements Runnable, AutoCloseable {
             Packet first = channel.read();
             if (first != null && first.op() == OpCode.PEER_HELLO) {
                 PeerConnection connection = new PeerConnection(channel);
-                String peerUsername = connection.acceptHandshake(first);
+                String peerUsername = connection.acceptHandshake(first, serverKeyPinning, keyProofProvider);
                 onConnected.accept(peerUsername, connection);
-            } else if (first != null && first.op() == OpCode.FILE_OFFER) {
+            } else if (first != null && first.op() == OpCode.FILE_TRANSFER_START) {
                 try (socket) {
                     onFileConnection.accept(channel, first);
                 }
             } else {
-                throw new IOException("Expected PEER_HELLO or file connection identification");
+                throw new IOException("Expected PEER_HELLO or FILE_TRANSFER_START");
             }
         } catch (IOException | RuntimeException e) {
             try {

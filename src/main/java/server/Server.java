@@ -11,6 +11,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 
 import protocols.OpCode;
 import protocols.Json;
@@ -22,11 +23,13 @@ import server.broadcast.BroadcastFileRegistry;
 import server.community.CommunityRegistry;
 import server.community.CommunityService;
 import server.connection.ClientHandler;
+import server.security.ServerIdentity;
 import server.session.ChatSessionRegistry;
 import server.session.UserSessionRegistry;
 import server.storage.FileStorageService;
 
 public class Server {
+    private ServerIdentity identity;
     private final UserSessionRegistry userSessions = new UserSessionRegistry();
     private final ChatSessionRegistry chatSessions = new ChatSessionRegistry();
     private final AuthService authService = new AuthService();
@@ -43,6 +46,12 @@ public class Server {
     }
 
     public void start(int portNumber) {
+        try {
+            identity = ServerIdentity.loadOrCreate(Path.of("server_identity"));
+        } catch (IOException | GeneralSecurityException e) {
+            throw new IllegalStateException("Cannot load server identity", e);
+        }
+
         try (
             ServerSocket listener = new ServerSocket(portNumber);
             DatagramSocket discoverySocket = new DatagramSocket(DISCOVERY_PORT);
@@ -54,7 +63,7 @@ public class Server {
             while (true) {
                 Socket socket = listener.accept();
                 ClientHandler handler = new ClientHandler(socket, userSessions, chatSessions,
-                        authService, communityService, broadcastFileRegistry, fileStorageService);
+                        authService, communityService, broadcastFileRegistry, fileStorageService, identity);
                 Thread.startVirtualThread(handler);
             }
         } catch (IOException e) {

@@ -14,3 +14,6 @@ __pycache__/
 .project
 .deps/
 report/.auctex-auto/
+/server_identity/
+/.server_identity.lock
+/.server_identity-*/

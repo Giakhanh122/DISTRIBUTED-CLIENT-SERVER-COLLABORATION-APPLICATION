@@ -127,8 +127,10 @@ Handshake trao đổi `protocolVersion = 1`. Server và client cần chạy cùn
 chưa có thương lượng khả năng để tương thích với bản cũ thiếu heartbeat.
 Không có magic bytes hoặc header JSON riêng.
 
-Socket file riêng gửi đúng fileSize byte nhị phân rồi FILE_END JSON; receiver
-kiểm tra SHA-256 và trả FILE_RESULT. Không đóng gói từng buffer thành FILE_CHUNK.
+Socket file P2P mở bằng FILE_TRANSFER_START/FILE_READY rồi xác nhận khóa AES-GCM.
+Nội dung file, FILE_END và FILE_RESULT đều được mã hóa; receiver kiểm tra SHA-256
+trước khi công bố file. Không dùng FILE_CHUNK. Luồng đầy đủ và các thay đổi nằm
+trong [docs/security-refactor.md](docs/security-refactor.md).
 Client/server phải chạy cùng phiên bản mới. Xem docs/protocol.md để biết chi tiết.
 
 ## Tổ chức source
@@ -138,11 +140,28 @@ src/main/java/
 ├── app/          Main: entry point terminal
 ├── protocols/    Opcode, packet, JSON codec, validation, metadata file
 ├── network/      PacketChannel và HeartbeatMonitor: I/O, sequence, liveness
+├── security/     X25519, HKDF, SessionKeys, AES-GCM và chứng thực public key peer
 ├── client/       Đăng nhập, vòng đời phiên, P2P, community, điều phối truyền file
 ├── server/       connection, auth, session, community, broadcast, storage
 ├── transfer/     Registry transfer và đọc/ghi dữ liệu file dùng chung
 └── ui/           adapter, controller, model, view, util; Launcher mở GUI
 ```
+
+Client được chia theo trách nhiệm; các API dùng chung cho GUI/CLI nằm ở gốc:
+
+```text
+client/
+├── Client.java, ClientSession.java, ClientEvents.java, ConnectionState.java
+├── connection/   ServerConnection, ServerDiscovery
+├── peer/         PeerConnection, PeerListener, PeerLookupResult
+├── community/    CommunityClient, CommunityInfo
+├── transfer/     FileTransferController, BroadcastFileController, FileOffer
+├── console/      ClientConsole, ConsoleEvents
+└── security/     ServerKeyPinning
+```
+
+`client.transfer` điều phối truyền file phía client; `transfer` ở gốc source
+chứa phần đọc/ghi dữ liệu và registry dùng chung cho client/server.
 
 `Client` cung cấp discovery/handshake/đăng nhập. `ClientSession` sở hữu trạng thái
 `ConnectionState`, peer, listener và vòng đời tài nguyên. `ServerContext` nội bộ

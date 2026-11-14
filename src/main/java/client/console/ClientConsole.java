@@ -1,4 +1,9 @@
-package client;
+package client.console;
+
+import client.Client;
+import client.ClientSession;
+import client.community.CommunityClient;
+import client.community.CommunityInfo;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -100,36 +105,8 @@ public final class ClientConsole {
             System.out.println("Cannot connect to yourself");
             return;
         }
-        // Reuse an established P2P connection even if the server is unavailable.
-        if (session.selectPeer(target)) {
-            System.out.println("Now chatting with " + target);
-            return;
-        }
-        try {
-            PeerLookupResult result = session.lookup(target);
-            switch (result.status()) {
-                case USER_OFFLINE -> {
-                    session.clearPeerSelection();
-                    System.out.println(target + " is offline");
-                }
-                case ALREADY_CONNECTED -> {
-                    if (session.selectPeer(target)) System.out.println("Now chatting with " + target);
-                    else System.out.println(target + " is already connected, but no local connection is available");
-                }
-                case SUCCESS -> {
-                    try {
-                        session.connectPeer(target, result.address());
-                        if (session.selectPeer(target)) System.out.println("Now chatting with " + target);
-                    } catch (IOException e) {
-                        session.clearPeerSelection();
-                        System.err.println("Cannot connect to " + target + ": " + e.getMessage());
-                    }
-                }
-            }
-        } catch (IOException e) {
-            session.clearPeerSelection();
-            throw e;
-        }
+        session.ensurePeer(target);
+        System.out.println("Now chatting with " + target);
     }
 
     private void selectChat(String target) {

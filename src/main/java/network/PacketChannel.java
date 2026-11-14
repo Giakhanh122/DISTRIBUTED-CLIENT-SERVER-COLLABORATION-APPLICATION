@@ -2,21 +2,31 @@ package network;
 
 import protocols.Packet;
 import protocols.PacketCodec;
+import protocols.OpCode;
+import protocols.PacketValidator;
 
 import java.io.IOException;
+import java.io.EOFException;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.DataInputStream;
 import java.util.function.LongConsumer;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.util.Objects;
+import java.util.Arrays;
 import java.time.Duration;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import security.SessionKeys;
 
 /** Owns the packet streams, sequence counters, and write lock of one TCP socket. */
 public final class PacketChannel implements AutoCloseable {
+    public enum Role { INITIATOR, RESPONDER }
+
+    private static final int RAW_RECORD_SIZE = 64 * 1024;
     private static final ScheduledThreadPoolExecutor DEADLINES = new ScheduledThreadPoolExecutor(1,
             Thread.ofPlatform().daemon().name("socket-write-deadlines").factory());
     static { DEADLINES.setRemoveOnCancelPolicy(true); }
@@ -28,6 +38,9 @@ public final class PacketChannel implements AutoCloseable {
     private final Object writeLock = new Object();
     private long receivedSequence;
     private long sentSequence;
+    private EncryptedRecords encryptedRecords;
+    private byte[] pendingRawBytes = new byte[0];
+    private int pendingRawOffset;
 
     public PacketChannel(Socket socket) throws IOException {
         this(socket, Duration.ofSeconds(30));
@@ -41,10 +54,40 @@ public final class PacketChannel implements AutoCloseable {
         this.output = socket.getOutputStream();
     }
 
+    /** Call after HELLO/ACK, before starting the background reader. */
+    public void enableEncryption(SessionKeys keys, Role role) throws IOException {
+        Objects.requireNonNull(keys);
+        Objects.requireNonNull(role);
+        synchronized (readLock) {
+            synchronized (writeLock) {
+                if (encryptedRecords != null) throw new IOException("Encryption already enabled");
+                if (sentSequence != 1 || receivedSequence != 1) {
+                    throw new IOException("Encryption must be enabled immediately after HELLO/ACK");
+                }
+                encryptedRecords = role == Role.INITIATOR
+                        ? new EncryptedRecords(input, output, keys.initiatorToResponder(), keys.responderToInitiator())
+                        : new EncryptedRecords(input, output, keys.responderToInitiator(), keys.initiatorToResponder());
+            }
+        }
+    }
+
+    /** Enable encryption and prove possession of both directional keys before application traffic. */
+    public void confirmEncryption(SessionKeys keys, Role role) throws IOException {
+        enableEncryption(keys, role);
+        if (role == Role.INITIATOR) {
+            long sequence = send(Packet.empty(OpCode.KEY_CONFIRM_REQUEST));
+            Packet response = PacketValidator.validateResponse(read(), OpCode.KEY_CONFIRM_RESPONSE, sequence);
+            PacketValidator.requireSuccess(response);
+        } else {
+            Packet request = PacketValidator.validateRequest(read(), OpCode.KEY_CONFIRM_REQUEST, 0, 0);
+            send(Packet.status(OpCode.KEY_CONFIRM_RESPONSE, request.sequence(), "OK"));
+        }
+    }
+
     public Packet read() throws IOException {
         synchronized (readLock) {
             try {
-                Packet packet = PacketCodec.read(input);
+                Packet packet = encryptedRecords == null ? PacketCodec.read(input) : readEncryptedPacket();
                 if (packet == null) return null;
                 long expected = nextSequence(receivedSequence);
                 if (packet.sequence() != expected) {
@@ -59,6 +102,20 @@ public final class PacketChannel implements AutoCloseable {
         }
     }
 
+    private Packet readEncryptedPacket() throws IOException {
+        if (pendingRawOffset != pendingRawBytes.length) {
+            throw new IOException("Unread file data before packet");
+        }
+        byte[] plaintext = encryptedRecords.read();
+        if (plaintext == null) return null;
+        ByteArrayInputStream decoded = new ByteArrayInputStream(plaintext);
+        Packet packet = PacketCodec.read(decoded);
+        if (packet == null || decoded.available() != 0) {
+            throw new IOException("Expected exactly one packet in encrypted record");
+        }
+        return packet;
+    }
+
     public long send(Packet packet) throws IOException {
         return send(packet, sequence -> {});
     }
@@ -69,7 +126,13 @@ public final class PacketChannel implements AutoCloseable {
                 try {
                     long sequence = nextSequence(sentSequence);
                     beforeWrite.accept(sequence);
-                    PacketCodec.write(output, packet, sequence);
+                    if (encryptedRecords == null) {
+                        PacketCodec.write(output, packet, sequence);
+                    } else {
+                        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+                        PacketCodec.write(encoded, packet, sequence);
+                        encryptedRecords.write(encoded.toByteArray());
+                    }
                     sentSequence = sequence;
                     return sequence;
                 } catch (IOException e) {
@@ -81,10 +144,15 @@ public final class PacketChannel implements AutoCloseable {
     }
 
     public void writeRaw(byte[] bytes, int offset, int length) throws IOException {
+        Objects.checkFromIndexSize(offset, length, bytes.length);
         try (WriteDeadline deadline = new WriteDeadline()) {
             synchronized (writeLock) {
                 try {
-                    output.write(bytes, offset, length);
+                    if (encryptedRecords == null) {
+                        output.write(bytes, offset, length);
+                    } else {
+                        writeEncryptedRaw(bytes, offset, length);
+                    }
                 } catch (IOException e) {
                     closeAfterFailure(e);
                     throw e;
@@ -94,13 +162,48 @@ public final class PacketChannel implements AutoCloseable {
     }
 
     public void readRaw(byte[] bytes, int offset, int length) throws IOException {
+        Objects.checkFromIndexSize(offset, length, bytes.length);
         synchronized (readLock) {
             try {
-                new DataInputStream(input).readFully(bytes, offset, length);
+                if (encryptedRecords == null) {
+                    new DataInputStream(input).readFully(bytes, offset, length);
+                } else {
+                    readEncryptedRaw(bytes, offset, length);
+                }
             } catch (IOException e) {
                 closeAfterFailure(e);
                 throw e;
             }
+        }
+    }
+
+    private void writeEncryptedRaw(byte[] bytes, int offset, int length) throws IOException {
+        while (length > 0) {
+            int size = Math.min(length, RAW_RECORD_SIZE);
+            encryptedRecords.write(Arrays.copyOfRange(bytes, offset, offset + size));
+            offset += size;
+            length -= size;
+        }
+    }
+
+    private void readEncryptedRaw(byte[] bytes, int offset, int length) throws IOException {
+        while (length > 0) {
+            if (pendingRawOffset == pendingRawBytes.length) {
+                byte[] record = encryptedRecords.read();
+                if (record == null) throw new EOFException("Incomplete encrypted file data");
+                if (record.length == 0) throw new IOException("Empty encrypted file data record");
+                pendingRawBytes = record;
+                pendingRawOffset = 0;
+            }
+            int size = Math.min(length, pendingRawBytes.length - pendingRawOffset);
+            System.arraycopy(pendingRawBytes, pendingRawOffset, bytes, offset, size);
+            pendingRawOffset += size;
+            offset += size;
+            length -= size;
+        }
+        if (pendingRawOffset == pendingRawBytes.length) {
+            pendingRawBytes = new byte[0];
+            pendingRawOffset = 0;
         }
     }
 

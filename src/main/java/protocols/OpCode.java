@@ -8,6 +8,8 @@ public enum OpCode {
     // Cilent-Server connection protocol
     HELLO(0x01),
     HELLO_ACK(0x02),
+    KEY_CONFIRM_REQUEST(0x03),
+    KEY_CONFIRM_RESPONSE(0x04),
     // Cilent-Server management protocol
     AUTH_REQUEST(0x10),
     AUTH_RESPONSE(0x11),
@@ -18,6 +20,8 @@ public enum OpCode {
     LOGOUT_REQUEST(0x16),
     LOGOUT_RESPONSE(0x17),
     PRESENCE_UPDATE(0x18),
+    PEER_KEY_REQUEST(0x19),
+    PEER_KEY_RESPONSE(0x1A),
     // Peer connection protocol
     PEER_HELLO(0x20),
     PEER_HELLO_ACK(0x21),
@@ -32,6 +36,8 @@ public enum OpCode {
     FILE_CHUNK(0x42), // reserved: file data now streams as raw bytes
     FILE_END(0x43),
     FILE_RESULT(0x44),
+    FILE_READY(0x4D),
+    FILE_TRANSFER_START(0x4E),
     // Broadcast file transfer protocol
     FILE_BROADCAST_UPLOAD_REQUEST(0x45),
     FILE_BROADCAST_UPLOAD_RESPONSE(0x46),
@@ -84,8 +90,9 @@ public enum OpCode {
 
     public boolean requiresStatus() {
         return switch (this) {
-            case HELLO_ACK, AUTH_RESPONSE, USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE,
-                    LOGOUT_RESPONSE, PEER_HELLO_ACK, FILE_RESULT,
+            case HELLO_ACK, KEY_CONFIRM_RESPONSE, AUTH_RESPONSE, USER_LIST_RESPONSE, PEER_LOOKUP_RESPONSE,
+                    PEER_KEY_RESPONSE,
+                    LOGOUT_RESPONSE, PEER_HELLO_ACK, FILE_RESULT, FILE_READY,
                     FILE_BROADCAST_UPLOAD_RESPONSE, FILE_BROADCAST_DOWNLOAD_RESPONSE,
                     DISCOVER_RESPONSE, HEARTBEAT_ACK, CHAT_SESSION_REPORT_RESPONSE, CHAT_SESSION_LIST_RESPONSE,
                     COMMUNITY_LIST_RESPONSE, COMMUNITY_CREATE_RESPONSE, COMMUNITY_JOIN_RESPONSE,

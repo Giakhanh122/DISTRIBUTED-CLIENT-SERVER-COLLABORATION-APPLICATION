@@ -1,5 +1,7 @@
 package client;
 
+import client.transfer.FileOffer;
+
 /** Structured session events shared by console and GUI without depending on JavaFX. */
 public interface ClientEvents {
     enum FileState { TRANSFERRING, REJECTED, COMPLETED, FAILED }

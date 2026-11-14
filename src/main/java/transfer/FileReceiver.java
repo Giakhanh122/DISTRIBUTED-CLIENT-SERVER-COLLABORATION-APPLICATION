@@ -43,12 +43,8 @@ public class FileReceiver {
 
     public File receive() throws IOException {
         Path tempFile = null;
+        Exception failure = null;
         try {
-            Path directory = saveDirectory.toPath();
-            Files.createDirectories(directory);
-            String safeName = sanitizeFileName(meta.fileName());
-            // Never use untrusted metadata as the temporary file's path.
-            tempFile = Files.createTempFile(directory, ".transfer-", ".tmp");
             if (session != null) {
                 synchronized (session) {
                     if (session.state() == FileTransferSession.State.ACCEPTED) {
@@ -58,6 +54,11 @@ public class FileReceiver {
                     }
                 }
             }
+            Path directory = saveDirectory.toPath();
+            Files.createDirectories(directory);
+            String safeName = sanitizeFileName(meta.fileName());
+            // Never use untrusted metadata as the temporary file's path.
+            tempFile = Files.createTempFile(directory, ".transfer-", ".tmp");
 
             try (OutputStream fileOutput = Files.newOutputStream(tempFile)) {
                 FileDataReader.receive(channel, fileOutput, meta.transferId(), meta.fileSize(), meta.checksum(),
@@ -89,6 +90,7 @@ public class FileReceiver {
             }
             return target.toFile();
         } catch (IOException | RuntimeException e) {
+            failure = e;
             if (session != null) {
                 session.fail();
             }
@@ -100,7 +102,12 @@ public class FileReceiver {
             throw e;
         } finally {
             if (tempFile != null) {
-                Files.deleteIfExists(tempFile);
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (IOException cleanupError) {
+                    if (failure == null) throw cleanupError;
+                    failure.addSuppressed(cleanupError);
+                }
             }
         }
     }
@@ -126,19 +133,20 @@ public class FileReceiver {
             } catch (FileAlreadyExistsException e) {
                 continue;
             }
-            boolean moved = false;
             try {
                 try {
                     Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
                 } catch (AtomicMoveNotSupportedException e) {
                     Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
                 }
-                moved = true;
                 return target;
-            } finally {
-                if (!moved) {
+            } catch (IOException | RuntimeException e) {
+                try {
                     Files.deleteIfExists(target);
+                } catch (IOException cleanupError) {
+                    e.addSuppressed(cleanupError);
                 }
+                throw e;
             }
         }
     }

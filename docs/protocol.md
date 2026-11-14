@@ -147,10 +147,12 @@ INVALID_NAME hoặc NAME_TOO_LONG. Chat broadcast không có response riêng.
 
 | Opcode | Mã | Các trường body |
 | --- | --- | --- |
-| FILE_OFFER | 0x40 | transferId:string, sender:string, receiver:string, fileName:string, fileSize:integer, checksum:string |
-| FILE_DECISION | 0x41 | replyTo:integer, transferId:string, decision:string ACCEPT/REJECT |
+| FILE_OFFER | 0x40 | transferId:string, sender:string, receiver:string, fileName:string, fileSize:integer, checksum:string, publicKey:string (X25519, X.509 DER/Base64) |
+| FILE_DECISION | 0x41 | replyTo:integer, transferId:string, decision:string ACCEPT/REJECT; ACCEPT kèm publicKey:string |
 | FILE_END | 0x43 | transferId:string, checksum:string |
 | FILE_RESULT | 0x44 | replyTo:integer, status:string OK/FAIL; FAIL có reason:string |
+| FILE_READY | 0x4D | replyTo:integer, status:string OK, transferId:string, connectionNonce:string (32 byte ngẫu nhiên, Base64) |
+| FILE_TRANSFER_START | 0x4E | transferId:string |
 
 fileSize là số byte file gốc, từ 0 tới 500 MiB. checksum là SHA-256 hex thường
 64 ký tự. Mã FILE_CHUNK 0x42 được giữ chỗ, không còn dùng để truyền dữ liệu.
@@ -256,27 +258,35 @@ phát sinh opcode hoặc session mới.
 
 ### 5.3. Dữ liệu file nhị phân
 
-Sau ACCEPT, sender mở socket dữ liệu riêng. Đối với P2P, JSON đầu tiên là
-FILE_OFFER lặp metadata đã chấp nhận. Đối với broadcast, JSON đầu là START.
-Receiver xác định transfer và fileSize từ metadata trước khi đọc file.
+FILE_OFFER/FILE_DECISION P2P đi qua kênh chat mã hóa, trao đổi public key X25519
+riêng cho mỗi transfer. Hai bên dẫn xuất khóa AES theo metadata và public key
+theo thứ tự sender/receiver. Sau ACCEPT, sender mở socket dữ liệu riêng:
 
 ```text
-Sender → Receiver:
-[len][JSON xác định transfer, sequence=1]
-[đúng fileSize byte file gốc]
-[len][JSON FILE_END, sequence=2]
-
-Receiver → Sender:
-[len][JSON FILE_RESULT, sequence=1, body.replyTo=2]
+Sender → Receiver: FILE_TRANSFER_START {transferId}, sequence=1 (chưa mã hóa)
+Receiver → Sender: FILE_READY {transferId, connectionNonce}, sequence=1, replyTo=1 (chưa mã hóa)
+Hai bên dẫn xuất khóa cho socket từ khóa transfer và connectionNonce, rồi bật AES-GCM.
+Sender → Receiver: KEY_CONFIRM_REQUEST, sequence=2 (mã hóa)
+Receiver → Sender: KEY_CONFIRM_RESPONSE, sequence=2, replyTo=2 (mã hóa)
+Receiver claim transfer sau khi xác nhận khóa thành công, trước khi nhận byte file.
+Sender → Receiver: các record dữ liệu file đã mã hóa
+Sender → Receiver: FILE_END, sequence=3 (mã hóa)
+Receiver → Sender: FILE_RESULT, sequence=3, replyTo=3 (mã hóa)
 ```
 
-Trên broadcast download, START đi chiều client → server với sequence 1;
-server gửi raw file rồi FILE_END sequence 1 theo chiều server → client;
-client trả FILE_RESULT sequence 2, replyTo 1.
+Socket broadcast thực hiện handshake và xác nhận khóa với server trước khi gửi
+UPLOAD/DOWNLOAD_START. Sau đó file, FILE_END và FILE_RESULT cũng đi qua AES-GCM.
+
+Mỗi socket file P2P được cấp nonce mới, kể cả khi mở lại cùng transferId. Socket
+không xác thực được không claim transfer, không xóa khóa gốc và không báo FAILED
+cho lời mời hợp lệ. Các lần thử không dùng lại traffic key/counter nonce.
+Khi chưa xác thực thành công, lời mời vẫn chịu timeout ACCEPT 30 giây như cũ.
 
 Receiver đọc đúng fileSize byte bằng buffer tối đa 64 KiB, sau đó quay lại đọc
-JSON FILE_END. Byte file không có len, sequence hoặc header trên từng buffer;
-không đổi sang string, JSON array hay Base64. Không dùng chunkCount vì ranh giới
+JSON FILE_END. Ở lớp mã hóa, mỗi record có tiền tố độ dài ciphertext 4 byte,
+ciphertext và GCM tag 16 byte. Mỗi chiều dùng khóa và counter nonce riêng;
+counter dùng chung cho packet và dữ liệu file. Byte file không đổi sang string,
+JSON array hay Base64. Không dùng chunkCount vì ranh giới
 các lần đọc TCP không tương ứng ranh giới buffer bên gửi. File rỗng bỏ qua pha
 raw và đọc FILE_END ngay.
 
@@ -285,8 +295,9 @@ file đích. Sender chỉ báo hoàn tất khi FILE_RESULT có status OK và rep
 sequence FILE_END. EOF hoặc thiếu xác nhận không phải thành công. Lỗi sớm có thể
 trả FILE_RESULT FAIL theo quy tắc replyTo ở mục 2.2.
 
-P2P có connect timeout 10 giây, read timeout 30 giây; accepted offer chưa có
-socket hết hạn sau 30 giây. Socket dữ liệu broadcast có read timeout 60 giây.
+P2P có connect timeout 10 giây, read timeout 30 giây. Lời mời chưa trả lời hết hạn
+sau 2 phút; bên nhận chờ socket và xác nhận khóa tối đa 30 giây sau ACCEPT.
+Socket dữ liệu broadcast có read timeout 60 giây.
 File nhận trùng tên được thêm hậu tố; file tạm được dọn khi thất bại.
 Công bố file và hủy dùng cùng khóa trạng thái. Khi file đã lưu hợp lệ nhưng ACK
 không gửi được, receiver vẫn tải thành công; sender chỉ thành công khi nhận ACK.

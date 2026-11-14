@@ -1,6 +1,6 @@
 package app;
 
-import client.ClientConsole;
+import client.console.ClientConsole;
 import java.util.Scanner;
 import server.Server;
 

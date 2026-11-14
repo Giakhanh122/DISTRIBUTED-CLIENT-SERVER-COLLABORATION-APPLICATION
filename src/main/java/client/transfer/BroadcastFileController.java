@@ -1,4 +1,9 @@
-package client;
+package client.transfer;
+
+import client.ClientEvents;
+import client.Client;
+import client.community.CommunityClient;
+import client.connection.ServerConnection;
 
 import java.io.File;
 import java.io.IOException;
@@ -19,7 +24,7 @@ import transfer.FileReceiver;
 import transfer.FileSender;
 import transfer.FileTransferSession;
 
-final class BroadcastFileController implements AutoCloseable {
+public final class BroadcastFileController implements AutoCloseable {
     private static final int CONNECT_TIMEOUT_MS = 10000;
     private static final int READ_TIMEOUT_MS = 60000;
     private static final long WORKER_SHUTDOWN_TIMEOUT_MS = 1000;
@@ -44,7 +49,7 @@ final class BroadcastFileController implements AutoCloseable {
     private final Set<String> activeIds = new HashSet<>();
     private volatile boolean closed;
 
-    BroadcastFileController(ServerConnection server, String host, int port,
+    public BroadcastFileController(ServerConnection server, String host, int port,
                             String username, LongSupplier nextOfferNumber, ClientEvents events) {
         this.events = events;
         this.server = server;
@@ -55,7 +60,7 @@ final class BroadcastFileController implements AutoCloseable {
         this.nextOfferNumber = nextOfferNumber;
     }
 
-    void onOffer(Packet packet) throws IOException {
+    public void onOffer(Packet packet) throws IOException {
         String fileId = packet.string("fileId");
         FileTransferMeta meta = FileTransferMeta.fromJson(Json.object("transferId", fileId,
                 "sender", packet.string("sender"), "receiver", username,
@@ -71,12 +76,12 @@ final class BroadcastFileController implements AutoCloseable {
         }
     }
 
-    void upload(File file, CommunityClient.Selection community) throws IOException {
+    public void upload(File file, CommunityClient.Selection community) throws IOException {
         String id = java.util.UUID.randomUUID().toString();
         startWorker(id, "Broadcast file failed: ", () -> uploadFile(id, file, community));
     }
 
-    boolean accept(String number) throws IOException {
+    public boolean accept(String number) throws IOException {
         Offer offer = claim(number);
         if (offer == null) return false;
         events.onFileState(offer.fileId(), ClientEvents.FileState.TRANSFERRING, "Downloading from server");
@@ -84,7 +89,7 @@ final class BroadcastFileController implements AutoCloseable {
         return true;
     }
 
-    boolean reject(String number) throws IOException {
+    public boolean reject(String number) throws IOException {
         Offer offer = claim(number);
         if (offer == null) return false;
         startWorker(offer.fileId(), "[BROADCAST] Reject failed: ", () -> {
@@ -123,7 +128,7 @@ final class BroadcastFileController implements AutoCloseable {
         String fileId = response.string("fileId");
         Socket socket = openDataSocket();
         try (socket) {
-            PacketChannel channel = new PacketChannel(socket);
+            PacketChannel channel = new Client().secureChannel(socket);
             channel.send(Packet.json(OpCode.FILE_BROADCAST_UPLOAD_START,
                     Json.object("fileId", fileId, "uploadToken", response.string("uploadToken"))));
             FileTransferSession upload = trackSession(new FileTransferMeta(fileId, username, community.name(),
@@ -142,7 +147,7 @@ final class BroadcastFileController implements AutoCloseable {
                 Json.object("fileId", offer.fileId(), "decision", "ACCEPT")), OpCode.FILE_BROADCAST_DOWNLOAD_RESPONSE);
         Socket socket = openDataSocket();
         try (socket) {
-            PacketChannel channel = new PacketChannel(socket);
+            PacketChannel channel = new Client().secureChannel(socket);
             channel.send(Packet.json(OpCode.FILE_BROADCAST_DOWNLOAD_START,
                     Json.object("fileId", offer.fileId(), "downloadToken", response.string("downloadToken"))));
             FileTransferMeta meta = new FileTransferMeta(offer.fileId(), offer.sender(), username,
@@ -229,7 +234,7 @@ final class BroadcastFileController implements AutoCloseable {
     }
 
     /** Called after ServerConnection closes and releases workers waiting for replies. */
-    void awaitWorkers() {
+    public void awaitWorkers() {
         Set<Thread> finishing;
         synchronized (lifecycleLock) { finishing = Set.copyOf(workers); }
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(WORKER_SHUTDOWN_TIMEOUT_MS);
