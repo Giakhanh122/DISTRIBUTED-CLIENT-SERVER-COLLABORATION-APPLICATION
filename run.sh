@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-exec bash "$(dirname "$0")/app.sh" cli "$@"
+exec bash "$(dirname "$0")/app.sh" -m c "$@"

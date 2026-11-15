@@ -84,14 +84,14 @@ File kiểm thử tạm và dữ liệu sinh ra được dọn sau khi chạy.
 
 | Lệnh | Chế độ |
 | --- | --- |
-| `./run.sh` hoặc `./app.sh cli` | Chạy `app.Main`, chọn server/client trong terminal |
-| `./app.sh server` | Chạy server trực tiếp |
-| `./app.sh` hoặc `./app.sh ui` hoặc `./run_ui.sh` | Mở JavaFX |
+| `./run.sh` hoặc `.\run.ps1` | Chạy Client dòng lệnh (CLI) |
+| `./app.sh -m s` hoặc `.\app.ps1 -m s` | Chạy Server trực tiếp |
+| `./app.sh` hoặc `.\app.ps1` (hoặc `-m u`) | Mở JavaFX UI |
+| `./build-exe.sh` hoặc `.\build-exe.ps1` | Đóng gói ứng dụng độc lập (`dist/DLChat`) |
 
 ## Khởi động giao diện UI
 
-Chạy `./app.sh server` ở một terminal, sau đó chạy `./app.sh` ở terminal khác
-để mở JavaFX. Trên Windows dùng `app.ps1 server` và `app.ps1 ui` tương ứng.
+Chạy `./app.sh -m s` (hoặc `.\app.ps1 -m s`) ở một terminal, sau đó chạy `./app.sh` (hoặc `.\app.ps1`) ở terminal khác để mở JavaFX.
 
 ## Mất kết nối và kết nối lại
 
