@@ -25,6 +25,19 @@ Yêu cầu JDK 21 trở lên và Maven. Từ thư mục gốc repository, biên 
 Chọn `s` ở terminal thứ nhất để chạy server. Mở terminal khác, chạy lại script và
 chọn `c` để chạy client. Khi không truyền địa chỉ, client dùng UDP discovery để tìm server.
 
+Trước lần chạy client đầu tiên, đặt public key của server tại
+`config/server-public.key`. Nếu server và client chạy trong cùng repository:
+
+```bash
+mkdir -p config
+cp server_identity/server-public.key config/server-public.key
+```
+
+Server tạo public key khi khởi động lần đầu. Nếu client ở máy khác, lấy
+`server_identity/server-public.key` từ đúng máy server qua kênh tin cậy rồi đặt
+vào thư mục `config` trên máy client. Chỉ sao chép public key; private key giữ
+trên server. Khóa pin phải khớp server mà client kết nối.
+
 Để chỉ định server và bỏ qua discovery:
 
 ```bash

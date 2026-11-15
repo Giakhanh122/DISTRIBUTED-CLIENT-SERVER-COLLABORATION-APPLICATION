@@ -15,5 +15,6 @@ __pycache__/
 .deps/
 report/.auctex-auto/
 /server_identity/
+/config/server-public.key
 /.server_identity.lock
 /.server_identity-*/
