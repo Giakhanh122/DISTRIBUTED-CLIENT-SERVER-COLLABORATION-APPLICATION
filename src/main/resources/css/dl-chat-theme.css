@@ -145,6 +145,60 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.attachment-tray {
+    -fx-background-color: #F4F4F5;
+    -fx-background-radius: 8px;
+    -fx-padding: 8px;
+}
+
+.attachment-summary {
+    -fx-text-fill: #52525B;
+    -fx-font-size: 11px;
+}
+
+.attachment-clear {
+    -fx-background-color: transparent;
+    -fx-text-fill: #71717A;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+
+.attachment-chip {
+    -fx-background-color: #FFFFFF;
+    -fx-border-color: #E4E4E7;
+    -fx-border-radius: 7px;
+    -fx-background-radius: 7px;
+    -fx-padding: 5px 7px;
+}
+
+.attachment-preview {
+    -fx-background-color: #FEF3C7;
+    -fx-background-radius: 5px;
+    -fx-min-width: 42px;
+    -fx-min-height: 42px;
+    -fx-pref-width: 42px;
+    -fx-pref-height: 42px;
+}
+
+.attachment-name {
+    -fx-text-fill: #18181B;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.attachment-size {
+    -fx-text-fill: #71717A;
+    -fx-font-size: 10px;
+}
+
+.attachment-remove {
+    -fx-background-color: transparent;
+    -fx-text-fill: #71717A;
+    -fx-font-size: 15px;
+    -fx-padding: 0 3px;
+    -fx-cursor: hand;
+}
+
 .btn-primary {
     -fx-background-color: #F59E0B;
     -fx-text-fill: #09090B;

@@ -13,6 +13,18 @@ final class ConsoleEvents implements ClientEvents {
     @Override public void onSystemMessage(String content) { System.out.println(content); }
 
     @Override public void onMessage(String peer, String content) { System.out.println(peer + ": " + content); }
+    @Override public void onMessageDelivered(String peer, String messageId) {
+        System.out.println("[DELIVERED] Message to " + peer + " was delivered.");
+    }
+    @Override public void onTyping(String peer, boolean typing) {
+        System.out.println(typing ? peer + " is typing..." : peer + " stopped typing.");
+    }
+    @Override public void onPresenceUpdate(String username, boolean online) {
+        System.out.println("[PRESENCE] " + username + (online ? " is online." : " is offline."));
+    }
+    @Override public void onProtocolError(String code, String reason, boolean fatal) {
+        System.err.println("[PROTOCOL " + code + (fatal ? ", fatal" : "") + "] " + reason);
+    }
 
     @Override public void onBroadcast(String communityId, String sender, String content) {
         System.out.println("(" + communityId + ":broadcast) " + sender + " : " + content);

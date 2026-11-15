@@ -9,7 +9,11 @@ public interface ClientEvents {
     ClientEvents NONE = new ClientEvents() {};
     default void onSystemMessage(String content) {}
     default void onMessage(String peer, String content) {}
+    default void onMessageDelivered(String peer, String messageId) {}
+    default void onTyping(String peer, boolean typing) {}
     default void onBroadcast(String communityId, String sender, String content) {}
+    default void onPresenceUpdate(String username, boolean online) {}
+    default void onProtocolError(String code, String reason, boolean fatal) {}
     default void onPeerConnected(String peer) {}
     default void onPeerDisconnected(String peer) {}
     default void onServerClosed() {}

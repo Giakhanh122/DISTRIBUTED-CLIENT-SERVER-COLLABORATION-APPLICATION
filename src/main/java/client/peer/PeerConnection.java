@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
 import protocols.*;
 import security.PeerKeyProof;
@@ -141,11 +142,19 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void sendMessage(String message) throws IOException {
-        Packet chatMessage = Packet.json(ChatType.MESSAGE, Json.object("content", message));
+        sendMessage(UUID.randomUUID().toString(), message);
+    }
+
+    public void sendMessage(String messageId, String message) throws IOException {
+        requireMessageId(messageId);
         if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
             throw new IOException("Message exceeds limit: " + MAX_CHAT_BYTES);
         }
-        sendPacket(chatMessage);
+        sendPacket(Packet.json(ChatType.MESSAGE, Json.object("messageId", messageId, "content", message)));
+    }
+
+    public void sendTyping(boolean typing) throws IOException {
+        sendPacket(Packet.json(ChatType.TYPING, Json.object("typing", typing)));
     }
 
     public long sendPacket(Packet packet) throws IOException {
@@ -177,18 +186,48 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void readMessages(String peerUsername, Consumer<String> onMessage, Consumer<Packet> onFilePacket) throws IOException {
+        readMessages(peerUsername, (id, content) -> onMessage.accept(content), onFilePacket, id -> {}, typing -> {});
+    }
+
+    public void readMessages(String peerUsername, BiConsumer<String, String> onMessage,
+            Consumer<Packet> onFilePacket, Consumer<String> onReceipt, Consumer<Boolean> onTyping) throws IOException {
         Packet packet;
         while ((packet = channel.read()) != null) {
             switch (packet.type()) {
                 case ChatType.MESSAGE -> {
-                    if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
+                    String messageId = packet.string("messageId");
+                    requireMessageId(messageId);
+                    String content = packet.string("content");
+                    if (content.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
-                    onMessage.accept(packet.string("content"));
+                    onMessage.accept(messageId, content);
+                    sendPacket(Packet.json(ChatType.RECEIPT,
+                            Json.object("messageId", messageId, "receipt", "DELIVERED")));
                 }
                 case FileType.OFFER, FileType.DECISION -> onFilePacket.accept(packet);
+                case ChatType.RECEIPT -> {
+                    String messageId = packet.string("messageId");
+                    requireMessageId(messageId);
+                    if (!packet.string("receipt").equals("DELIVERED")) {
+                        throw new IOException("Unexpected receipt status");
+                    }
+                    onReceipt.accept(messageId);
+                }
+                case ChatType.TYPING -> onTyping.accept(packet.bool("typing"));
+                case SystemType.ERROR -> throw new IOException("Peer protocol error: " + packet.string("reason"));
                 default -> throw new IOException("Unexpected peer chat packet: " + packet.type());
             }
+        }
+    }
+
+    private static void requireMessageId(String messageId) throws IOException {
+        try {
+            if (!UUID.fromString(messageId).toString().equals(messageId)) {
+                throw new IllegalArgumentException("Non-canonical UUID");
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid message ID", e);
         }
     }
 

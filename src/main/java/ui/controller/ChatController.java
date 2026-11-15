@@ -2,9 +2,14 @@ package ui.controller;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -17,9 +22,13 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -27,6 +36,7 @@ import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import javafx.util.Duration;
 import ui.adapter.ChatClientAdapter;
 import ui.adapter.ClientEventListener;
 import ui.model.ChatMessageModel;
@@ -82,10 +92,20 @@ public class ChatController implements ClientEventListener {
 
     @FXML private HBox inputContainer;
     @FXML private Button attachBtn;
+    @FXML private VBox attachmentTray;
+    @FXML private FlowPane attachmentsFlow;
+    @FXML private Label attachmentSummary;
+    @FXML private Button clearAttachmentsBtn;
     @FXML private TextField messageInput;
     @FXML private Button sendBtn;
 
     private final ChatClientAdapter adapter = ChatClientAdapter.getInstance();
+    private final List<File> pendingAttachments = new ArrayList<>();
+    private String pendingTargetKey;
+    private String pendingTargetLabel;
+
+    private static final List<String> IMAGE_EXTENSIONS = List.of(
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp");
 
     private final ObservableList<CommunityModel> allCommunities = FXCollections.observableArrayList();
     private FilteredList<CommunityModel> filteredCommunities;
@@ -103,11 +123,30 @@ public class ChatController implements ClientEventListener {
 
     private CommunityModel activeCommunity = null;
     private UserModel activePeer = null;
+    private final Map<String, PendingReceipt> pendingReceipts = new HashMap<>();
+    private final PauseTransition localTypingTimeout = new PauseTransition(Duration.seconds(2));
+    private final PauseTransition remoteTypingTimeout = new PauseTransition(Duration.seconds(5));
+    private boolean localTyping;
+    private String localTypingPeer;
+    private String remoteTypingPeer;
+
+    private record PendingReceipt(String peer, ChatMessageModel message, PauseTransition timeout) {}
 
     @FXML
     public void initialize() {
         connectionView = new ConnectionStatusView(connectionStatusLabel, connectionStatusDot, reconnectBtn);
         messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::rejectFileOffer);
+        localTypingTimeout.setOnFinished(event -> stopLocalTyping());
+        remoteTypingTimeout.setOnFinished(event -> {
+            String peer = remoteTypingPeer;
+            clearRemoteTyping();
+            if (peer != null && currentMode == Mode.DIRECT && activePeer != null
+                    && activePeer.getUsername().equalsIgnoreCase(peer)) {
+                targetMetaLabel.setText(adapter.isPeerConnected(peer)
+                        ? "Direct P2P Session Active" : "Peer disconnected");
+            }
+        });
+        messageInput.textProperty().addListener((observable, oldText, newText) -> updateLocalTyping(newText));
 
         setupTitleBar();
         setupCurrentUserDisplay();
@@ -143,7 +182,7 @@ public class ChatController implements ClientEventListener {
         emptyStateIconContainer.getChildren().add(IconUtils.createIconNode(IconUtils.CHAT_BUBBLE, 44, "#D4D4D8"));
 
         attachBtn.setGraphic(IconUtils.createIconNode(IconUtils.PAPERCLIP, 16, "#71717A"));
-        attachBtn.setTooltip(new Tooltip("Attach file to send"));
+        attachBtn.setTooltip(new Tooltip("Attach files and images"));
 
         sendBtn.setGraphic(IconUtils.createIconNode(IconUtils.SEND, 14, "#09090B"));
     }
@@ -224,6 +263,8 @@ public class ChatController implements ClientEventListener {
     }
 
     private void showEmptyChatState() {
+        stopLocalTyping();
+        clearRemoteTyping();
         if (currentMode == Mode.DIRECT) activePeer = null;
         else activeCommunity = null;
         emptyStateView.setVisible(true);
@@ -252,6 +293,8 @@ public class ChatController implements ClientEventListener {
     private void handleSelectDirectTab() { selectNavigationTab(Mode.DIRECT); }
 
     private void selectNavigationTab(Mode mode) {
+        stopLocalTyping();
+        clearRemoteTyping();
         currentMode = mode;
         updateRailButton(railCommunitiesBtn, Mode.COMMUNITY, IconUtils.CHAT_BUBBLE);
         updateRailButton(railExploreBtn, Mode.EXPLORE, IconUtils.COMPASS);
@@ -319,6 +362,8 @@ public class ChatController implements ClientEventListener {
     }
 
     private void selectCommunity(CommunityModel comm) {
+        stopLocalTyping();
+        clearRemoteTyping();
         this.activeCommunity = comm;
         comm.clearUnread();
         communitiesListView.refresh();
@@ -348,6 +393,8 @@ public class ChatController implements ClientEventListener {
     }
 
     private void selectPeerUser(UserModel user) {
+        stopLocalTyping();
+        clearRemoteTyping();
         this.activePeer = user;
         user.clearUnread();
         usersListView.refresh();
@@ -419,46 +466,237 @@ public class ChatController implements ClientEventListener {
     @FXML
     private void handleSendMessage() {
         String text = messageInput.getText().trim();
-        if (text.isEmpty()) return;
         if ((currentMode == Mode.DIRECT && activePeer == null)
                 || (currentMode != Mode.DIRECT && activeCommunity == null)) return;
-        messageInput.clear();
 
         boolean direct = currentMode == Mode.DIRECT;
         String target = direct ? activePeer.getUsername() : activeCommunity.getId();
-        ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
-        msg.sending();
-        String convKey = (direct ? "peer-" : "comm-") + target;
-        conversations.add(convKey, msg);
-        messageView.render(msg);
-        if (direct) adapter.sendChatMessage(target, text, msg::sent);
-        else adapter.broadcastMessage(target, text, msg::sent);
+        String convKey = direct
+                ? ConversationStore.directKey(target)
+                : ConversationStore.communityKey(target);
+        if (!pendingAttachments.isEmpty() && !convKey.equals(pendingTargetKey)) {
+            JavaFxUtils.showErrorAlert("Attachments not sent",
+                    "The selected files are staged for " + pendingTargetLabel
+                            + ". Return to that conversation or clear the attachments first.");
+            return;
+        }
+        if (text.isEmpty() && pendingAttachments.isEmpty()) return;
+
+        List<File> attachments = List.copyOf(pendingAttachments);
+        String communityName = direct ? null : activeCommunity.getName();
+        stopLocalTyping();
+        messageInput.clear();
+        clearPendingAttachments();
+
+        if (!text.isEmpty()) {
+            ChatMessageModel msg = new ChatMessageModel(adapter.getCurrentUsername(), text, true);
+            msg.sending();
+            conversations.add(convKey, msg);
+            messageView.render(msg);
+            if (direct) {
+                String messageId = UUID.randomUUID().toString();
+                trackPendingReceipt(messageId, target, msg);
+                adapter.sendChatMessage(target, text, messageId, error -> {
+                    msg.sent(error);
+                    if (error != null) clearPendingReceipt(messageId);
+                });
+            }
+            else adapter.broadcastMessage(target, text, msg::sent);
+        }
+
+        for (File file : attachments) {
+            if (direct) adapter.sendFile(target, file);
+            else adapter.broadcastFile(target, communityName, file);
+        }
         scrollToBottom();
+    }
+
+    private void updateLocalTyping(String text) {
+        if (currentMode != Mode.DIRECT || activePeer == null || !adapter.isPeerConnected(activePeer.getUsername())) {
+            stopLocalTyping();
+            return;
+        }
+        if (text == null || text.isEmpty()) {
+            stopLocalTyping();
+            return;
+        }
+        String peer = activePeer.getUsername();
+        if (!localTyping || !peer.equals(localTypingPeer)) {
+            stopLocalTyping();
+            localTyping = true;
+            localTypingPeer = peer;
+            adapter.sendTyping(peer, true);
+        }
+        localTypingTimeout.playFromStart();
+    }
+
+    private void stopLocalTyping() {
+        localTypingTimeout.stop();
+        String peer = localTypingPeer;
+        localTypingPeer = null;
+        boolean wasTyping = localTyping;
+        localTyping = false;
+        if (wasTyping && peer != null && adapter.isPeerConnected(peer)) adapter.sendTyping(peer, false);
+    }
+
+    private void clearRemoteTyping() {
+        remoteTypingTimeout.stop();
+        remoteTypingPeer = null;
+    }
+
+    private void trackPendingReceipt(String messageId, String peer, ChatMessageModel message) {
+        PauseTransition timeout = new PauseTransition(Duration.seconds(30));
+        timeout.setOnFinished(event -> pendingReceipts.remove(messageId));
+        pendingReceipts.put(messageId, new PendingReceipt(peer, message, timeout));
+        timeout.playFromStart();
+    }
+
+    private void clearPendingReceipt(String messageId) {
+        PendingReceipt pending = pendingReceipts.remove(messageId);
+        if (pending != null) pending.timeout().stop();
+    }
+
+    private void clearPendingReceipts(String peer) {
+        for (var entry : new ArrayList<>(pendingReceipts.entrySet())) {
+            if (entry.getValue().peer().equalsIgnoreCase(peer)) clearPendingReceipt(entry.getKey());
+        }
     }
 
     @FXML
     private void handleAttachFile() {
+        String targetKey = currentConversationKey();
+        if (targetKey == null) return;
+        if (!pendingAttachments.isEmpty() && !targetKey.equals(pendingTargetKey)) {
+            JavaFxUtils.showErrorAlert("Attachments not added",
+                    "The current selection belongs to " + pendingTargetLabel
+                            + ". Clear it before attaching files to another conversation.");
+            return;
+        }
+
         FileChooser chooser = new FileChooser();
         String title = (currentMode != Mode.DIRECT)
-                ? "Select File to Broadcast to #" + (activeCommunity != null ? activeCommunity.getName() : "Community")
-                : "Select File to Send to @" + (activePeer != null ? activePeer.getUsername() : "User");
+                ? "Select Files to Broadcast to #" + (activeCommunity != null ? activeCommunity.getName() : "Community")
+                : "Select Files to Send to @" + (activePeer != null ? activePeer.getUsername() : "User");
         chooser.setTitle(title);
+        FileChooser.ExtensionFilter images = new FileChooser.ExtensionFilter(
+                "Images", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp");
+        FileChooser.ExtensionFilter allFiles = new FileChooser.ExtensionFilter("All files", "*.*");
+        chooser.getExtensionFilters().addAll(images, allFiles);
+        chooser.setSelectedExtensionFilter(allFiles);
 
         Stage stage = (Stage) attachBtn.getScene().getWindow();
-        File file = chooser.showOpenDialog(stage);
+        List<File> selected = chooser.showOpenMultipleDialog(stage);
+        if (selected == null || selected.isEmpty()) return;
 
-        if (file != null) {
-            if (file.length() > protocols.FileTransferMeta.MAX_FILE_SIZE) {
-                JavaFxUtils.showErrorAlert("File Too Large", "Maximum supported file size is 500 MiB.");
-                return;
-            }
-
-            if (currentMode != Mode.DIRECT && activeCommunity != null) {
-                adapter.broadcastFile(activeCommunity.getId(), activeCommunity.getName(), file);
-            } else if (currentMode == Mode.DIRECT && activePeer != null) {
-                adapter.sendFile(activePeer.getUsername(), file);
-            }
+        if (pendingAttachments.isEmpty()) {
+            pendingTargetKey = targetKey;
+            pendingTargetLabel = currentConversationLabel();
         }
+
+        List<String> skipped = new ArrayList<>();
+        for (File file : selected) {
+            if (!file.isFile() || !file.canRead()) {
+                skipped.add(file.getName() + ": not a readable file");
+                continue;
+            }
+            if (file.length() > protocols.FileTransferMeta.MAX_FILE_SIZE) {
+                skipped.add(file.getName() + ": exceeds the 500 MiB limit");
+                continue;
+            }
+            if (containsAttachment(file)) continue;
+            pendingAttachments.add(file);
+        }
+        renderPendingAttachments();
+        if (!skipped.isEmpty()) {
+            JavaFxUtils.showErrorAlert("Some files were skipped", String.join("\n", skipped));
+        }
+    }
+
+    @FXML
+    private void handleClearAttachments() {
+        clearPendingAttachments();
+    }
+
+    private String currentConversationKey() {
+        if (currentMode == Mode.DIRECT) {
+            return activePeer == null ? null : ConversationStore.directKey(activePeer.getUsername());
+        }
+        return activeCommunity == null ? null : ConversationStore.communityKey(activeCommunity.getId());
+    }
+
+    private String currentConversationLabel() {
+        return currentMode == Mode.DIRECT
+                ? "@" + activePeer.getUsername()
+                : "#" + activeCommunity.getName();
+    }
+
+    private boolean containsAttachment(File candidate) {
+        return pendingAttachments.stream().anyMatch(file ->
+                file.toPath().toAbsolutePath().normalize()
+                        .equals(candidate.toPath().toAbsolutePath().normalize()));
+    }
+
+    private void renderPendingAttachments() {
+        attachmentsFlow.getChildren().clear();
+        if (pendingAttachments.isEmpty()) {
+            attachmentTray.setVisible(false);
+            attachmentTray.setManaged(false);
+            pendingTargetKey = null;
+            pendingTargetLabel = null;
+            return;
+        }
+
+        long totalSize = pendingAttachments.stream().mapToLong(File::length).sum();
+        attachmentSummary.setText(pendingAttachments.size() + " file(s) • "
+                + FileOfferModel.formatFileSize(totalSize) + " • for " + pendingTargetLabel);
+        attachmentTray.setVisible(true);
+        attachmentTray.setManaged(true);
+
+        for (File file : pendingAttachments) {
+            StackPane preview = createAttachmentPreview(file);
+            VBox details = new VBox(2);
+            Label name = new Label(file.getName());
+            name.getStyleClass().add("attachment-name");
+            name.setMaxWidth(145);
+            name.setTextOverrun(OverrunStyle.ELLIPSIS);
+            Label size = new Label(FileOfferModel.formatFileSize(file.length()));
+            size.getStyleClass().add("attachment-size");
+            details.getChildren().addAll(name, size);
+
+            Button remove = new Button("×");
+            remove.getStyleClass().add("attachment-remove");
+            remove.setTooltip(new Tooltip("Remove " + file.getName()));
+            remove.setOnAction(event -> {
+                pendingAttachments.remove(file);
+                renderPendingAttachments();
+            });
+
+            HBox chip = new HBox(8, preview, details, remove);
+            chip.getStyleClass().add("attachment-chip");
+            chip.setAlignment(Pos.CENTER_LEFT);
+            attachmentsFlow.getChildren().add(chip);
+        }
+    }
+
+    private StackPane createAttachmentPreview(File file) {
+        StackPane preview = new StackPane();
+        preview.getStyleClass().add("attachment-preview");
+        preview.getChildren().add(IconUtils.createIconNode(IconUtils.FILE, 22, "#F59E0B"));
+        String lowerName = file.getName().toLowerCase(Locale.ROOT);
+        if (IMAGE_EXTENSIONS.stream().anyMatch(lowerName::endsWith)) {
+            Image image = new Image(file.toURI().toString(), 42, 42, true, true, true);
+            ImageView thumbnail = new ImageView(image);
+            thumbnail.setFitWidth(42);
+            thumbnail.setFitHeight(42);
+            thumbnail.setPreserveRatio(true);
+            preview.getChildren().add(thumbnail);
+        }
+        return preview;
+    }
+
+    private void clearPendingAttachments() {
+        pendingAttachments.clear();
+        renderPendingAttachments();
     }
 
     private void scrollToBottom() {
@@ -603,11 +841,19 @@ public class ChatController implements ClientEventListener {
         }
         allUsers.setAll(updated);
         if (currentMode == Mode.DIRECT && activePeer != null) {
-            for (UserModel m : allUsers) {
-                if (m.getUsername().equals(activePeer.getUsername())) {
-                    usersListView.getSelectionModel().select(m);
-                    break;
-                }
+            UserModel latestPeer = allUsers.stream()
+                    .filter(user -> user.getUsername().equalsIgnoreCase(activePeer.getUsername()))
+                    .findFirst().orElse(null);
+            if (latestPeer != null) {
+                activePeer = latestPeer;
+                usersListView.getSelectionModel().select(latestPeer);
+            } else {
+                activePeer.setOnline(false);
+            }
+            boolean online = activePeer.isOnline() || adapter.isPeerConnected(activePeer.getUsername());
+            targetStatusDot.getStyleClass().setAll(online ? "status-dot-online" : "status-dot-offline");
+            if (!online) {
+                targetMetaLabel.setText("Peer offline");
             }
         }
     }
@@ -615,6 +861,7 @@ public class ChatController implements ClientEventListener {
     @Override
     public void onPeerConnected(String peerUsername) {
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
+            clearRemoteTyping();
             targetMetaLabel.setText("Direct P2P Session Active");
             targetStatusDot.setVisible(true);
             targetStatusDot.getStyleClass().clear();
@@ -633,6 +880,31 @@ public class ChatController implements ClientEventListener {
     @Override
     public void onMessageReceived(String peerUsername, String message) {
         appendMessage(ConversationStore.directKey(peerUsername), new ChatMessageModel(peerUsername, message, false));
+    }
+
+    @Override
+    public void onMessageDelivered(String peerUsername, String messageId) {
+        PendingReceipt pending = pendingReceipts.get(messageId);
+        if (pending == null || !pending.peer().equalsIgnoreCase(peerUsername)) return;
+        clearPendingReceipt(messageId);
+        pending.message().delivered();
+    }
+
+    @Override
+    public void onTypingIndicator(String peerUsername, boolean typing) {
+        if (currentMode != Mode.DIRECT || activePeer == null
+                || !activePeer.getUsername().equalsIgnoreCase(peerUsername)) return;
+        if (!typing) {
+            if (peerUsername.equalsIgnoreCase(remoteTypingPeer)) {
+                clearRemoteTyping();
+                targetMetaLabel.setText(adapter.isPeerConnected(peerUsername)
+                        ? "Direct P2P Session Active" : "Peer disconnected");
+            }
+            return;
+        }
+        remoteTypingPeer = peerUsername;
+        targetMetaLabel.setText(peerUsername + " is typing...");
+        remoteTypingTimeout.playFromStart();
     }
 
     @Override
@@ -663,6 +935,9 @@ public class ChatController implements ClientEventListener {
 
     @Override
     public void onPeerDisconnected(String peerUsername) {
+        clearPendingReceipts(peerUsername);
+        if (peerUsername.equalsIgnoreCase(localTypingPeer)) stopLocalTyping();
+        if (peerUsername.equalsIgnoreCase(remoteTypingPeer)) clearRemoteTyping();
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
             targetMetaLabel.setText("Peer disconnected");
             inputContainer.setDisable(true);

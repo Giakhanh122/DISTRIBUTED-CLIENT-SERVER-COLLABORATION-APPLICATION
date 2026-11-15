@@ -27,10 +27,11 @@ class KeyConfirmationTest {
             var a = X25519.createKeyPair();
             var b = X25519.createKeyPair();
             keys = X25519.deriveSessionKeys(a, b.getPublic(), new byte[]{1});
-            long sequence = initiator.send(Packet.json(ConnectionType.HELLO, Json.object("protocolVersion", 2)));
+            long sequence = initiator.send(Packet.json(ConnectionType.HELLO,
+                    Json.object("protocolVersion", Packet.PROTOCOL_VERSION)));
             responder.read();
             responder.send(Packet.reply(ConnectionType.HELLO_ACK, sequence,
-                    Json.object("status", "OK", "protocolVersion", 2)));
+                    Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION)));
             initiator.read();
         }
 

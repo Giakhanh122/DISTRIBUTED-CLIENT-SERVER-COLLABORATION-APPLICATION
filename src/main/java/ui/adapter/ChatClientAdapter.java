@@ -47,6 +47,7 @@ public final class ChatClientAdapter {
     });
     private final AtomicLong generation = new AtomicLong();
     private final AtomicLong connectionRevision = new AtomicLong();
+    private final AtomicLong presenceRevision = new AtomicLong();
     private volatile ClientSession session;
     private volatile boolean loggingIn;
     // UI synchronization phase; transport lifecycle is owned by ClientSession.
@@ -214,9 +215,12 @@ public final class ChatClientAdapter {
 
     private void refreshUsers(ClientSession current, long token) throws IOException {
         long revision = connectionRevision.get();
+        long presenceSnapshot = presenceRevision.get();
         List<String> snapshot = current.users();
         JavaFxUtils.runOnFxThread(() -> {
-            if (generation.get() != token || connectionRevision.get() != revision || !current.isServerConnected() || snapshot.equals(onlineUsers)) return;
+            if (generation.get() != token || connectionRevision.get() != revision
+                    || presenceRevision.get() != presenceSnapshot || !current.isServerConnected()
+                    || snapshot.equals(onlineUsers)) return;
             onlineUsers = snapshot;
             listeners.forEach(l -> l.onUserListUpdated(snapshot));
         });
@@ -272,6 +276,12 @@ public final class ChatClientAdapter {
     public void sendChatMessage(String peer, String text, Consumer<String> result) {
         submitMessage(s -> s.sendMessage(peer, text), result);
     }
+    public void sendChatMessage(String peer, String text, String messageId, Consumer<String> result) {
+        submitMessage(s -> s.sendMessage(peer, text, messageId), result);
+    }
+    public void sendTyping(String peer, boolean typing) {
+        if (isPeerConnected(peer)) submit(s -> s.sendTyping(peer, typing));
+    }
     public void broadcastMessage(String id, String text, Consumer<String> result) {
         long revision = connectionRevision.get();
         submitMessage(s -> {
@@ -316,6 +326,28 @@ public final class ChatClientAdapter {
         return new ClientEvents() {
             public void onSystemMessage(String content) { dispatch(token, l -> l.onSystemNotification(content, false)); }
             public void onMessage(String peer, String content) { dispatch(token, l -> l.onMessageReceived(peer, content)); }
+            public void onMessageDelivered(String peer, String messageId) {
+                dispatch(token, l -> l.onMessageDelivered(peer, messageId));
+            }
+            public void onTyping(String peer, boolean typing) {
+                dispatch(token, l -> l.onTypingIndicator(peer, typing));
+            }
+            public void onPresenceUpdate(String username, boolean online) {
+                presenceRevision.incrementAndGet();
+                JavaFxUtils.runOnFxThread(() -> {
+                    if (generation.get() != token) return;
+                    List<String> updated = new ArrayList<>(onlineUsers);
+                    updated.removeIf(name -> name.equalsIgnoreCase(username));
+                    if (online) updated.add(username);
+                    updated.sort(String.CASE_INSENSITIVE_ORDER);
+                    onlineUsers = List.copyOf(updated);
+                    listeners.forEach(l -> l.onUserListUpdated(onlineUsers));
+                });
+            }
+            public void onProtocolError(String code, String reason, boolean fatal) {
+                String message = code + ": " + reason;
+                dispatch(token, l -> l.onSystemNotification(message, true));
+            }
             public void onBroadcast(String id, String sender, String content) {
                 dispatch(token, l -> l.onBroadcastMessageReceived(id, sender, content));
             }
@@ -326,6 +358,7 @@ public final class ChatClientAdapter {
                     if (generation.get() != token) return;
                     onlineUsers = List.of();
                     connectionRevision.incrementAndGet();
+                    presenceRevision.incrementAndGet();
                     if (poller != null) { poller.cancel(false); poller = null; }
                 }
                 dispatch(token, listener -> {
@@ -383,6 +416,7 @@ public final class ChatClientAdapter {
         ClientSession closing = session;
         session = null;
         onlineUsers = List.of();
+        presenceRevision.set(0);
         communities = List.of();
         fileOffers.clear();
         if (closing != null) Thread.startVirtualThread(closing::close);

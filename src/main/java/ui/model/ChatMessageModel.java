@@ -15,9 +15,16 @@ public class ChatMessageModel {
     }
 
     private final StringProperty sendStatus = new SimpleStringProperty("");
+    private boolean delivered;
     public StringProperty sendStatusProperty() { return sendStatus; }
     public void sending() { sendStatus.set("Sending..."); }
-    public void sent(String error) { sendStatus.set(error == null ? "Sent (unconfirmed)" : "Failed: " + error); }
+    public void sent(String error) {
+        if (!delivered) sendStatus.set(error == null ? "Sent (unconfirmed)" : "Failed: " + error);
+    }
+    public void delivered() {
+        delivered = true;
+        sendStatus.set("Delivered");
+    }
 
     private final Type type;
     private final String sender;

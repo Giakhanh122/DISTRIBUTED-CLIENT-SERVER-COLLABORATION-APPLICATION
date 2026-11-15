@@ -206,7 +206,7 @@ Phần này là **nhận xét thiết kế**, không phải quy định Slack:
 | `RequestID` | Ghép yêu cầu/phản hồi trên kết nối |
 | `Data.eventId` nếu bổ sung | Chống xử lý lại event sau reconnect/retry |
 | `Data.messageId` | Nhận diện tin, độc lập ID lần giao |
-| `CHAT_RECEIPT` | Ghi rõ ACCEPTED, DELIVERED hay READ |
+| `CHAT_RECEIPT` | Phân biệt ACK đã gửi với DELIVERED; không xem là READ |
 | `Data.channelId` nếu có phòng | Định tuyến hội thoại bằng ID ổn định |
 | `FILE_CHUNK` | Có thể giữ luồng peer; upload HTTP là phương án để so sánh |
 

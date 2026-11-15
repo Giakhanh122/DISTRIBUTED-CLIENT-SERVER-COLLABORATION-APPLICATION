@@ -1,7 +1,7 @@
 # DLP Gateway & Events
 
 Giao thức thời gian thực của ứng dụng: đăng nhập và thao tác community qua server,
-chat và truyền file trực tiếp giữa các peer. Phiên bản hiện tại: **2**.
+chat và truyền file trực tiếp giữa các peer. Phiên bản hiện tại: **3**.
 
 Tài liệu này mô tả các event ứng dụng gửi/nhận, cấu trúc payload và ví dụ JSON.
 Các ví dụ là payload trước khi mã hóa hoặc sau khi giải mã.
@@ -16,6 +16,7 @@ Alice gửi một tin nhắn cho Bob trên kết nối P2P đã xác thực:
   "sequence": 3,
   "body": {
     "type": "MESSAGE",
+    "messageId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "content": "Chào Bob!"
   }
 }
@@ -33,7 +34,7 @@ Bob nhận cùng payload trên socket của Alice và lấy danh tính người 
 - [Event Reference](#event-reference)
 - [Objects](#objects)
 - [Errors and Limits](#errors-and-limits)
-- [Reserved Events](#reserved-events)
+- [Event Status](#event-status)
 
 ## Payload Structure
 
@@ -156,6 +157,8 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [USER/PEER_LOOKUP_REQUEST](#user-peer-lookup-request) | C → S | Tìm địa chỉ kết nối P2P của một tài khoản. |
 | [USER/PEER_KEY_REQUEST](#user-peer-key-request) | C → S | Xin server ký public key X25519 của một kết nối P2P. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
+| [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
+| [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/SESSION_REPORT](#chat-session-report) | C → S | Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat. |
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
@@ -167,7 +170,6 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [FILE/BROADCAST_UPLOAD_START](#file-broadcast-upload-start) | C → S, socket dữ liệu server | Bắt đầu upload bằng token đã nhận. |
 | [FILE/BROADCAST_DECISION](#file-broadcast-decision) | C → S, kênh quản lý | Chấp nhận hoặc từ chối tải file đã được server thông báo. |
 | [FILE/BROADCAST_DOWNLOAD_START](#file-broadcast-download-start) | C → S, socket dữ liệu server | Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa. |
-| [FILE/BROADCAST_DOWNLOAD_REQUEST](#file-broadcast-download-request) | C → S, kênh quản lý | Nhánh API cũ đã có handler nhưng không được dùng cho luồng download chính. |
 | [COMMUNITY/LIST_REQUEST](#community-list-request) | C → S | Lấy danh sách community và trạng thái membership của người gọi. |
 | [COMMUNITY/CREATE_REQUEST](#community-create-request) | C → S | Tạo community mới; người tạo trở thành owner và thành viên đầu tiên. |
 | [COMMUNITY/JOIN_REQUEST](#community-join-request) | C → S | Tham gia một community hiện có. |
@@ -186,14 +188,18 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | --- | --- | --- |
 | [SYSTEM/KEY_CONFIRM_ACK](#system-key-confirm-ack) | Responder → Initiator | Trả lời Key Confirm dưới mã hóa để bên khởi tạo kiểm tra khóa chiều ngược lại. |
 | [SYSTEM/PONG](#system-pong) | C ↔ S | Trả lời Ping trên cùng kết nối; được reader xử lý trước các response quản lý. |
+| [SYSTEM/ERROR](#system-error) | S → C | Báo lỗi protocol có mã lỗi, mô tả và cờ fatal. |
 | [CONNECTION/HELLO_ACK](#connection-hello-ack) | S → C | Server trả public key X25519 của kết nối và chữ ký Ed25519. |
 | [CONNECTION/PEER_HELLO_ACK](#connection-peer-hello-ack) | P responder → P initiator | Peer nhận trả proof của mình, cùng sessionId với Peer Hello. |
 | [AUTH/LOGIN_RESPONSE](#auth-login-response) | S → C | Trả kết quả đăng nhập; OK tạo UserSession gắn với kết nối. |
 | [AUTH/LOGOUT_RESPONSE](#auth-logout-response) | S → C | Xác nhận logout trước khi kết thúc xử lý kết nối. |
 | [USER/LIST_RESPONSE](#user-list-response) | S → C | Trả danh sách username online, sắp xếp theo tên. |
+| [USER/PRESENCE_UPDATE](#user-presence-update) | S → C | Cập nhật tức thời trạng thái online/offline sau login hoặc disconnect. |
 | [USER/PEER_LOOKUP_RESPONSE](#user-peer-lookup-response) | S → C | Trả địa chỉ của peer đang online. |
 | [USER/PEER_KEY_RESPONSE](#user-peer-key-response) | S → C | Trả proof gắn danh tính người đăng nhập với sessionId và public key. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
+| [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
+| [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/SESSION_REPORT_RESPONSE](#chat-session-report-response) | S → C | Trả kết quả tiếp nhận báo cáo phiên P2P. |
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
@@ -347,6 +353,34 @@ Trả lời Ping trên cùng kết nối; được reader xử lý trước các
 
 replyTo phải khớp Ping đang chờ. Pong không xác nhận tin nhắn đã được nhận hoặc đọc.
 
+<a id="system-error"></a>
+
+#### Error
+
+**Event:** `SYSTEM/ERROR` · **Opcode:** `0` · **Direction:** S → C
+
+Báo một lỗi protocol không thể trả bằng response nghiệp vụ. Client hiển thị thông
+báo; nếu `fatal` là true thì đóng kết nối quản lý.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | string | Mã lỗi ổn định để phân loại. |
+| `reason` | string | Mô tả lỗi không rỗng. |
+| `fatal` | boolean | Cho biết client phải đóng kết nối sau khi nhận lỗi. |
+
+```json
+{
+  "opcode": 0,
+  "sequence": 19,
+  "body": {
+    "type": "ERROR",
+    "code": "UNEXPECTED_MESSAGE",
+    "reason": "Unexpected packet type",
+    "fatal": true
+  }
+}
+```
+
 ### CONNECTION Events
 
 <a id="connection-hello"></a>
@@ -361,7 +395,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
 | `serverVerificationChallenge` | string | Challenge ngẫu nhiên 32 byte, Base64. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 
@@ -373,7 +407,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
   "sequence": 1,
   "body": {
     "type": "HELLO",
-    "protocolVersion": 2,
+    "protocolVersion": 3,
     "serverVerificationChallenge": "<32-byte-random-challenge-base64>",
     "publicKey": "<client-x25519-public-key-base64>"
   }
@@ -396,7 +430,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 | `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
@@ -410,7 +444,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
     "type": "HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 2,
+    "protocolVersion": 3,
     "publicKey": "<server-x25519-public-key-base64>",
     "serverSignature": "<ed25519-signature-base64>"
   }
@@ -431,7 +465,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
 | `username` | string | Tên tài khoản. |
 | `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
@@ -446,7 +480,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
   "sequence": 1,
   "body": {
     "type": "PEER_HELLO",
-    "protocolVersion": 2,
+    "protocolVersion": 3,
     "username": "alice",
     "peerPort": 9001,
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
@@ -472,7 +506,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
 | `username` | string | Tên tài khoản. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
@@ -488,7 +522,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
     "type": "PEER_HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 2,
+    "protocolVersion": 3,
     "username": "bob",
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "publicKey": "<bob-x25519-public-key-base64>",
@@ -692,6 +726,33 @@ Trả danh sách username online, sắp xếp theo tên.
 
 Danh sách rỗng được biểu diễn bằng users: [].
 
+<a id="user-presence-update"></a>
+
+#### Presence Update
+
+**Event:** `USER/PRESENCE_UPDATE` · **Opcode:** `3` · **Direction:** S → C
+
+Server phát khi tài khoản đăng nhập thành công hoặc phiên đăng nhập bị đóng.
+Client cập nhật danh sách online ngay; yêu cầu User List định kỳ vẫn dùng để
+đồng bộ lại trạng thái.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `username` | string | Tài khoản vừa đổi trạng thái. |
+| `online` | boolean | Trạng thái mới. |
+
+```json
+{
+  "opcode": 3,
+  "sequence": 18,
+  "body": {
+    "type": "PRESENCE_UPDATE",
+    "username": "bob",
+    "online": false
+  }
+}
+```
+
 <a id="user-peer-lookup-request"></a>
 
 #### Peer Lookup Request
@@ -822,7 +883,7 @@ Trả proof gắn danh tính người đăng nhập với sessionId và public k
 }
 ```
 
-Chữ ký bao phủ purpose=peer-public-key, protocolVersion=2, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
+Chữ ký bao phủ purpose=peer-public-key, protocolVersion=3, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
 
 ### CHAT Events
 
@@ -838,6 +899,7 @@ Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `messageId` | string | UUID canonical duy nhất của tin nhắn. |
 | `content` | string | Nội dung tin nhắn, tối đa 64 KiB theo byte UTF-8. |
 
 **Example Message**
@@ -848,12 +910,63 @@ Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận
   "sequence": 3,
   "body": {
     "type": "MESSAGE",
+    "messageId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "content": "Chào Bob!"
   }
 }
 ```
 
-Giới hạn content là 64 KiB tính theo byte UTF-8. Danh tính bên gửi lấy từ kết nối đã xác thực; body không cần sender/receiver. Chưa có receipt nhận/đọc tin.
+Giới hạn content là 64 KiB tính theo byte UTF-8. Danh tính bên gửi lấy từ kết nối đã xác thực; body không cần sender/receiver. Bên nhận gửi RECEIPT/DELIVERED sau khi core nhận tin; đây không phải xác nhận đã đọc.
+
+<a id="chat-receipt"></a>
+
+#### Receipt
+
+**Event:** `CHAT/RECEIPT` · **Opcode:** `4` · **Direction:** P → P
+
+Xác nhận peer đã nhận và xử lý một message trên kết nối P2P. Chỉ hỗ trợ
+`DELIVERED`; không tuyên bố người nhận đã đọc nội dung.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `messageId` | string | UUID của tin nhắn được xác nhận. |
+| `receipt` | string | Hiện chỉ nhận giá trị `DELIVERED`. |
+
+```json
+{
+  "opcode": 4,
+  "sequence": 4,
+  "body": {
+    "type": "RECEIPT",
+    "messageId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "receipt": "DELIVERED"
+  }
+}
+```
+
+<a id="chat-typing"></a>
+
+#### Typing
+
+**Event:** `CHAT/TYPING` · **Opcode:** `4` · **Direction:** P → P
+
+Thông báo trạng thái nhập tin. Client chỉ gửi khi trạng thái bắt đầu hoặc dừng,
+không gửi từng phím; UI tự hết hạn chỉ báo nếu sự kiện dừng bị mất.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `typing` | boolean | true khi bắt đầu nhập, false khi dừng. |
+
+```json
+{
+  "opcode": 4,
+  "sequence": 5,
+  "body": {
+    "type": "TYPING",
+    "typing": true
+  }
+}
+```
 
 <a id="chat-broadcast"></a>
 
@@ -1479,30 +1592,6 @@ Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xá
 
 Server tiêu thụ token và kiểm tra lại quyền tải, rồi gửi dữ liệu file và FILE/END. Client lưu file, kiểm tra checksum và trả FILE/RESULT. Token sai/hết hạn nhận FILE/RESULT FAIL nếu kênh còn dùng được.
 
-<a id="file-broadcast-download-request"></a>
-
-#### Broadcast Download Request
-
-**Event:** `FILE/BROADCAST_DOWNLOAD_REQUEST` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
-
-Nhánh API cũ đã có handler nhưng không được dùng cho luồng download chính.
-
-Body chỉ có `type`.
-
-**Example Broadcast Download Request**
-
-```json
-{
-  "opcode": 5,
-  "sequence": 10,
-  "body": {
-    "type": "BROADCAST_DOWNLOAD_REQUEST"
-  }
-}
-```
-
-Không cấp token và không gửi dữ liệu. Luôn trả FILE/BROADCAST_DOWNLOAD_RESPONSE với status USE_DATA_CONNECTION. Luồng chính dùng Broadcast File Decision.
-
 ### COMMUNITY Events
 
 <a id="community-list-request"></a>
@@ -2059,21 +2148,14 @@ File nhận trùng tên được thêm hậu tố. Lỗi nhận dọn file tạm
 lưu file nhưng không gửi được Result; sender chỉ xác nhận hoàn tất khi nhận OK.
 Không tự retry tin nhắn hoặc file để tránh tạo bản trùng.
 
-## Reserved Events
+## Event Status
 
-Các type dưới đây có trong enum nhưng chưa có luồng gửi/nhận ứng dụng. Chúng
-không phải API đang hoạt động; không gửi chúng để yêu cầu hành vi chưa triển khai.
-
-| Opcode | Type | Intended purpose |
-| --- | --- | --- |
-| 0 | ERROR | Thông báo lỗi giao thức. Validator yêu cầu reason:string không rỗng; chưa có handler ứng dụng. |
-| 3 | PRESENCE_UPDATE | Thông báo thay đổi trạng thái online. |
-| 4 | RECEIPT | Xác nhận nhận tin nhắn. |
-| 4 | TYPING | Thông báo đang nhập tin. |
-
-FILE/BROADCAST_DOWNLOAD_REQUEST đã có handler nhưng chỉ trả USE_DATA_CONNECTION;
-luồng tải hiện tại dùng FILE/BROADCAST_DECISION. Không có event FILE/CHUNK:
-dữ liệu file được truyền trực tiếp trên socket file giữa Ready/Key Confirm và End.
+ERROR, PRESENCE_UPDATE, RECEIPT và TYPING hiện có luồng gửi/nhận trong core và UI.
+Receipt chỉ xác nhận DELIVERED, không xác nhận đã đọc. Không có event FILE/CHUNK:
+dữ liệu file được truyền trực tiếp trên socket dữ liệu giữa Ready/Key Confirm và End.
+Luồng download community bắt đầu bằng FILE/BROADCAST_DECISION, sau đó dùng
+FILE/BROADCAST_DOWNLOAD_START trên socket dữ liệu; không có
+FILE/BROADCAST_DOWNLOAD_REQUEST.
 
 ## Implementation Notes
 
@@ -2081,7 +2163,7 @@ App dùng TCP cho kênh server và P2P, UDP cho Discovery. Payload trong tài li
 JSON ở lớp event; PacketCodec và PacketChannel xử lý đóng khung và mã hóa khi
 truyền. Đây là cách trình bày tài liệu theo event, không đổi app sang WebSocket.
 
-Phiên bản 2 không tương thích phiên bản 1; client và server phải cập nhật đồng thời.
+Phiên bản 3 không tương thích phiên bản 2; client và server phải cập nhật đồng thời.
 Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từng nhóm.
 
 ## Documentation References

@@ -7,7 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
-class ProtocolV2Test {
+class ProtocolV3Test {
     private Packet read(String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         return PacketCodec.read(new ByteArrayInputStream(ByteBuffer.allocate(4 + bytes.length)
@@ -62,6 +62,24 @@ class ProtocolV2Test {
         assertThrows(IOException.class, () -> roundTrip(Packet.status(SystemType.KEY_CONFIRM_ACK, 0, "OK"), 1));
         assertThrows(IOException.class, () -> roundTrip(Packet.status(SystemType.PONG, 1, " "), 1));
         assertThrows(IOException.class, () -> roundTrip(Packet.empty(SystemType.ERROR), 1));
+    }
+
+    @Test void systemErrorsRequireCodeReasonAndFatalFlag() throws Exception {
+        Packet error = roundTrip(Packet.json(SystemType.ERROR,
+                Json.object("code", "UNEXPECTED_MESSAGE", "reason", "Invalid request", "fatal", true)), 1);
+        assertEquals("UNEXPECTED_MESSAGE", error.string("code"));
+        assertTrue(error.bool("fatal"));
+        assertThrows(IOException.class, () -> roundTrip(Packet.json(SystemType.ERROR,
+                Json.object("reason", "Invalid request", "fatal", true)), 1));
+        assertThrows(IOException.class, () -> roundTrip(Packet.json(SystemType.ERROR,
+                Json.object("code", "BAD_REQUEST", "reason", " ", "fatal", true)), 1));
+        assertThrows(IOException.class, () -> roundTrip(Packet.json(SystemType.ERROR,
+                Json.object("code", "BAD_REQUEST", "reason", "Invalid request")), 1));
+    }
+
+    @Test void broadcastDownloadRequestIsNoLongerAFileType() {
+        assertThrows(IOException.class,
+                () -> MessageType.fromWire(OpCode.FILE, "BROADCAST_DOWNLOAD_REQUEST"));
     }
 
     @Test void fileDecisionRemainsCorrelatedAndEarlyFailureAllowsZero() throws Exception {

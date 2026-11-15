@@ -7,7 +7,7 @@ import com.google.gson.JsonObject;
 
 /** One JSON envelope: opcode, sequence, body. */
 public final class Packet {
-    public static final int PROTOCOL_VERSION = 2;
+    public static final int PROTOCOL_VERSION = 3;
     private final MessageType type;
     private final long sequence;
     private final JsonObject body;
@@ -47,6 +47,7 @@ public final class Packet {
     public String string(String name) throws IOException { return Json.string(body, name); }
     public int integer(String name) throws IOException { return Json.integer(body, name); }
     public long longValue(String name) throws IOException { return Json.longValue(body, name); }
+    public boolean bool(String name) throws IOException { return Json.bool(body, name); }
     public String status() throws IOException { return string("status"); }
     public long replyTo() throws IOException { return longValue("replyTo"); }
     public OpCode op() { return type.opcode(); }

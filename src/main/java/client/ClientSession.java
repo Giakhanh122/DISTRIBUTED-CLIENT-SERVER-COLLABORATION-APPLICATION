@@ -5,6 +5,7 @@ import protocols.ChatType;
 import protocols.FileType;
 import protocols.MessageType;
 import protocols.UserType;
+import protocols.SystemType;
 
 import client.community.CommunityClient;
 import client.connection.ServerConnection;
@@ -317,10 +318,20 @@ public final class ClientSession implements AutoCloseable {
     }
 
     public void sendMessage(String target, String message) throws IOException {
+        sendMessage(target, message, UUID.randomUUID().toString());
+    }
+
+    public void sendMessage(String target, String message, String messageId) throws IOException {
         ensurePeer(target);
         PeerConnection peer = peers.get(target);
         if (peer == null) throw new IOException("Peer disconnected: " + target);
-        peer.sendMessage(message);
+        peer.sendMessage(messageId, message);
+    }
+
+    public void sendTyping(String target, boolean typing) throws IOException {
+        PeerConnection peer = peers.get(target);
+        if (peer == null || peer.isClosed()) throw new IOException("Peer disconnected: " + target);
+        peer.sendTyping(typing);
     }
 
     private Packet request(Packet packet, MessageType responseOp) throws IOException {
@@ -334,6 +345,15 @@ public final class ClientSession implements AutoCloseable {
             case ChatType.MESSAGE -> events.onSystemMessage(packet.string("content"));
             case ChatType.BROADCAST -> {
                 events.onBroadcast(packet.string("communityId"), packet.string("sender"), packet.string("content"));
+            }
+            case UserType.PRESENCE_UPDATE ->
+                events.onPresenceUpdate(packet.string("username"), packet.bool("online"));
+            case SystemType.ERROR -> {
+                String code = packet.string("code");
+                String reason = packet.string("reason");
+                boolean fatal = packet.bool("fatal");
+                events.onProtocolError(code, reason, fatal);
+                if (fatal) throw new IOException("Server protocol error " + code + ": " + reason);
             }
             case FileType.BROADCAST_OFFER -> source.broadcasts.onOffer(packet);
             default -> throw new IOException("Unexpected server event: " + packet.type());
@@ -381,14 +401,15 @@ public final class ClientSession implements AutoCloseable {
 
     private void readPeer(String name, PeerConnection connection) {
         try {
-            connection.readMessages(name, content -> events.onMessage(name, content), packet -> {
+            connection.readMessages(name, (messageId, content) -> events.onMessage(name, content), packet -> {
                 try {
                     if (packet.type() == FileType.OFFER) files.handleIncomingOffer(name, connection, packet);
                     else files.handleIncomingDecision(connection, packet);
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());
                 }
-            });
+            }, messageId -> events.onMessageDelivered(name, messageId),
+                    typing -> events.onTyping(name, typing));
         } catch (IOException e) {
             if (!isClosed()) System.err.println("Peer " + name + ": " + e.getMessage());
         } finally {

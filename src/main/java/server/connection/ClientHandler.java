@@ -5,6 +5,7 @@ import protocols.ChatType;
 import protocols.CommunityType;
 import protocols.ConnectionType;
 import protocols.FileType;
+import protocols.SystemType;
 import protocols.UserType;
 
 import java.io.IOException;
@@ -139,10 +140,12 @@ public class ClientHandler implements Runnable {
         } finally {
             if (heartbeat != null) heartbeat.close();
             if (session != null) {
+                boolean removed;
                 synchronized (userSessions) {
-                    userSessions.remove(session);
+                    removed = userSessions.remove(session);
                     chatSessions.userDisconnected(session);
                 }
+                if (removed) publishPresence(session.username(), false, null);
             }
             System.out.println("Client " + address + " disconnected");
         }
@@ -181,7 +184,6 @@ public class ClientHandler implements Runnable {
                 // Broadcast file operations
                 case FileType.BROADCAST_UPLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileUploadRequest(packet, session);
                 case FileType.BROADCAST_DECISION -> requireBroadcasts().handleBroadcastFileDecision(packet, session);
-                case FileType.BROADCAST_DOWNLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileDownloadRequest(packet, session);
 
                 case AuthType.LOGOUT_REQUEST -> {
                     PacketValidator.validateRequest(packet, AuthType.LOGOUT_REQUEST, 0, 0);
@@ -189,7 +191,13 @@ public class ClientHandler implements Runnable {
                     return;
                 }
 
-                default -> throw new IOException("Unexpected packet: " + packet.type());
+                default -> {
+                    channel.send(Packet.json(SystemType.ERROR,
+                            Json.object("code", "UNEXPECTED_MESSAGE",
+                                    "reason", "Unexpected packet type: " + packet.type(),
+                                    "fatal", true)));
+                    return;
+                }
             }
         }
     }
@@ -262,7 +270,23 @@ public class ClientHandler implements Runnable {
         Packet response = Packet.status(AuthType.LOGIN_RESPONSE, request.sequence(), status);
         channel.send(response);
 
+        if (status.equals("OK")) publishPresence(username, true, session);
         return status.equals("OK");
+    }
+
+    private void publishPresence(String username, boolean online, UserSession excludedSession) {
+        UserSession current = userSessions.find(username).orElse(null);
+        if ((online && current != excludedSession) || (!online && current != null)) return;
+        Packet event = Packet.json(UserType.PRESENCE_UPDATE,
+                Json.object("username", username, "online", online));
+        for (UserSession recipient : userSessions.listOnlineUsers()) {
+            if (recipient == excludedSession) continue;
+            try {
+                recipient.channel().send(event);
+            } catch (IOException e) {
+                System.err.println("Cannot publish presence for " + username + ": " + e.getMessage());
+            }
+        }
     }
 
     private void handleUserList(Packet request) throws IOException {

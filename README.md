@@ -106,6 +106,11 @@ File kiểm thử tạm và dữ liệu sinh ra được dọn sau khi chạy.
 Chạy `./app.sh server` ở một terminal, sau đó chạy `./app.sh` ở terminal khác
 để mở JavaFX. Trên Windows dùng `app.ps1 server` và `app.ps1 ui` tương ứng.
 
+Trong cửa sổ chat, nút đính kèm cho phép chọn nhiều file hoặc ảnh, xem trước ảnh,
+bỏ từng mục rồi gửi cùng caption bằng một lần bấm Send. Caption và từng file vẫn
+được gửi bằng các thao tác hiện có; mỗi file là một offer/transfer riêng, không
+được gộp vào cùng một socket.
+
 ## Mất kết nối và kết nối lại
 
 Server và client trao đổi heartbeat trên **TCP quản lý** mỗi 5 giây. Một probe
@@ -137,9 +142,9 @@ Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len 
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
 Giao thức dùng 8 nhóm opcode và `body.type` bắt buộc. Handshake trao đổi
-`protocolVersion = 2`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
+`protocolVersion = 3`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
 `SYSTEM/KEY_CONFIRM_ACK` đã mã hóa. Server và client cần chạy cùng bản code;
-wire protocol phiên bản 2 không tương thích phiên bản 1.
+wire protocol phiên bản 3 không tương thích phiên bản 2.
 Không có magic bytes hoặc header JSON riêng.
 
 Socket file P2P mở bằng `FILE/TRANSFER_START` và `FILE/READY`, rồi xác nhận khóa

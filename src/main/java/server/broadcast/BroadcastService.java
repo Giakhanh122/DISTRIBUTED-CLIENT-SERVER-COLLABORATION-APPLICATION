@@ -221,13 +221,6 @@ public final class BroadcastService {
                 && communityService.validateMembership(meta.communityId(), username) != null;
     }
 
-    public void handleBroadcastFileDownloadRequest(Packet request, UserSession session) throws IOException {
-        PacketChannel channel = session.channel();
-        // This is sent on the control connection to initiate a download (alternative path)
-        // But we use dedicated data connections, so just acknowledge
-        channel.send(Packet.status(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "USE_DATA_CONNECTION"));
-    }
-
     public void handleBroadcastDownloadConnection(Packet startPacket, PacketChannel channel) throws IOException {
         String downloadToken = startPacket.string("downloadToken");
         String fileId = startPacket.string("fileId");

@@ -19,8 +19,14 @@ public final class PacketValidator {
         if (packet.type().requiresStatus() && packet.status().isBlank()) {
             throw new IOException("Empty status for " + packet.type());
         }
-        if (packet.type() == SystemType.ERROR && packet.string("reason").isBlank()) {
-            throw new IOException("Empty system error reason");
+        if (packet.type() == SystemType.ERROR) {
+            if (packet.string("code").isBlank()) {
+                throw new IOException("Empty system error code");
+            }
+            if (packet.string("reason").isBlank()) {
+                throw new IOException("Empty system error reason");
+            }
+            packet.bool("fatal");
         }
         if (!packet.type().requiresReplyTo()) return;
         long replyTo = packet.replyTo();

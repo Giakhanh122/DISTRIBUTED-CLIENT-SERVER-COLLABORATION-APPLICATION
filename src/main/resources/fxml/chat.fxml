@@ -9,6 +9,7 @@
 <?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.Region?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
@@ -151,9 +152,23 @@
                     <Insets top="8.0" right="16.0" bottom="10.0" left="16.0"/>
                 </padding>
                 <Button fx:id="attachBtn" onAction="#handleAttachFile" styleClass="btn-icon"/>
-                <TextField fx:id="messageInput" promptText="Write a message..." HBox.hgrow="ALWAYS"
-                           styleClass="text-input" onAction="#handleSendMessage"/>
-                <Button fx:id="sendBtn" onAction="#handleSendMessage" styleClass="btn-primary" style="-fx-padding: 8px 12px;"/>
+                <VBox spacing="7.0" HBox.hgrow="ALWAYS">
+                    <VBox fx:id="attachmentTray" spacing="6.0" styleClass="attachment-tray"
+                          visible="false" managed="false">
+                        <HBox alignment="CENTER_LEFT" spacing="8.0">
+                            <Label fx:id="attachmentSummary" HBox.hgrow="ALWAYS" styleClass="attachment-summary"/>
+                            <Button fx:id="clearAttachmentsBtn" text="Clear all"
+                                    onAction="#handleClearAttachments" styleClass="attachment-clear"/>
+                        </HBox>
+                        <FlowPane fx:id="attachmentsFlow" hgap="8.0" vgap="8.0"/>
+                    </VBox>
+                    <HBox alignment="CENTER_LEFT" spacing="8.0">
+                        <TextField fx:id="messageInput" promptText="Write a message or caption..."
+                                   HBox.hgrow="ALWAYS" styleClass="text-input" onAction="#handleSendMessage"/>
+                        <Button fx:id="sendBtn" onAction="#handleSendMessage" styleClass="btn-primary"
+                                style="-fx-padding: 8px 12px;"/>
+                    </HBox>
+                </VBox>
             </HBox>
 
         </VBox>
