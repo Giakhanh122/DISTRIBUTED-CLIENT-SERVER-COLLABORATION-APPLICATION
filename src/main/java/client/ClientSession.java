@@ -1,5 +1,11 @@
 package client;
 
+import protocols.AuthType;
+import protocols.ChatType;
+import protocols.FileType;
+import protocols.MessageType;
+import protocols.UserType;
+
 import client.community.CommunityClient;
 import client.connection.ServerConnection;
 import client.peer.PeerConnection;
@@ -28,7 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 import protocols.PacketValidator;
@@ -158,7 +163,7 @@ public final class ClientSession implements AutoCloseable {
     }
 
     public List<String> users() throws IOException {
-        JsonArray entries = Json.array(request(Packet.empty(OpCode.USER_LIST_REQUEST), OpCode.USER_LIST_RESPONSE).jsonBody(), "users");
+        JsonArray entries = Json.array(request(Packet.empty(UserType.LIST_REQUEST), UserType.LIST_RESPONSE).jsonBody(), "users");
         java.util.ArrayList<String> users = new java.util.ArrayList<>();
         for (var entry : entries) {
             if (!entry.isJsonPrimitive() || !entry.getAsJsonPrimitive().isString()) throw new IOException("Invalid username in user list");
@@ -168,7 +173,7 @@ public final class ClientSession implements AutoCloseable {
     }
 
     public JsonArray chats() throws IOException {
-        return Json.array(request(Packet.empty(OpCode.CHAT_SESSION_LIST_REQUEST), OpCode.CHAT_SESSION_LIST_RESPONSE)
+        return Json.array(request(Packet.empty(ChatType.SESSION_LIST_REQUEST), ChatType.SESSION_LIST_RESPONSE)
                 .jsonBody(), "sessions");
     }
 
@@ -177,8 +182,8 @@ public final class ClientSession implements AutoCloseable {
         if (!isServerConnected()) throw new IOException("Server connection required to certify a peer public key");
         String id = sessionId.toString();
         String encodedPublicKey = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-        Packet response = source.server.request(Packet.json(OpCode.PEER_KEY_REQUEST,
-                Json.object("sessionId", id, "publicKey", encodedPublicKey)), OpCode.PEER_KEY_RESPONSE);
+        Packet response = source.server.request(Packet.json(UserType.PEER_KEY_REQUEST,
+                Json.object("sessionId", id, "publicKey", encodedPublicKey)), UserType.PEER_KEY_RESPONSE);
         PacketValidator.requireSuccess(response);
         if (source != serverContext) throw new IOException("Server connection changed while certifying peer public key");
 
@@ -197,8 +202,8 @@ public final class ClientSession implements AutoCloseable {
     }
 
     PeerLookupResult lookup(String target) throws IOException {
-        Packet response = serverContext.server.request(Packet.json(OpCode.PEER_LOOKUP_REQUEST,
-                Json.object("username", target)), OpCode.PEER_LOOKUP_RESPONSE);
+        Packet response = serverContext.server.request(Packet.json(UserType.PEER_LOOKUP_REQUEST,
+                Json.object("username", target)), UserType.PEER_LOOKUP_RESPONSE);
         return switch (response.status()) {
             case "USER_OFFLINE" -> new PeerLookupResult(PeerLookupResult.Status.USER_OFFLINE, null);
             case "ALREADY_CONNECTED" -> new PeerLookupResult(PeerLookupResult.Status.ALREADY_CONNECTED, null);
@@ -290,7 +295,7 @@ public final class ClientSession implements AutoCloseable {
         if (message.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) {
             throw new IOException("Message exceeds limit: 65536");
         }
-        serverContext.server.send(Packet.json(OpCode.CHAT_MESSAGE_BROADCAST,
+        serverContext.server.send(Packet.json(ChatType.BROADCAST,
                 Json.object("communityId", communityId, "content", message)));
     }
 
@@ -318,20 +323,20 @@ public final class ClientSession implements AutoCloseable {
         peer.sendMessage(message);
     }
 
-    private Packet request(Packet packet, OpCode responseOp) throws IOException {
+    private Packet request(Packet packet, MessageType responseOp) throws IOException {
         Packet response = serverContext.server.request(packet, responseOp);
         PacketValidator.requireSuccess(response);
         return response;
     }
 
     private void receiveEvent(ServerContext source, Packet packet) throws IOException {
-        switch (packet.op()) {
-            case CHAT_MESSAGE -> events.onSystemMessage(packet.string("content"));
-            case CHAT_MESSAGE_BROADCAST -> {
+        switch (packet.type()) {
+            case ChatType.MESSAGE -> events.onSystemMessage(packet.string("content"));
+            case ChatType.BROADCAST -> {
                 events.onBroadcast(packet.string("communityId"), packet.string("sender"), packet.string("content"));
             }
-            case FILE_BROADCAST_OFFER -> source.broadcasts.onOffer(packet);
-            default -> throw new IOException("Unexpected server event: " + packet.op());
+            case FileType.BROADCAST_OFFER -> source.broadcasts.onOffer(packet);
+            default -> throw new IOException("Unexpected server event: " + packet.type());
         }
     }
 
@@ -378,7 +383,7 @@ public final class ClientSession implements AutoCloseable {
         try {
             connection.readMessages(name, content -> events.onMessage(name, content), packet -> {
                 try {
-                    if (packet.op() == OpCode.FILE_OFFER) files.handleIncomingOffer(name, connection, packet);
+                    if (packet.type() == FileType.OFFER) files.handleIncomingOffer(name, connection, packet);
                     else files.handleIncomingDecision(connection, packet);
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());
@@ -413,9 +418,9 @@ public final class ClientSession implements AutoCloseable {
             if (!server.isOpen()) return;
             if (state.equals("DISCONNECTED") && !connection.markDisconnectReported()) return;
             try {
-                Packet response = server.request(Packet.json(OpCode.CHAT_SESSION_REPORT,
+                Packet response = server.request(Packet.json(ChatType.SESSION_REPORT,
                         Json.object("sessionId", connection.sessionId().toString(),
-                                "peerUsername", name, "state", state)), OpCode.CHAT_SESSION_REPORT_RESPONSE);
+                                "peerUsername", name, "state", state)), ChatType.SESSION_REPORT_RESPONSE);
                 if (!response.status().equals("OK")) {
                     System.err.println("Chat session report rejected: " + response.status());
                 }
@@ -465,7 +470,7 @@ public final class ClientSession implements AutoCloseable {
                     for (var peer : closingPeers.entrySet()) reportChatSession(current.server, peer.getKey(), peer.getValue(), "DISCONNECTED");
                     try {
                         if (current.server.isOpen()) PacketValidator.requireSuccess(current.server.request(
-                                Packet.empty(OpCode.LOGOUT_REQUEST), OpCode.LOGOUT_RESPONSE));
+                                Packet.empty(AuthType.LOGOUT_REQUEST), AuthType.LOGOUT_RESPONSE));
                     } catch (IOException e) {
                         System.err.println("Logout: " + e.getMessage());
                     }

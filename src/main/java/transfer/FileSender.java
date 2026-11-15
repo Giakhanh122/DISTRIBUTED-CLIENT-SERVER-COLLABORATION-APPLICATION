@@ -1,5 +1,7 @@
 package transfer;
 
+import protocols.FileType;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -9,7 +11,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 import protocols.FileTransferMeta;
-import protocols.OpCode;
 import protocols.Json;
 import protocols.Packet;
 import network.PacketChannel;
@@ -106,7 +107,7 @@ public class FileSender {
             throw new IOException("Source file changed since the offer was created");
         }
 
-        Packet endPacket = Packet.json(OpCode.FILE_END, Json.object("transferId", transferId, "checksum", checksumHex));
+        Packet endPacket = Packet.json(FileType.END, Json.object("transferId", transferId, "checksum", checksumHex));
         endSequence = channel.send(endPacket);
 
         return checksumHex;
@@ -114,12 +115,12 @@ public class FileSender {
 
     public void awaitResult() throws IOException {
         try {
-            Packet result = PacketValidator.validateResponse(channel.read(), OpCode.FILE_RESULT);
+            Packet result = PacketValidator.validateResponse(channel.read(), FileType.RESULT);
             String status = result.status();
             if (!status.equals("OK")) {
                 throw new IOException("Receiver rejected file: " + status + " " + result.jsonBody());
             }
-            PacketValidator.validateResponse(result, OpCode.FILE_RESULT, endSequence);
+            PacketValidator.validateResponse(result, FileType.RESULT, endSequence);
             if (session != null) {
                 session.complete();
             }

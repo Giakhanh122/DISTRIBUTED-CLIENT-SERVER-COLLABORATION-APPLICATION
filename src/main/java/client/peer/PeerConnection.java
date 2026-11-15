@@ -60,12 +60,12 @@ public class PeerConnection implements AutoCloseable {
             throw new IOException("Peer public key confirmation does not match local connection");
         }
         socket.setSoTimeout(10000);
-        Packet hello = Packet.json(OpCode.PEER_HELLO,
+        Packet hello = Packet.json(ConnectionType.PEER_HELLO,
             Json.object("protocolVersion", Packet.PROTOCOL_VERSION,
                     "username", proof.username(), "peerPort", listeningPort, "sessionId", proof.sessionId(),
                     "publicKey", proof.publicKey(), "serverSignature", proof.serverSignature()));
         long helloSequence = channel.send(hello);
-        Packet response = PacketValidator.validateResponse(channel.read(), OpCode.PEER_HELLO_ACK, helloSequence);
+        Packet response = PacketValidator.validateResponse(channel.read(), ConnectionType.PEER_HELLO_ACK, helloSequence);
         PacketValidator.requireSuccess(response);
         if (response.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
             throw new IOException("Unsupported peer protocol version");
@@ -85,10 +85,10 @@ public class PeerConnection implements AutoCloseable {
 
     public String acceptHandshake(Packet hello, ServerKeyPinning serverKeyPinning,
                                   KeyProofProvider keyProofProvider) throws IOException {
-        PacketValidator.validateRequest(hello, OpCode.PEER_HELLO, 1, 4096);
+        PacketValidator.validateRequest(hello, ConnectionType.PEER_HELLO, 1, 4096);
 
         if (hello.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
-            channel.send(Packet.status(OpCode.PEER_HELLO_ACK, hello.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
+            channel.send(Packet.status(ConnectionType.PEER_HELLO_ACK, hello.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
             throw new IOException("Unsupported peer protocol version");
         }
         String peerUsername = hello.string("username");
@@ -118,7 +118,7 @@ public class PeerConnection implements AutoCloseable {
         peerAddress = new InetSocketAddress(socket.getInetAddress(), port);
 
         PeerKeyProof localProof = keyProofProvider.request(sessionId, publicKey());
-        Packet response = Packet.reply(OpCode.PEER_HELLO_ACK, hello.sequence(),
+        Packet response = Packet.reply(ConnectionType.PEER_HELLO_ACK, hello.sequence(),
                 Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION,
                         "username", localProof.username(), "sessionId", localProof.sessionId(),
                         "publicKey", localProof.publicKey(), "serverSignature", localProof.serverSignature()));
@@ -141,7 +141,7 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void sendMessage(String message) throws IOException {
-        Packet chatMessage = Packet.json(OpCode.CHAT_MESSAGE, Json.object("content", message));
+        Packet chatMessage = Packet.json(ChatType.MESSAGE, Json.object("content", message));
         if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
             throw new IOException("Message exceeds limit: " + MAX_CHAT_BYTES);
         }
@@ -179,15 +179,15 @@ public class PeerConnection implements AutoCloseable {
     public void readMessages(String peerUsername, Consumer<String> onMessage, Consumer<Packet> onFilePacket) throws IOException {
         Packet packet;
         while ((packet = channel.read()) != null) {
-            switch (packet.op()) {
-                case CHAT_MESSAGE -> {
+            switch (packet.type()) {
+                case ChatType.MESSAGE -> {
                     if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds chat limit");
                     }
                     onMessage.accept(packet.string("content"));
                 }
-                case FILE_OFFER, FILE_DECISION -> onFilePacket.accept(packet);
-                default -> throw new IOException("Unexpected peer chat packet: " + packet.op());
+                case FileType.OFFER, FileType.DECISION -> onFilePacket.accept(packet);
+                default -> throw new IOException("Unexpected peer chat packet: " + packet.type());
             }
         }
     }

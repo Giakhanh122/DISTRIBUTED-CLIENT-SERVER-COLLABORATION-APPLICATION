@@ -1,5 +1,8 @@
 package client.community;
 
+import protocols.CommunityType;
+import protocols.MessageType;
+
 import client.connection.ServerConnection;
 
 import com.google.gson.JsonArray;
@@ -9,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketValidator;
 
@@ -39,7 +41,7 @@ public final class CommunityClient {
     }
 
     public List<CommunityInfo> list() throws IOException {
-        Packet response = request(Packet.empty(OpCode.COMMUNITY_LIST_REQUEST), OpCode.COMMUNITY_LIST_RESPONSE);
+        Packet response = request(Packet.empty(CommunityType.LIST_REQUEST), CommunityType.LIST_RESPONSE);
         List<CommunityInfo> communities = new ArrayList<>();
         for (var entry : Json.array(response.jsonBody(), "communities")) {
             communities.add(CommunityInfo.fromJson(Json.asObject(entry)));
@@ -48,18 +50,18 @@ public final class CommunityClient {
     }
 
     public Selection create(String name) throws IOException {
-        return selectFrom(Packet.json(OpCode.COMMUNITY_CREATE_REQUEST, Json.object("name", name)),
-                OpCode.COMMUNITY_CREATE_RESPONSE);
+        return selectFrom(Packet.json(CommunityType.CREATE_REQUEST, Json.object("name", name)),
+                CommunityType.CREATE_RESPONSE);
     }
 
     public Selection join(String id) throws IOException {
-        return selectFrom(Packet.json(OpCode.COMMUNITY_JOIN_REQUEST, Json.object("communityId", id)),
-                OpCode.COMMUNITY_JOIN_RESPONSE);
+        return selectFrom(Packet.json(CommunityType.JOIN_REQUEST, Json.object("communityId", id)),
+                CommunityType.JOIN_RESPONSE);
     }
 
     public Selection select(String id) throws IOException {
-        return selectFrom(Packet.json(OpCode.COMMUNITY_SELECT_REQUEST, Json.object("communityId", id)),
-                OpCode.COMMUNITY_SELECT_RESPONSE);
+        return selectFrom(Packet.json(CommunityType.SELECT_REQUEST, Json.object("communityId", id)),
+                CommunityType.SELECT_RESPONSE);
     }
 
     public Selection leave() throws IOException {
@@ -68,8 +70,8 @@ public final class CommunityClient {
 
     public Selection leave(String id) throws IOException {
         Selection selection = selected;
-        request(Packet.json(OpCode.COMMUNITY_LEAVE_REQUEST, Json.object("communityId", id)),
-                OpCode.COMMUNITY_LEAVE_RESPONSE);
+        request(Packet.json(CommunityType.LEAVE_REQUEST, Json.object("communityId", id)),
+                CommunityType.LEAVE_RESPONSE);
         synchronized (this) {
             // Another caller may have selected a different community while leave waited for its reply.
             if (selected != null && selected.id().equals(id)) selected = null;
@@ -78,20 +80,20 @@ public final class CommunityClient {
     }
 
     public JsonArray members() throws IOException {
-        Packet response = request(Packet.json(OpCode.COMMUNITY_MEMBERS_REQUEST,
-                Json.object("communityId", requireSelection().id())), OpCode.COMMUNITY_MEMBERS_RESPONSE);
+        Packet response = request(Packet.json(CommunityType.MEMBERS_REQUEST,
+                Json.object("communityId", requireSelection().id())), CommunityType.MEMBERS_RESPONSE);
         return Json.array(response.jsonBody(), "members");
     }
 
     public JsonObject info() throws IOException {
-        Packet response = request(Packet.json(OpCode.COMMUNITY_INFO_REQUEST,
-                Json.object("communityId", requireSelection().id())), OpCode.COMMUNITY_INFO_RESPONSE);
+        Packet response = request(Packet.json(CommunityType.INFO_REQUEST,
+                Json.object("communityId", requireSelection().id())), CommunityType.INFO_RESPONSE);
         return Json.object(response.jsonBody(), "community");
     }
 
-    private Selection selectFrom(Packet request, OpCode opcode) throws IOException {
+    private Selection selectFrom(Packet request, MessageType responseType) throws IOException {
         ServerConnection source = server.get();
-        Packet response = source.request(request, opcode);
+        Packet response = source.request(request, responseType);
         PacketValidator.requireSuccess(response);
         synchronized (this) {
             if (source != server.get()) throw new IOException("Server connection changed; select the community again");
@@ -100,7 +102,7 @@ public final class CommunityClient {
         }
     }
 
-    private Packet request(Packet request, OpCode responseOp) throws IOException {
+    private Packet request(Packet request, MessageType responseOp) throws IOException {
         ServerConnection connection = server.get();
         Packet response = connection.request(request, responseOp);
         if (connection != server.get()) throw new IOException("Server connection changed; retry the operation");

@@ -123,15 +123,16 @@ sống tiếp tục trên socket cũ; file có socket dữ liệu đã đứt ph
 Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len đếm toàn bộ
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
-Handshake trao đổi `protocolVersion = 1`. Server và client cần chạy cùng bản code;
-chưa có thương lượng khả năng để tương thích với bản cũ thiếu heartbeat.
+Giao thức dùng 8 nhóm opcode và `body.type` bắt buộc. Handshake trao đổi
+`protocolVersion = 2`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
+`SYSTEM/KEY_CONFIRM_ACK` đã mã hóa. Server và client cần chạy cùng bản code;
+wire protocol phiên bản 2 không tương thích phiên bản 1.
 Không có magic bytes hoặc header JSON riêng.
 
-Socket file P2P mở bằng FILE_TRANSFER_START/FILE_READY rồi xác nhận khóa AES-GCM.
-Nội dung file, FILE_END và FILE_RESULT đều được mã hóa; receiver kiểm tra SHA-256
-trước khi công bố file. Không dùng FILE_CHUNK. Luồng đầy đủ và các thay đổi nằm
-trong [docs/security-refactor.md](docs/security-refactor.md).
-Client/server phải chạy cùng phiên bản mới. Xem docs/protocol.md để biết chi tiết.
+Socket file P2P mở bằng `FILE/TRANSFER_START` và `FILE/READY`, rồi xác nhận khóa
+qua `SYSTEM/KEY_CONFIRM/KEY_CONFIRM_ACK`. Nội dung file, `FILE/END` và `FILE/RESULT`
+đều được mã hóa; receiver kiểm tra SHA-256 trước khi công bố file. Không dùng
+FILE_CHUNK. Xem [docs/protocol.md](docs/protocol.md) để biết luồng đầy đủ.
 
 ## Tổ chức source
 

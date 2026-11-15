@@ -1,11 +1,12 @@
 package transfer;
 
+import protocols.FileType;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 
@@ -34,7 +35,7 @@ public final class FileDataReader {
         }
 
         Packet end = channel.read();
-        if (end == null || end.op() != OpCode.FILE_END) throw new IOException("Missing FILE_END");
+        if (end == null || end.type() != FileType.END) throw new IOException("Missing FILE_END");
         if (!end.string("transferId").equals(transferId)) {
             throw new IOException("FILE_END does not match transfer");
         }

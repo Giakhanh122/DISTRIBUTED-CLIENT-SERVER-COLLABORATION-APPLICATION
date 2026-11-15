@@ -1,6 +1,7 @@
 package network;
 
-import protocols.OpCode;
+import protocols.SystemType;
+
 import protocols.Packet;
 import protocols.PacketValidator;
 
@@ -62,7 +63,7 @@ public final class HeartbeatMonitor implements AutoCloseable {
         if (expired) fail();
         else Thread.startVirtualThread(() -> {
             try {
-                channel.send(Packet.empty(OpCode.HEARTBEAT), value -> {
+                channel.send(Packet.empty(SystemType.PING), value -> {
                     synchronized (this) { sequence = value; }
                 });
             } catch (IOException | RuntimeException e) { fail(); }
@@ -71,12 +72,12 @@ public final class HeartbeatMonitor implements AutoCloseable {
 
     /** Called only by the socket's existing reader; never creates a second reader. */
     public boolean handle(Packet packet) throws IOException {
-        if (packet.op() == OpCode.HEARTBEAT) {
-            PacketValidator.validateRequest(packet, OpCode.HEARTBEAT, 0, 0);
-            channel.send(Packet.status(OpCode.HEARTBEAT_ACK, packet.sequence(), "OK"));
+        if (packet.type() == SystemType.PING) {
+            PacketValidator.validateRequest(packet, SystemType.PING, 0, 0);
+            channel.send(Packet.status(SystemType.PONG, packet.sequence(), "OK"));
             return true;
         }
-        if (packet.op() != OpCode.HEARTBEAT_ACK) return false;
+        if (packet.type() != SystemType.PONG) return false;
         PacketValidator.requireSuccess(packet);
         synchronized (this) {
             if (closed) return true;

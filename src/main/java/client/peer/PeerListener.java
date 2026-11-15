@@ -1,5 +1,8 @@
 package client.peer;
 
+import protocols.ConnectionType;
+import protocols.FileType;
+
 import client.security.ServerKeyPinning;
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -7,7 +10,6 @@ import java.net.Socket;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
-import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 
@@ -62,11 +64,11 @@ public class PeerListener implements Runnable, AutoCloseable {
             // Read only the first packet here; exactly one handler owns subsequent reads.
             PacketChannel channel = new PacketChannel(socket);
             Packet first = channel.read();
-            if (first != null && first.op() == OpCode.PEER_HELLO) {
+            if (first != null && first.type() == ConnectionType.PEER_HELLO) {
                 PeerConnection connection = new PeerConnection(channel);
                 String peerUsername = connection.acceptHandshake(first, serverKeyPinning, keyProofProvider);
                 onConnected.accept(peerUsername, connection);
-            } else if (first != null && first.op() == OpCode.FILE_TRANSFER_START) {
+            } else if (first != null && first.type() == FileType.TRANSFER_START) {
                 try (socket) {
                     onFileConnection.accept(channel, first);
                 }

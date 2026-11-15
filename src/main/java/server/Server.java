@@ -1,5 +1,7 @@
 package server;
 
+import protocols.DiscoveryType;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -13,7 +15,6 @@ import java.net.SocketException;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 
-import protocols.OpCode;
 import protocols.Json;
 import protocols.Packet;
 import protocols.PacketCodec;
@@ -113,7 +114,7 @@ public class Server {
                 );
 
                 request = PacketCodec.read(input);
-                PacketValidator.validateRequest(request, OpCode.DISCOVER_REQUEST, 0, 0);
+                PacketValidator.validateRequest(request, DiscoveryType.REQUEST, 0, 0);
                 if (request.sequence() != 1 || input.available() != 0) {
                     continue;
                 }
@@ -122,7 +123,7 @@ public class Server {
             }
 
             try {
-                Packet response = Packet.reply(OpCode.DISCOVER_RESPONSE, request.sequence(), Json.object("status", "OK", "tcpPort", tcpPort));
+                Packet response = Packet.reply(DiscoveryType.RESPONSE, request.sequence(), Json.object("status", "OK", "tcpPort", tcpPort));
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 PacketCodec.write(output, response, 1);
                 byte[] bytes = output.toByteArray();

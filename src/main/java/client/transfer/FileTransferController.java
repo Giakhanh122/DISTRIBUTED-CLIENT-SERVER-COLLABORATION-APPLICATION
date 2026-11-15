@@ -1,12 +1,13 @@
 package client.transfer;
 
+import protocols.FileType;
+
 import client.ClientEvents;
 import client.peer.PeerConnection;
 import com.google.gson.JsonObject;
 import network.PacketChannel;
 import protocols.FileTransferMeta;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketValidator;
 import security.SessionKeys;
@@ -140,7 +141,7 @@ public final class FileTransferController implements AutoCloseable {
                     events.onFileOffer(new FileOffer(transfer.id(), null, meta, null, false));
                 }
                 Transfer offered = transfer;
-                peer.sendPacket(Packet.json(OpCode.FILE_OFFER, body), sequence -> recordOfferSequence(offered, sequence));
+                peer.sendPacket(Packet.json(FileType.OFFER, body), sequence -> recordOfferSequence(offered, sequence));
             } catch (IOException | RuntimeException e) {
                 if (transfer != null) fail(transfer, e);
                 else events.onFileState("", ClientEvents.FileState.FAILED, message(e));
@@ -175,7 +176,7 @@ public final class FileTransferController implements AutoCloseable {
                     transfer.session.reject();
                     cancelTimeout(transfer);
                 }
-                response = Packet.reply(OpCode.FILE_DECISION, transfer.offerSequence, body);
+                response = Packet.reply(FileType.DECISION, transfer.offerSequence, body);
             } catch (IOException | RuntimeException e) {
                 fail(transfer, e);
                 throw e;
@@ -205,8 +206,8 @@ public final class FileTransferController implements AutoCloseable {
             socket.connect(transfer.peer.peerAddress(), 10000);
             socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
             PacketChannel channel = new PacketChannel(socket);
-            long sequence = channel.send(Packet.json(OpCode.FILE_TRANSFER_START, Json.object("transferId", transfer.id())));
-            Packet ready = PacketValidator.validateResponse(channel.read(), OpCode.FILE_READY, sequence);
+            long sequence = channel.send(Packet.json(FileType.TRANSFER_START, Json.object("transferId", transfer.id())));
+            Packet ready = PacketValidator.validateResponse(channel.read(), FileType.READY, sequence);
             PacketValidator.requireSuccess(ready);
             if (!transfer.id().equals(ready.string("transferId"))) throw new IOException("File channel transfer ID mismatch");
             SessionKeys connectionKeys = connectionKeys(keys, ready.string("connectionNonce"));
@@ -228,7 +229,7 @@ public final class FileTransferController implements AutoCloseable {
         try {
             Socket socket = channel.socket();
             socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
-            PacketValidator.validateRequest(hello, OpCode.FILE_TRANSFER_START, 1, 256);
+            PacketValidator.validateRequest(hello, FileType.TRANSFER_START, 1, 256);
             SessionKeys baseKeys;
             synchronized (this) {
                 transfer = transfers.get(hello.string("transferId"));
@@ -243,7 +244,7 @@ public final class FileTransferController implements AutoCloseable {
             byte[] nonce = new byte[32];
             RANDOM.nextBytes(nonce);
             SessionKeys connectionKeys = connectionKeys(baseKeys, Base64.getEncoder().encodeToString(nonce));
-            channel.send(Packet.reply(OpCode.FILE_READY, hello.sequence(),
+            channel.send(Packet.reply(FileType.READY, hello.sequence(),
                     Json.object("status", "OK", "transferId", transfer.id(),
                             "connectionNonce", Base64.getEncoder().encodeToString(nonce))));
             channel.confirmEncryption(connectionKeys, PacketChannel.Role.RESPONDER);

@@ -1,5 +1,7 @@
 package transfer;
 
+import protocols.FileType;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -10,7 +12,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import protocols.FileTransferMeta;
-import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 
@@ -83,7 +84,7 @@ public class FileReceiver {
             }
             tempFile = null;
             try {
-                channel.send(Packet.status(OpCode.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
+                channel.send(Packet.status(FileType.RESULT, channel.lastReceivedSequence(), "OK"));
             } catch (IOException e) {
                 // Local save is committed. Sender still needs this ACK to confirm delivery.
                 System.err.println("File saved; confirmation failed: " + e.getMessage());

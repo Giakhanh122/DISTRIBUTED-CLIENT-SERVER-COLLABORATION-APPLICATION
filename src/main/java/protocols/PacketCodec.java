@@ -57,7 +57,8 @@ public final class PacketCodec {
         OpCode opcode = OpCode.fromCode(Json.integer(envelope, "opcode"));
         long sequence = Json.longValue(envelope, "sequence");
         JsonObject body = Json.object(envelope, "body");
-        Packet packet = new Packet(opcode, sequence, body);
+        MessageType type = MessageType.fromWire(opcode, Json.string(body, "type"));
+        Packet packet = new Packet(type, sequence, body);
         PacketValidator.validatePacket(packet, sequence);
         return packet;
     }

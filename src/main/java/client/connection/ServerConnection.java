@@ -1,5 +1,7 @@
 package client.connection;
 
+import protocols.MessageType;
+
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -7,7 +9,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import protocols.OpCode;
 import protocols.Packet;
 import network.PacketChannel;
 import network.HeartbeatMonitor;
@@ -20,7 +21,7 @@ public final class ServerConnection implements AutoCloseable {
     }
 
     private static final int RESPONSE_TIMEOUT_SECONDS = 10;
-    private record Pending(OpCode opcode, long sequence, CompletableFuture<Packet> future) {}
+    private record Pending(MessageType type, long sequence, CompletableFuture<Packet> future) {}
 
     private final Runnable onClosed;
     private final PacketChannel channel;
@@ -66,7 +67,7 @@ public final class ServerConnection implements AutoCloseable {
             Packet packet;
             while ((packet = channel.read()) != null) {
                 if (heartbeat.handle(packet)) continue;
-                if (packet.op().requiresStatus()) acceptResponse(packet);
+                if (packet.type().requiresStatus()) acceptResponse(packet);
                 else events.accept(packet);
             }
         } catch (IOException e) {
@@ -78,7 +79,7 @@ public final class ServerConnection implements AutoCloseable {
         }
     }
 
-    public Packet request(Packet packet, OpCode responseOpcode) throws IOException {
+    public Packet request(Packet packet, MessageType responseType) throws IOException {
         synchronized (requestLock) {
             if (!started.get() || closed.get()) throw new IOException("Server connection is not running");
             CompletableFuture<Packet> response = new CompletableFuture<>();
@@ -86,18 +87,18 @@ public final class ServerConnection implements AutoCloseable {
                 channel.send(packet, sequence -> {
                     synchronized (lifecycleLock) {
                         if (closed.get()) throw new IllegalStateException("Server connection closed");
-                        pending = new Pending(responseOpcode, sequence, response);
+                        pending = new Pending(responseType, sequence, response);
                     }
                 });
                 return response.get(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw abort("Interrupted while waiting for " + responseOpcode, e);
+                throw abort("Interrupted while waiting for " + responseType, e);
             } catch (TimeoutException e) {
                 // Close on timeout so a late reply cannot satisfy a later request.
-                throw abort("Timed out waiting for " + responseOpcode, e);
+                throw abort("Timed out waiting for " + responseType, e);
             } catch (ExecutionException | IOException | IllegalStateException e) {
-                throw abort("Request failed: " + responseOpcode, e);
+                throw abort("Request failed: " + responseType, e);
             } finally {
                 pending = null;
             }
@@ -106,9 +107,9 @@ public final class ServerConnection implements AutoCloseable {
 
     private void acceptResponse(Packet packet) throws IOException {
         Pending request = pending;
-        if (request == null || request.opcode() != packet.op() || request.sequence() != packet.replyTo()
+        if (request == null || request.type() != packet.type() || request.sequence() != packet.replyTo()
                 || !request.future().complete(packet)) {
-            throw new IOException("Unexpected response: " + packet.op());
+            throw new IOException("Unexpected response: " + packet.type());
         }
     }
 

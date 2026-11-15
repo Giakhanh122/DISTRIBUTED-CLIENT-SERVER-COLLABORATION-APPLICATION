@@ -1,5 +1,8 @@
 package client.connection;
 
+import protocols.ConnectionType;
+import protocols.DiscoveryType;
+
 import client.Client;
 
 import java.io.ByteArrayInputStream;
@@ -26,7 +29,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
@@ -44,7 +46,7 @@ public final class ServerDiscovery {
     public Client.ServerInfo discover() throws IOException {
         int requestId = 1;
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-        PacketCodec.write(encoded, Packet.empty(OpCode.DISCOVER_REQUEST), requestId);
+        PacketCodec.write(encoded, Packet.empty(DiscoveryType.REQUEST), requestId);
         byte[] request = encoded.toByteArray();
         List<Endpoint> endpoints = new ArrayList<>();
         List<Future<Client.ServerInfo>> workers = new ArrayList<>();
@@ -143,7 +145,7 @@ public final class ServerDiscovery {
         try {
             var input = new ByteArrayInputStream(incoming.getData(), incoming.getOffset(), incoming.getLength());
             Packet response = PacketValidator.validateResponse(PacketCodec.read(input),
-                    OpCode.DISCOVER_RESPONSE, requestId);
+                    DiscoveryType.RESPONSE, requestId);
             if (input.available() != 0) return null;
             PacketValidator.requireSuccess(response);
             int port = response.integer("tcpPort");
@@ -163,12 +165,12 @@ public final class ServerDiscovery {
             new SecureRandom().nextBytes(serverVerificationChallenge);
             String encodedChallenge = Base64.getEncoder().encodeToString(serverVerificationChallenge);
             byte[] publicKey = X25519.createKeyPair().getPublic().getEncoded();
-            PacketCodec.write(socket.getOutputStream(), Packet.json(OpCode.HELLO,
+            PacketCodec.write(socket.getOutputStream(), Packet.json(ConnectionType.HELLO,
                     Json.object("protocolVersion", Packet.PROTOCOL_VERSION,
                             "serverVerificationChallenge", encodedChallenge,
                             "publicKey", Base64.getEncoder().encodeToString(publicKey))), requestId);
             Packet ack = PacketValidator.validateResponse(PacketCodec.read(socket.getInputStream()),
-                    OpCode.HELLO_ACK, requestId);
+                    ConnectionType.HELLO_ACK, requestId);
             PacketValidator.requireSuccess(ack);
             return ack.integer("protocolVersion") == Packet.PROTOCOL_VERSION;
         } catch (IOException | GeneralSecurityException e) {

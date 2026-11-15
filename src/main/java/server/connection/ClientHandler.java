@@ -1,5 +1,12 @@
 package server.connection;
 
+import protocols.AuthType;
+import protocols.ChatType;
+import protocols.CommunityType;
+import protocols.ConnectionType;
+import protocols.FileType;
+import protocols.UserType;
+
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -13,7 +20,6 @@ import java.util.UUID;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketCodec;
 import network.PacketChannel;
@@ -81,13 +87,13 @@ public class ClientHandler implements Runnable {
             Packet first = channel.read();
             if (first == null) return;
 
-            if (first.op() != OpCode.HELLO) {
+            if (first.type() != ConnectionType.HELLO) {
                 System.err.println("Invalid or missing HELLO from " + address);
                 return;
             }
 
             if (first.integer("protocolVersion") != Packet.PROTOCOL_VERSION) {
-                channel.send(Packet.status(OpCode.HELLO_ACK, first.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
+                channel.send(Packet.status(ConnectionType.HELLO_ACK, first.sequence(), "UNSUPPORTED_PROTOCOL_VERSION"));
                 return;
             }
 
@@ -97,7 +103,7 @@ public class ClientHandler implements Runnable {
                     "hello", first.jsonBody(), "serverPublicKey", encodedPublicKey));
             String serverSignature = createServerSignature(first, signedData);
             SessionKeys sessionKeys = createSessionKeys(serverKeyPair, first, signedData);
-            Packet response = Packet.reply(OpCode.HELLO_ACK, first.sequence(),
+            Packet response = Packet.reply(ConnectionType.HELLO_ACK, first.sequence(),
                     Json.object("status", "OK", "protocolVersion", Packet.PROTOCOL_VERSION,
                             "serverSignature", serverSignature, "publicKey", encodedPublicKey));
             channel.send(response);
@@ -107,11 +113,11 @@ public class ClientHandler implements Runnable {
 
             Packet request = channel.read();
             if (request == null) return;
-            if (request.op() == OpCode.FILE_BROADCAST_UPLOAD_START) {
+            if (request.type() == FileType.BROADCAST_UPLOAD_START) {
                 requireBroadcasts().handleBroadcastUploadConnection(request, channel);
                 return;
             }
-            if (request.op() == OpCode.FILE_BROADCAST_DOWNLOAD_START) {
+            if (request.type() == FileType.BROADCAST_DOWNLOAD_START) {
                 requireBroadcasts().handleBroadcastDownloadConnection(request, channel);
                 return;
             }
@@ -146,8 +152,8 @@ public class ClientHandler implements Runnable {
         Packet packet;
         while ((packet = channel.read()) != null) {
             if (heartbeat.handle(packet)) continue;
-            switch (packet.op()) {
-                case CHAT_MESSAGE -> {
+            switch (packet.type()) {
+                case ChatType.MESSAGE -> {
                     if (packet.string("content").getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
                         throw new IOException("Message exceeds limit");
                     }
@@ -155,41 +161,41 @@ public class ClientHandler implements Runnable {
                     System.out.println(session.username() + ": " + message);
                 }
 
-                case CHAT_MESSAGE_BROADCAST -> requireBroadcasts().handleBroadcastMessage(packet, session);
+                case ChatType.BROADCAST -> requireBroadcasts().handleBroadcastMessage(packet, session);
 
-                case USER_LIST_REQUEST -> handleUserList(packet);
+                case UserType.LIST_REQUEST -> handleUserList(packet);
 
-                case PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
+                case UserType.PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
 
-                case PEER_KEY_REQUEST -> handlePeerKey(packet);
+                case UserType.PEER_KEY_REQUEST -> handlePeerKey(packet);
 
-                case CHAT_SESSION_REPORT -> handleChatSessionReport(packet);
+                case ChatType.SESSION_REPORT -> handleChatSessionReport(packet);
 
-                case CHAT_SESSION_LIST_REQUEST -> handleChatSessionList(packet);
+                case ChatType.SESSION_LIST_REQUEST -> handleChatSessionList(packet);
 
                 // Community operations
-                case COMMUNITY_LIST_REQUEST, COMMUNITY_CREATE_REQUEST, COMMUNITY_JOIN_REQUEST,
-                     COMMUNITY_LEAVE_REQUEST, COMMUNITY_MEMBERS_REQUEST, COMMUNITY_SELECT_REQUEST,
-                     COMMUNITY_INFO_REQUEST -> requireCommunityRequests().handle(packet, session);
+                case CommunityType.LIST_REQUEST, CommunityType.CREATE_REQUEST, CommunityType.JOIN_REQUEST,
+                     CommunityType.LEAVE_REQUEST, CommunityType.MEMBERS_REQUEST, CommunityType.SELECT_REQUEST,
+                     CommunityType.INFO_REQUEST -> requireCommunityRequests().handle(packet, session);
 
                 // Broadcast file operations
-                case FILE_BROADCAST_UPLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileUploadRequest(packet, session);
-                case FILE_BROADCAST_DECISION -> requireBroadcasts().handleBroadcastFileDecision(packet, session);
-                case FILE_BROADCAST_DOWNLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileDownloadRequest(packet, session);
+                case FileType.BROADCAST_UPLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileUploadRequest(packet, session);
+                case FileType.BROADCAST_DECISION -> requireBroadcasts().handleBroadcastFileDecision(packet, session);
+                case FileType.BROADCAST_DOWNLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileDownloadRequest(packet, session);
 
-                case LOGOUT_REQUEST -> {
-                    PacketValidator.validateRequest(packet, OpCode.LOGOUT_REQUEST, 0, 0);
-                    channel.send(Packet.status(OpCode.LOGOUT_RESPONSE, packet.sequence(), "OK"));
+                case AuthType.LOGOUT_REQUEST -> {
+                    PacketValidator.validateRequest(packet, AuthType.LOGOUT_REQUEST, 0, 0);
+                    channel.send(Packet.status(AuthType.LOGOUT_RESPONSE, packet.sequence(), "OK"));
                     return;
                 }
 
-                default -> throw new IOException("Unexpected packet: " + packet.op());
+                default -> throw new IOException("Unexpected packet: " + packet.type());
             }
         }
     }
 
     private String createServerSignature(Packet hello, byte[] signedData) throws IOException {
-        PacketValidator.validateRequest(hello, OpCode.HELLO, 1, 4096);
+        PacketValidator.validateRequest(hello, ConnectionType.HELLO, 1, 4096);
         try {
             byte[] serverVerificationChallenge = Base64.getDecoder()
                     .decode(hello.string("serverVerificationChallenge"));
@@ -222,7 +228,7 @@ public class ClientHandler implements Runnable {
 
     private boolean handleAuth(Packet request) throws IOException {
         try {
-            PacketValidator.validateRequest(request, OpCode.AUTH_REQUEST, 0, MAX_AUTH_BYTES);
+            PacketValidator.validateRequest(request, AuthType.LOGIN_REQUEST, 0, MAX_AUTH_BYTES);
         } catch (IOException e) {
             return false;
         }
@@ -253,25 +259,25 @@ public class ClientHandler implements Runnable {
             }
         }
 
-        Packet response = Packet.status(OpCode.AUTH_RESPONSE, request.sequence(), status);
+        Packet response = Packet.status(AuthType.LOGIN_RESPONSE, request.sequence(), status);
         channel.send(response);
 
         return status.equals("OK");
     }
 
     private void handleUserList(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.USER_LIST_REQUEST, 0, 0);
+        PacketValidator.validateRequest(request, UserType.LIST_REQUEST, 0, 0);
 
         var usernames = userSessions.listOnlineUsers().stream()
                 .map(UserSession::username).sorted().toList();
-        Packet response = Packet.reply(OpCode.USER_LIST_RESPONSE, request.sequence(),
+        Packet response = Packet.reply(UserType.LIST_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "users", usernames));
 
         channel.send(response);
     }
 
     private void handlePeerKey(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.PEER_KEY_REQUEST, 1, 4096);
+        PacketValidator.validateRequest(request, UserType.PEER_KEY_REQUEST, 1, 4096);
         String sessionId;
         String publicKey;
         try {
@@ -282,7 +288,7 @@ public class ClientHandler implements Runnable {
             PublicKey key = X25519.decodePublicKey(request.string("publicKey"));
             publicKey = Base64.getEncoder().encodeToString(key.getEncoded());
         } catch (IOException | IllegalArgumentException | GeneralSecurityException e) {
-            channel.send(Packet.status(OpCode.PEER_KEY_RESPONSE, request.sequence(), "INVALID_PEER_KEY"));
+            channel.send(Packet.status(UserType.PEER_KEY_RESPONSE, request.sequence(), "INVALID_PEER_KEY"));
             return;
         }
 
@@ -292,14 +298,14 @@ public class ClientHandler implements Runnable {
         } catch (GeneralSecurityException e) {
             throw new IOException("Cannot sign peer public key", e);
         }
-        channel.send(Packet.reply(OpCode.PEER_KEY_RESPONSE, request.sequence(),
+        channel.send(Packet.reply(UserType.PEER_KEY_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "username", session.username(),
                         "sessionId", sessionId, "publicKey", publicKey,
                         "serverSignature", Base64.getEncoder().encodeToString(signature))));
     }
 
     private void handlePeerLookup(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.PEER_LOOKUP_REQUEST, 1, PacketCodec.MAX_JSON_LENGTH);
+        PacketValidator.validateRequest(request, UserType.PEER_LOOKUP_REQUEST, 1, PacketCodec.MAX_JSON_LENGTH);
 
         String targetUsername = request.string("username");
         Optional<UserSession> target = userSessions.find(targetUsername);
@@ -311,12 +317,12 @@ public class ClientHandler implements Runnable {
             UserSession targetUser = target.get();
             payload = Json.object("status", "OK", "ip", targetUser.ip(), "peerPort", targetUser.port());
         }
-        Packet response = Packet.reply(OpCode.PEER_LOOKUP_RESPONSE, request.sequence(), payload);
+        Packet response = Packet.reply(UserType.PEER_LOOKUP_RESPONSE, request.sequence(), payload);
         channel.send(response);
     }
 
     private void handleChatSessionReport(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_REPORT, 1, MAX_AUTH_BYTES);
+        PacketValidator.validateRequest(request, ChatType.SESSION_REPORT, 1, MAX_AUTH_BYTES);
         String status = "INVALID_SESSION_REPORT";
         try {
             String idText = request.string("sessionId");
@@ -332,7 +338,7 @@ public class ClientHandler implements Runnable {
         } catch (IllegalArgumentException | IOException e) {
             // Invalid session metadata does not close the management connection.
         }
-        channel.send(Packet.status(OpCode.CHAT_SESSION_REPORT_RESPONSE, request.sequence(), status));
+        channel.send(Packet.status(ChatType.SESSION_REPORT_RESPONSE, request.sequence(), status));
     }
 
     private String applyChatSessionReport(UUID id, String peerUsername, String state) {
@@ -349,14 +355,14 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleChatSessionList(Packet request) throws IOException {
-        PacketValidator.validateRequest(request, OpCode.CHAT_SESSION_LIST_REQUEST, 0, 0);
+        PacketValidator.validateRequest(request, ChatType.SESSION_LIST_REQUEST, 0, 0);
         JsonArray sessions = new JsonArray();
         chatSessions.listSessions().stream()
                 .sorted(java.util.Comparator.comparing(ChatSession::sessionId))
                 .forEach(chat -> sessions.add(Json.object("sessionId", chat.sessionId().toString(),
                         "userA", chat.userA().username(), "userB", chat.userB().username(),
                         "state", chat.state().name())));
-        channel.send(Packet.reply(OpCode.CHAT_SESSION_LIST_RESPONSE, request.sequence(),
+        channel.send(Packet.reply(ChatType.SESSION_LIST_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "sessions", sessions)));
     }
 

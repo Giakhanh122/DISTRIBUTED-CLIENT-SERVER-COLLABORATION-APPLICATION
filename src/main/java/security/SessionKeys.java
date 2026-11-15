@@ -18,7 +18,7 @@ public record SessionKeys(SecretKey initiatorToResponder, SecretKey responderToI
     public SessionKeys forFileConnection(byte[] nonce) throws GeneralSecurityException {
         if (nonce.length != 32) throw new GeneralSecurityException("File connection nonce must be 32 bytes");
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        digest.update("DLP-v1 peer-file-connection".getBytes(StandardCharsets.US_ASCII));
+        digest.update("DLP-v2 peer-file-connection".getBytes(StandardCharsets.US_ASCII));
         byte[] salt = digest.digest(nonce);
         byte[] forwardSecret = initiatorToResponder.getEncoded();
         byte[] reverseSecret = responderToInitiator.getEncoded();
@@ -32,13 +32,13 @@ public record SessionKeys(SecretKey initiatorToResponder, SecretKey responderToI
 
     private static SessionKeys deriveDirections(byte[] forwardSecret, byte[] reverseSecret, byte[] salt)
             throws GeneralSecurityException {
-        // Keep the existing wire labels; role names also apply to P2P initiators/responders.
+        // Versioned direction labels also apply to P2P initiators/responders.
         byte[] forward = Hkdf.derive(forwardSecret, salt,
-                "DLP-v1 client-to-server AES-256-GCM".getBytes(StandardCharsets.US_ASCII), 32);
+                "DLP-v2 client-to-server AES-256-GCM".getBytes(StandardCharsets.US_ASCII), 32);
         byte[] reverse = null;
         try {
             reverse = Hkdf.derive(reverseSecret, salt,
-                    "DLP-v1 server-to-client AES-256-GCM".getBytes(StandardCharsets.US_ASCII), 32);
+                    "DLP-v2 server-to-client AES-256-GCM".getBytes(StandardCharsets.US_ASCII), 32);
             return new SessionKeys(new SecretKeySpec(forward, "AES"), new SecretKeySpec(reverse, "AES"));
         } finally {
             Arrays.fill(forward, (byte) 0);

@@ -2,8 +2,8 @@ package network;
 
 import protocols.Packet;
 import protocols.PacketCodec;
-import protocols.OpCode;
 import protocols.PacketValidator;
+import protocols.SystemType;
 
 import java.io.IOException;
 import java.io.EOFException;
@@ -71,16 +71,21 @@ public final class PacketChannel implements AutoCloseable {
         }
     }
 
-    /** Enable encryption and prove possession of both directional keys before application traffic. */
+    /** Prove possession of both directional keys before publishing the connection. */
     public void confirmEncryption(SessionKeys keys, Role role) throws IOException {
-        enableEncryption(keys, role);
-        if (role == Role.INITIATOR) {
-            long sequence = send(Packet.empty(OpCode.KEY_CONFIRM_REQUEST));
-            Packet response = PacketValidator.validateResponse(read(), OpCode.KEY_CONFIRM_RESPONSE, sequence);
-            PacketValidator.requireSuccess(response);
-        } else {
-            Packet request = PacketValidator.validateRequest(read(), OpCode.KEY_CONFIRM_REQUEST, 0, 0);
-            send(Packet.status(OpCode.KEY_CONFIRM_RESPONSE, request.sequence(), "OK"));
+        try {
+            enableEncryption(keys, role);
+            if (role == Role.INITIATOR) {
+                long sequence = send(Packet.empty(SystemType.KEY_CONFIRM));
+                Packet response = PacketValidator.validateResponse(read(), SystemType.KEY_CONFIRM_ACK, sequence);
+                PacketValidator.requireSuccess(response);
+            } else {
+                Packet request = PacketValidator.validateRequest(read(), SystemType.KEY_CONFIRM, 0, 0);
+                send(Packet.status(SystemType.KEY_CONFIRM_ACK, request.sequence(), "OK"));
+            }
+        } catch (IOException e) {
+            closeAfterFailure(e);
+            throw e;
         }
     }
 

@@ -1,381 +1,2091 @@
-# DLP Protocol Specification
+# DLP Gateway & Events
 
-Đặc tả thông điệp JSON và luồng dữ liệu file của ứng dụng. Server mặc định dùng
-TCP 8080, UDP discovery 41234. Phiên bản protocol hiện tại: 1.
+Giao thức thời gian thực của ứng dụng: đăng nhập và thao tác community qua server,
+chat và truyền file trực tiếp giữa các peer. Phiên bản hiện tại: **2**.
 
-## 1. Cấu trúc thông điệp
+Tài liệu này mô tả các event ứng dụng gửi/nhận, cấu trúc payload và ví dụ JSON.
+Các ví dụ là payload trước khi mã hóa hoặc sau khi giải mã.
 
-```text
-┌────────────────────────────┬─────────────────────────────────────────┐
-│ len                        │ JSON UTF-8                              │
-│ 4 byte, integer big-endian │ đúng len byte                           │
-└────────────────────────────┴─────────────────────────────────────────┘
-```
+## Example Gateway Event
 
-`len` là số byte của **toàn bộ JSON sau khi mã hóa UTF-8**, không bao gồm chính
-4 byte tiền tố. Tổng kích thước thông điệp là `4 + len` byte.
-
-```java
-byte[] bytes = Json.bytes(envelope);
-int len = bytes.length;
-```
-
-Không có magic bytes, header JSON riêng, headerLength, contentType hoặc bodyLength
-trên đường truyền. Các thông điệp điều khiển đều dùng cùng một JSON envelope:
+Alice gửi một tin nhắn cho Bob trên kết nối P2P đã xác thực:
 
 ```json
-{"opcode":48,"sequence":3,"body":{"content":"Hello"}}
+{
+  "opcode": 4,
+  "sequence": 3,
+  "body": {
+    "type": "MESSAGE",
+    "content": "Chào Bob!"
+  }
+}
 ```
 
-## 2. Metadata và body
+`opcode = 4` chọn nhóm CHAT; `body.type = MESSAGE` xác định sự kiện gửi tin nhắn.
+Bob nhận cùng payload trên socket của Alice và lấy danh tính người gửi từ kết nối.
 
-| Trường | Kiểu JSON | Bắt buộc | Ý nghĩa |
-| --- | --- | --- | --- |
-| opcode | Integer | Có | Mã thao tác, biểu diễn bằng số thập phân |
-| sequence | Integer | Có | Số thứ tự thông điệp trong một chiều kết nối TCP |
-| body | Object | Có | Dữ liệu riêng của thao tác; dùng `{}` nếu không có trường |
+## Contents
 
-Envelope có đúng ba trường. Thứ tự key không có ý nghĩa. Metadata file như tên,
-kích thước và checksum thuộc body FILE_OFFER, không thuộc metadata chung.
+- [Payload Structure](#payload-structure)
+- [Connection Lifecycle](#connection-lifecycle)
+- [Send Events](#send-events)
+- [Receive Events](#receive-events)
+- [Event Reference](#event-reference)
+- [Objects](#objects)
+- [Errors and Limits](#errors-and-limits)
+- [Reserved Events](#reserved-events)
 
-### 2.1. sequence
+## Payload Structure
 
-- Mỗi chiều TCP đếm riêng, bắt đầu từ 1, tăng đúng 1 theo mỗi thông điệp JSON.
-- Tất cả opcode cùng chiều dùng chung bộ đếm, bao gồm sự kiện chủ động.
-- Mỗi socket mới bắt đầu bộ đếm mới. Response không sao chép sequence request.
-- Luồng byte file không có sequence riêng và không làm tăng bộ đếm JSON.
-- Sequence là integer dương tới 2^63−1; hết miền số thì mở kết nối mới.
-- Sequence sai, lặp hoặc bỏ bước là lỗi protocol.
+Mọi event có cùng envelope gồm đúng ba trường:
 
-### 2.2. status và replyTo trong body phản hồi
-
-Mọi ACK/RESPONSE đã triển khai và FILE_RESULT có các trường chung trong body:
-
-| Trường | Kiểu | Ý nghĩa |
+| Field | Type | Description |
 | --- | --- | --- |
-| status | String không rỗng | OK khi thành công hoặc mã kết quả/lỗi cụ thể |
-| replyTo | Integer | Sequence của request mà thông điệp này trả lời, trên cùng kết nối |
+| `opcode` | integer | Nhóm chức năng, từ 0 đến 7. |
+| `sequence` | integer | Thứ tự event theo chiều gửi trên kết nối hiện tại. |
+| `body` | object | Luôn có `type`; các trường còn lại phụ thuộc event. |
 
-FILE_DECISION cũng có replyTo trỏ tới FILE_OFFER; lựa chọn thể hiện bằng decision
-ACCEPT/REJECT. Request, chat và sự kiện chủ động không cần replyTo/status.
+Trường duy nhất bắt buộc trong body của mọi event:
 
-Ví dụ request có sequence 5:
-
-```json
-{"opcode":18,"sequence":5,"body":{}}
-```
-
-Response có sequence riêng và trả lời request 5:
-
-```json
-{"opcode":19,"sequence":8,"body":{"replyTo":5,"status":"OK","users":["alice","bob"]}}
-```
-
-Client kiểm tra opcode và replyTo trước khi sử dụng kết quả. Giá trị replyTo thông
-thường phải dương. Sự kiện broadcast không được coi là response của request đang chờ.
-Danh sách rỗng vẫn có status OK và mảng `[]`.
-
-Trong luồng file, FILE_RESULT OK trả lời FILE_END. Nếu lỗi xảy ra trước khi nhận
-FILE_END, FILE_RESULT FAIL trỏ tới thông điệp JSON gần nhất đã nhận trên socket đó.
-Riêng receiver download chưa nhận được JSON nào từ sender có thể dùng replyTo 0
-cho lỗi sớm. Đây chỉ là thông báo thất bại, không được coi là xác nhận hoàn tất file.
-
-## 3. Body theo opcode
-
-Ký hiệu: C = client, S = server, P = peer. Mã trong bảng dùng hex để đối chiếu
-OpCode.java; JSON gửi số thập phân. Các trường bên dưới nằm trực tiếp trong body.
-Những trường ghi "khi OK" chỉ bắt buộc khi status là OK.
-
-### 3.1. Kết nối, đăng nhập và chat
-
-| Opcode | Mã | Chiều | Các trường body |
-| --- | --- | --- | --- |
-| HELLO | 0x01 | C → S | protocolVersion:integer |
-| HELLO_ACK | 0x02 | S → C | replyTo:integer, status:string; khi OK có protocolVersion:integer |
-| AUTH_REQUEST | 0x10 | C → S | username:string, password:string, peerPort:integer |
-| AUTH_RESPONSE | 0x11 | S → C | replyTo:integer, status:string |
-| USER_LIST_REQUEST | 0x12 | C → S | `{}` |
-| USER_LIST_RESPONSE | 0x13 | S → C | replyTo:integer, status:string; khi OK có users:string[] |
-| PEER_LOOKUP_REQUEST | 0x14 | C → S | username:string của người cần tìm |
-| PEER_LOOKUP_RESPONSE | 0x15 | S → C | replyTo:integer, status:string; khi OK có ip:string, peerPort:integer |
-| LOGOUT_REQUEST | 0x16 | C → S | `{}` |
-| LOGOUT_RESPONSE | 0x17 | S → C | replyTo:integer, status:string |
-| PEER_HELLO | 0x20 | P → P | protocolVersion:integer, username:string, peerPort:integer, sessionId:string |
-| PEER_HELLO_ACK | 0x21 | P → P | replyTo:integer, status:string; khi OK có protocolVersion:integer |
-| CHAT_MESSAGE | 0x30 | P → P | content:string |
-| HEARTBEAT | 0x52 | C ↔ S, TCP đã xác thực | `{}` |
-| HEARTBEAT_ACK | 0x53 | C ↔ S, TCP đã xác thực | replyTo:integer, status:`OK` |
-
-protocolVersion hiện là 1. Version không khớp trả status UNSUPPORTED_PROTOCOL_VERSION.
-Port từ 1 tới 65535; UUID là chuỗi canonical. Nội dung chat tối đa 64 KiB theo
-byte UTF-8; body đăng nhập tối đa 4096 byte. Danh sách user được sắp xếp.
-AUTH_RESPONSE có status OK, INVALID_AUTH_REQUEST, INVALID_CREDENTIALS hoặc
-ALREADY_LOGGED_IN. Server trả OK kèm địa chỉ khi target online, USER_OFFLINE khi offline.
-CONNECTED trong metadata không chặn lookup vì có thể cập nhật trễ sau mất P2P.
-Client vẫn hiểu ALREADY_CONNECTED từ server cũ; kết nối cục bộ sống được tái sử dụng.
-
-### 3.2. Community và chat broadcast
-
-| Opcode | Mã | Chiều | Các trường body |
-| --- | --- | --- | --- |
-| COMMUNITY_LIST_REQUEST | 0x70 | C → S | `{}` |
-| COMMUNITY_LIST_RESPONSE | 0x71 | S → C | replyTo, status; khi OK có communities:Community[] |
-| COMMUNITY_CREATE_REQUEST | 0x72 | C → S | name:string |
-| COMMUNITY_CREATE_RESPONSE | 0x73 | S → C | replyTo, status; khi OK có communityId:string, name:string |
-| COMMUNITY_JOIN_REQUEST | 0x74 | C → S | communityId:string |
-| COMMUNITY_JOIN_RESPONSE | 0x75 | S → C | replyTo, status; khi OK có communityId:string, name:string |
-| COMMUNITY_LEAVE_REQUEST | 0x76 | C → S | communityId:string |
-| COMMUNITY_LEAVE_RESPONSE | 0x77 | S → C | replyTo, status |
-| COMMUNITY_MEMBERS_REQUEST | 0x78 | C → S | communityId:string |
-| COMMUNITY_MEMBERS_RESPONSE | 0x79 | S → C | replyTo, status; khi OK có members:Member[] |
-| COMMUNITY_SELECT_REQUEST | 0x7A | C → S | communityId:string |
-| COMMUNITY_SELECT_RESPONSE | 0x7B | S → C | replyTo, status; khi OK có communityId:string, name:string |
-| COMMUNITY_INFO_REQUEST | 0x7C | C → S | communityId:string |
-| COMMUNITY_INFO_RESPONSE | 0x7D | S → C | replyTo, status; khi OK có community:Community |
-| CHAT_MESSAGE_BROADCAST | 0x31 | C → S | communityId:string, content:string |
-| CHAT_MESSAGE_BROADCAST | 0x31 | S → C | communityId:string, sender:string, content:string |
-
-Các trường replyTo/status trong bảng có kiểu integer/string như mục 2.2.
-Community gồm communityId:string, name:string, owner:string, memberCount:integer,
-isMember:boolean, createdAt:string ISO 8601. Member gồm username:string,
-online:boolean. Tên community không rỗng, tối đa 100 ký tự.
-
-Status lỗi gồm NOT_FOUND, NOT_MEMBER, ALREADY_MEMBER, OWNER_CANNOT_LEAVE,
-INVALID_NAME hoặc NAME_TOO_LONG. Chat broadcast không có response riêng.
-
-### 3.3. File P2P
-
-| Opcode | Mã | Các trường body |
+| Field | Type | Description |
 | --- | --- | --- |
-| FILE_OFFER | 0x40 | transferId:string, sender:string, receiver:string, fileName:string, fileSize:integer, checksum:string, publicKey:string (X25519, X.509 DER/Base64) |
-| FILE_DECISION | 0x41 | replyTo:integer, transferId:string, decision:string ACCEPT/REJECT; ACCEPT kèm publicKey:string |
-| FILE_END | 0x43 | transferId:string, checksum:string |
-| FILE_RESULT | 0x44 | replyTo:integer, status:string OK/FAIL; FAIL có reason:string |
-| FILE_READY | 0x4D | replyTo:integer, status:string OK, transferId:string, connectionNonce:string (32 byte ngẫu nhiên, Base64) |
-| FILE_TRANSFER_START | 0x4E | transferId:string |
+| `type` | string | Tên thao tác trong nhóm opcode, viết HOA và nối bằng `_`. |
 
-fileSize là số byte file gốc, từ 0 tới 500 MiB. checksum là SHA-256 hex thường
-64 ký tự. Mã FILE_CHUNK 0x42 được giữ chỗ, không còn dùng để truyền dữ liệu.
+`replyTo` và `status` thuộc schema của từng event: response/ACK có cả hai;
+FILE/DECISION có `replyTo` và `decision`, không có `status`. Xem Structure của
+từng event bên dưới.
 
-### 3.4. File broadcast qua server
+Mỗi chiều TCP có sequence riêng, bắt đầu từ 1 và tăng 1 theo từng event, kể cả
+heartbeat. Response có sequence riêng; `replyTo` mới là liên kết tới request.
+Dữ liệu file nhị phân không làm tăng sequence event. Mỗi socket mới bắt đầu lại
+bộ đếm. Discovery trên UDP dùng sequence 1 cho từng request/response độc lập.
 
-| Opcode | Mã | Các trường body |
+Khi chờ response, kiểm tra đủ **opcode + type + replyTo**. Các tên như LIST_REQUEST
+xuất hiện ở cả USER và COMMUNITY; không định tuyến bằng type đơn lẻ dạng string.
+Type thiếu, không được định nghĩa hoặc không thuộc opcode tương ứng bị từ chối.
+
+### Opcode Groups
+
+| Opcode | Group | Purpose |
 | --- | --- | --- |
-| FILE_BROADCAST_UPLOAD_REQUEST | 0x45 | communityId:string, fileName:string, fileSize:integer, checksum:string |
-| FILE_BROADCAST_UPLOAD_RESPONSE | 0x46 | replyTo, status; khi OK có fileId:string, uploadToken:string |
-| FILE_BROADCAST_OFFER | 0x47 | fileId:string, sender:string, communityId:string, fileName:string, fileSize:integer, checksum:string |
-| FILE_BROADCAST_DECISION | 0x48 | fileId:string, decision:string ACCEPT/REJECT |
-| FILE_BROADCAST_DOWNLOAD_REQUEST | 0x49 | `{}`; đường thay thế, hiện trả USE_DATA_CONNECTION |
-| FILE_BROADCAST_DOWNLOAD_RESPONSE | 0x4A | replyTo, status; ACCEPT thành công có downloadToken:string |
-| FILE_BROADCAST_UPLOAD_START | 0x4B | fileId:string, uploadToken:string |
-| FILE_BROADCAST_DOWNLOAD_START | 0x4C | fileId:string, downloadToken:string |
+| 0 | SYSTEM | Xác nhận khóa và heartbeat. |
+| 1 | CONNECTION | Handshake với server hoặc peer. |
+| 2 | AUTH | Đăng nhập và đăng xuất. |
+| 3 | USER | Danh sách online, địa chỉ peer và proof public key. |
+| 4 | CHAT | Tin nhắn trực tiếp, broadcast và metadata phiên P2P. |
+| 5 | FILE | Offer, quyết định và điều khiển truyền file. |
+| 6 | COMMUNITY | Tạo, tham gia, chọn và xem community. |
+| 7 | DISCOVERY | Tìm server qua UDP trên LAN. |
 
-UPLOAD/DOWNLOAD_START là JSON đầu tiên trên socket dữ liệu riêng. FILE_END dùng
-transferId bằng fileId. FILE_BROADCAST_OFFER là sự kiện, không mang replyTo.
-FILE_BROADCAST_DECISION là request mới; response trỏ tới sequence của decision.
+## Connection Lifecycle
 
-### 3.5. Theo dõi phiên và discovery
+### Client–Server
 
-| Opcode | Mã | Các trường body |
+1. Mở TCP tới server, mặc định port 8080; có thể dùng Discovery để tìm địa chỉ.
+2. Client gửi CONNECTION/HELLO, server trả CONNECTION/HELLO_ACK.
+3. Client kiểm tra chữ ký Ed25519 bằng public key server đã pin. Hai bên dùng
+   X25519 và HKDF để tạo hai khóa chiều, bật AES-GCM.
+4. Client gửi SYSTEM/KEY_CONFIRM, server trả SYSTEM/KEY_CONFIRM_ACK dưới mã hóa.
+5. Client gửi AUTH/LOGIN_REQUEST; LOGIN_RESPONSE với status OK mở phiên quản lý.
+6. Hai bên duy trì SYSTEM/PING/PONG. Client gửi request quản lý, đồng thời nhận
+   response và các event chủ động như CHAT/BROADCAST hoặc FILE/BROADCAST_OFFER.
+
+Hello/Hello ACK chưa mã hóa. Key Confirm và mọi event tiếp theo đều đi trong
+AES-GCM. Kết nối chỉ xử lý đăng nhập sau khi xác nhận khóa thành công.
+
+### P2P Chat
+
+1. Alice hỏi USER/PEER_LOOKUP_REQUEST để tìm Bob.
+2. Alice tạo cặp khóa X25519, dùng USER/PEER_KEY_REQUEST xin proof từ server.
+3. Alice mở TCP tới Bob và gửi CONNECTION/PEER_HELLO kèm proof.
+4. Bob kiểm tra proof Alice, xin proof cho khóa của mình với cùng sessionId,
+   rồi trả CONNECTION/PEER_HELLO_ACK.
+5. Alice kiểm tra proof Bob. Hai bên dẫn xuất khóa và trao đổi SYSTEM/KEY_CONFIRM/ACK.
+6. Công bố kết nối P2P, gửi CHAT/MESSAGE hoặc FILE/OFFER trực tiếp.
+
+Hai peer đều tin public key Ed25519 server đã pin. Server ký xác nhận danh tính
+và public key; nội dung chat P2P không đi qua server.
+
+### P2P File
+
+1. Sender gửi FILE/OFFER trên kênh chat đã mã hóa.
+2. Receiver trả FILE/DECISION với ACCEPT và public key file, hoặc REJECT.
+3. Sau ACCEPT, hai bên dẫn xuất khóa transfer. Sender mở TCP riêng và gửi
+   FILE/TRANSFER_START; receiver trả FILE/READY kèm connectionNonce mới.
+4. Hai bên dẫn xuất khóa socket rồi trao đổi SYSTEM/KEY_CONFIRM/ACK.
+5. Receiver claim transfer; sender truyền đúng fileSize byte dữ liệu, rồi FILE/END.
+6. Receiver kiểm tra SHA-256, lưu file và trả FILE/RESULT. Sender chỉ hoàn tất khi
+   nhận status OK trả lời đúng End.
+
+Transfer Start/Ready chưa mã hóa. Từ Key Confirm trở đi dùng AES-GCM với khóa
+riêng của socket file. File rỗng bỏ qua dữ liệu nhị phân và gửi End ngay.
+
+### Community File
+
+1. Sender xin FILE/BROADCAST_UPLOAD_REQUEST trên phiên quản lý và nhận uploadToken.
+2. Sender mở socket server mới, thực hiện Hello/ACK và Key Confirm/ACK, gửi
+   FILE/BROADCAST_UPLOAD_START rồi truyền file, End và nhận Result.
+3. Server lưu file và phát FILE/BROADCAST_OFFER trên kênh quản lý của các người nhận.
+4. Receiver gửi FILE/BROADCAST_DECISION với ACCEPT và nhận downloadToken.
+5. Receiver mở socket server mới, hoàn tất handshake/xác nhận khóa, gửi
+   FILE/BROADCAST_DOWNLOAD_START rồi nhận dữ liệu, End và trả Result.
+
+Socket dữ liệu dùng token một lần thay cho việc gửi lại password. Server đọc được
+nội dung file community và lưu xuống đĩa; chat/file P2P đi trực tiếp giữa hai peer.
+
+### Disconnecting and Reconnecting
+
+Mất kênh quản lý đưa client về SERVER_OFFLINE; các kết nối P2P còn sống tiếp tục
+hoạt động. Khi người dùng kết nối lại bằng mật khẩu, client mở TCP mới, thực hiện
+lại Hello, Key Confirm và Login. Sequence và khóa của kênh mới được tạo lại.
+Client không giữ mật khẩu, không replay tin nhắn/file và không resume file theo offset.
+Community đang chọn được xóa; người dùng chọn lại sau khi kết nối thành công.
+
+## Send Events
+
+Các event client có thể gửi. `C` = client, `S` = server, `P` = peer.
+Các event hệ thống hai chiều được mô tả riêng trong Event Reference.
+
+| Event | Direction | Description |
 | --- | --- | --- |
-| CHAT_SESSION_REPORT | 0x60 | sessionId:string, peerUsername:string, state:string CONNECTED/DISCONNECTED |
-| CHAT_SESSION_REPORT_RESPONSE | 0x61 | replyTo:integer, status:string |
-| CHAT_SESSION_LIST_REQUEST | 0x62 | `{}` |
-| CHAT_SESSION_LIST_RESPONSE | 0x63 | replyTo, status; khi OK có sessions:[{sessionId,userA,userB,state}] |
-| DISCOVER_REQUEST | 0x50 | `{}` |
-| DISCOVER_RESPONSE | 0x51 | replyTo:integer, status:string; khi OK có tcpPort:integer |
+| [CONNECTION/HELLO](#connection-hello) | C → S | Bắt đầu handshake Client–Server bằng public key X25519 mới và challenge ngẫu nhiên 32 byte. |
+| [CONNECTION/PEER_HELLO](#connection-peer-hello) | P initiator → P responder | Mở kết nối chat P2P. |
+| [AUTH/LOGIN_REQUEST](#auth-login-request) | C → S | Đăng nhập trên kênh đã hoàn tất xác nhận khóa. |
+| [AUTH/LOGOUT_REQUEST](#auth-logout-request) | C → S | Yêu cầu kết thúc phiên đăng nhập hiện tại. |
+| [USER/LIST_REQUEST](#user-list-request) | C → S | Lấy danh sách tài khoản đang online trên server. |
+| [USER/PEER_LOOKUP_REQUEST](#user-peer-lookup-request) | C → S | Tìm địa chỉ kết nối P2P của một tài khoản. |
+| [USER/PEER_KEY_REQUEST](#user-peer-key-request) | C → S | Xin server ký public key X25519 của một kết nối P2P. |
+| [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
+| [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/SESSION_REPORT](#chat-session-report) | C → S | Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat. |
+| [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
+| [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
+| [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE/TRANSFER_START](#file-transfer-start) | P sender → P receiver, socket file | Chọn transfer đã được chấp nhận trên socket dữ liệu mới. |
+| [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
+| [FILE/BROADCAST_UPLOAD_REQUEST](#file-broadcast-upload-request) | C → S, kênh quản lý | Xin upload file vào community mà người gửi là thành viên. |
+| [FILE/BROADCAST_UPLOAD_START](#file-broadcast-upload-start) | C → S, socket dữ liệu server | Bắt đầu upload bằng token đã nhận. |
+| [FILE/BROADCAST_DECISION](#file-broadcast-decision) | C → S, kênh quản lý | Chấp nhận hoặc từ chối tải file đã được server thông báo. |
+| [FILE/BROADCAST_DOWNLOAD_START](#file-broadcast-download-start) | C → S, socket dữ liệu server | Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa. |
+| [FILE/BROADCAST_DOWNLOAD_REQUEST](#file-broadcast-download-request) | C → S, kênh quản lý | Nhánh API cũ đã có handler nhưng không được dùng cho luồng download chính. |
+| [COMMUNITY/LIST_REQUEST](#community-list-request) | C → S | Lấy danh sách community và trạng thái membership của người gọi. |
+| [COMMUNITY/CREATE_REQUEST](#community-create-request) | C → S | Tạo community mới; người tạo trở thành owner và thành viên đầu tiên. |
+| [COMMUNITY/JOIN_REQUEST](#community-join-request) | C → S | Tham gia một community hiện có. |
+| [COMMUNITY/LEAVE_REQUEST](#community-leave-request) | C → S | Rời community hiện tại. |
+| [COMMUNITY/SELECT_REQUEST](#community-select-request) | C → S | Kiểm tra và chọn một community đã tham gia làm đích thao tác của client. |
+| [COMMUNITY/MEMBERS_REQUEST](#community-members-request) | C → S | Lấy danh sách thành viên của community đã tham gia. |
+| [COMMUNITY/INFO_REQUEST](#community-info-request) | C → S | Lấy thông tin chi tiết một community theo ID. |
+| [DISCOVERY/REQUEST](#discovery-request) | C → LAN, UDP | Tìm server trên LAN bằng UDP port 41234. |
 
-Các trường sessionId/userA/userB/state của mỗi session là string. Danh sách
-sắp xếp theo UUID. Status báo cáo là OK, INVALID_SESSION_REPORT, INVALID_SESSION
-hoặc USER_OFFLINE.
+## Receive Events
 
-## 4. Ví dụ hoàn chỉnh
+Response trả lời request theo replyTo. Event chủ động không có replyTo/status,
+ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp từ peer.
 
-### 4.1. Handshake
+| Event | Direction | Description |
+| --- | --- | --- |
+| [SYSTEM/KEY_CONFIRM_ACK](#system-key-confirm-ack) | Responder → Initiator | Trả lời Key Confirm dưới mã hóa để bên khởi tạo kiểm tra khóa chiều ngược lại. |
+| [SYSTEM/PONG](#system-pong) | C ↔ S | Trả lời Ping trên cùng kết nối; được reader xử lý trước các response quản lý. |
+| [CONNECTION/HELLO_ACK](#connection-hello-ack) | S → C | Server trả public key X25519 của kết nối và chữ ký Ed25519. |
+| [CONNECTION/PEER_HELLO_ACK](#connection-peer-hello-ack) | P responder → P initiator | Peer nhận trả proof của mình, cùng sessionId với Peer Hello. |
+| [AUTH/LOGIN_RESPONSE](#auth-login-response) | S → C | Trả kết quả đăng nhập; OK tạo UserSession gắn với kết nối. |
+| [AUTH/LOGOUT_RESPONSE](#auth-logout-response) | S → C | Xác nhận logout trước khi kết thúc xử lý kết nối. |
+| [USER/LIST_RESPONSE](#user-list-response) | S → C | Trả danh sách username online, sắp xếp theo tên. |
+| [USER/PEER_LOOKUP_RESPONSE](#user-peer-lookup-response) | S → C | Trả địa chỉ của peer đang online. |
+| [USER/PEER_KEY_RESPONSE](#user-peer-key-response) | S → C | Trả proof gắn danh tính người đăng nhập với sessionId và public key. |
+| [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
+| [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/SESSION_REPORT_RESPONSE](#chat-session-report-response) | S → C | Trả kết quả tiếp nhận báo cáo phiên P2P. |
+| [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
+| [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
+| [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
+| [FILE/END](#file-end) | Bên gửi file → bên nhận file | Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng. |
+| [FILE/RESULT](#file-result) | Bên nhận file → bên gửi file | Trả kết quả sau khi kiểm tra checksum và lưu file. |
+| [FILE/BROADCAST_UPLOAD_RESPONSE](#file-broadcast-upload-response) | S → C, kênh quản lý | Cấp fileId và token để upload trên socket dữ liệu riêng. |
+| [FILE/BROADCAST_OFFER](#file-broadcast-offer) | S → C, kênh quản lý | Thông báo file đã upload thành công cho các thành viên nhận trong community. |
+| [FILE/BROADCAST_DOWNLOAD_RESPONSE](#file-broadcast-download-response) | S → C, kênh quản lý | Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downloadToken. |
+| [COMMUNITY/LIST_RESPONSE](#community-list-response) | S → C | Trả các Community Object hiện có. |
+| [COMMUNITY/CREATE_RESPONSE](#community-create-response) | S → C | Trả community vừa tạo và chọn community đó trên client. |
+| [COMMUNITY/JOIN_RESPONSE](#community-join-response) | S → C | Trả kết quả thao tác join community. |
+| [COMMUNITY/LEAVE_RESPONSE](#community-leave-response) | S → C | Trả kết quả thao tác leave community. |
+| [COMMUNITY/SELECT_RESPONSE](#community-select-response) | S → C | Trả kết quả thao tác select community. |
+| [COMMUNITY/MEMBERS_RESPONSE](#community-members-response) | S → C | Trả username và trạng thái online của các thành viên. |
+| [COMMUNITY/INFO_RESPONSE](#community-info-response) | S → C | Trả một Community Object. |
+| [DISCOVERY/RESPONSE](#discovery-response) | S → C, UDP | Thông báo TCP port mà server đang lắng nghe. |
 
-JSON request:
+## Event Reference
+
+- [SYSTEM](#system-events)
+- [CONNECTION](#connection-events)
+- [AUTH](#auth-events)
+- [USER](#user-events)
+- [CHAT](#chat-events)
+- [FILE](#file-events)
+- [COMMUNITY](#community-events)
+- [DISCOVERY](#discovery-events)
+
+Mỗi mục bên dưới gồm điều kiện sử dụng, hướng truyền, structure của body và một
+payload JSON đầy đủ. `type` là trường bắt buộc của mọi body; bảng Structure
+liệt kê các trường còn lại của từng event, gồm `replyTo` và `status` nếu có.
+Các trường dữ liệu ngoài `replyTo` và `status` của response thành công chỉ bắt
+buộc khi status là OK.
+
+Các ví dụ là các tình huống độc lập; sequence không tạo thành một trace liên tục.
+Các chuỗi `<...>` là placeholder cần thay bằng dữ liệu thật. UUID và checksum là
+minh họa; checksum của ví dụ file 0 byte khớp SHA-256 của nội dung rỗng.
+
+### SYSTEM Events
+
+<a id="system-key-confirm"></a>
+
+#### Key Confirm
+
+**Event:** `SYSTEM/KEY_CONFIRM` · **Opcode:** `0` · **Direction:** Initiator → Responder
+
+Gửi ngay sau khi bật AES-GCM để chứng minh bên khởi tạo có khóa gửi. Áp dụng cho kết nối quản lý, P2P chat và P2P file.
+
+Body chỉ có `type`.
+
+**Example Key Confirm**
 
 ```json
-{"opcode":1,"sequence":1,"body":{"protocolVersion":1}}
+{
+  "opcode": 0,
+  "sequence": 2,
+  "body": {
+    "type": "KEY_CONFIRM"
+  }
+}
 ```
 
-JSON response:
+Chỉ nhận trong pha xác nhận khóa. Chưa gửi dữ liệu ứng dụng hoặc công bố peer trước khi bước này hoàn tất.
+
+<a id="system-key-confirm-ack"></a>
+
+#### Key Confirm ACK
+
+**Event:** `SYSTEM/KEY_CONFIRM_ACK` · **Opcode:** `0` · **Direction:** Responder → Initiator
+
+Trả lời Key Confirm dưới mã hóa để bên khởi tạo kiểm tra khóa chiều ngược lại.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Key Confirm ACK**
 
 ```json
-{"opcode":2,"sequence":1,"body":{"replyTo":1,"status":"OK","protocolVersion":1}}
+{
+  "opcode": 0,
+  "sequence": 2,
+  "body": {
+    "type": "KEY_CONFIRM_ACK",
+    "replyTo": 2,
+    "status": "OK"
+  }
+}
 ```
 
-Mỗi JSON được gửi với tiền tố len riêng, tính từ đúng chuỗi UTF-8 đã serialize.
+Phải khớp type, replyTo và status OK. Sai khóa, sai phản hồi hoặc timeout làm thất bại handshake và đóng kết nối.
 
-### 4.2. Chat
+<a id="system-ping"></a>
+
+#### Ping
+
+**Event:** `SYSTEM/PING` · **Opcode:** `0` · **Direction:** C ↔ S
+
+Duy trì kết nối quản lý sau đăng nhập. Mỗi bên gửi tối đa một Ping đang chờ phản hồi.
+
+Body chỉ có `type`.
+
+**Example Ping**
 
 ```json
-{"opcode":48,"sequence":3,"body":{"content":"Chào bạn"}}
+{
+  "opcode": 0,
+  "sequence": 12,
+  "body": {
+    "type": "PING"
+  }
+}
 ```
 
-### 4.3. Danh sách user rỗng
+Gửi mỗi 5 giây khi không còn Ping pending; sau 30 giây chưa có Pong tương ứng thì đóng kết nối. Không áp dụng cho socket chat/file P2P hoặc socket dữ liệu broadcast.
+
+<a id="system-pong"></a>
+
+#### Pong
+
+**Event:** `SYSTEM/PONG` · **Opcode:** `0` · **Direction:** C ↔ S
+
+Trả lời Ping trên cùng kết nối; được reader xử lý trước các response quản lý.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Pong**
 
 ```json
-{"opcode":19,"sequence":8,"body":{"replyTo":5,"status":"OK","users":[]}}
+{
+  "opcode": 0,
+  "sequence": 18,
+  "body": {
+    "type": "PONG",
+    "replyTo": 12,
+    "status": "OK"
+  }
+}
 ```
 
-### 4.4. Lỗi đăng nhập
+replyTo phải khớp Ping đang chờ. Pong không xác nhận tin nhắn đã được nhận hoặc đọc.
+
+### CONNECTION Events
+
+<a id="connection-hello"></a>
+
+#### Hello
+
+**Event:** `CONNECTION/HELLO` · **Opcode:** `1` · **Direction:** C → S
+
+Bắt đầu handshake Client–Server bằng public key X25519 mới và challenge ngẫu nhiên 32 byte.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `serverVerificationChallenge` | string | Challenge ngẫu nhiên 32 byte, Base64. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+
+**Example Hello**
 
 ```json
-{"opcode":17,"sequence":2,"body":{"replyTo":2,"status":"INVALID_CREDENTIALS"}}
+{
+  "opcode": 1,
+  "sequence": 1,
+  "body": {
+    "type": "HELLO",
+    "protocolVersion": 2,
+    "serverVerificationChallenge": "<32-byte-random-challenge-base64>",
+    "publicKey": "<client-x25519-public-key-base64>"
+  }
+}
 ```
 
-## 5. Quy tắc trao đổi
+Chưa mã hóa. Public key dùng X.509 DER rồi Base64. Challenge giúp ràng buộc chữ ký server với lần kết nối này.
 
-### 5.1. Đọc/ghi thông điệp
+<a id="connection-hello-ack"></a>
 
-Bên gửi serialize JSON, ghi len rồi ghi JSON. Bên nhận đọc đủ 4 byte, kiểm tra
-len, rồi đọc đúng len byte trước khi parse. TCP có thể chia/gộp các lần ghi; một
-lần read không tương ứng một thông điệp. EOF trước thông điệp kế là đóng bình
-thường; EOF giữa tiền tố hoặc JSON là lỗi.
+#### Hello ACK
 
-len phải dương và không vượt 1 MiB. JSON phải là UTF-8 hợp lệ, không trùng key,
-không lồng quá 32 mức và có đúng kiểu trường. Độ dài được kiểm tra trước khi
-cấp phát buffer. Các kiểm tra này phục vụ việc đọc đúng protocol.
+**Event:** `CONNECTION/HELLO_ACK` · **Opcode:** `1` · **Direction:** S → C
 
-### 5.2. Request/response
+Server trả public key X25519 của kết nối và chữ ký Ed25519. Client kiểm tra bằng public key server đã pin.
 
-Client hiện xếp hàng request quản lý và chờ một response tại một thời điểm.
-Trước khi gửi, client đăng ký opcode và sequence của request để response nhanh
-không đến trước bước đăng ký. Response phải khớp cả opcode mong đợi và replyTo.
-Broadcast chat/file vẫn được xử lý độc lập. Timeout request là 10 giây.
+**Structure**
 
-Handshake quản lý: HELLO → HELLO_ACK → AUTH_REQUEST → AUTH_RESPONSE.
-Handshake peer: PEER_HELLO → PEER_HELLO_ACK. Mỗi ACK thành công có status OK,
-replyTo đúng và protocolVersion 1. Mỗi lần kết nối chat có sessionId riêng.
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+| `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
-Chọn người nhận chat là thao tác cục bộ: `/chat` hiển thị peer đang chọn và các
-kết nối hiện có; `/chat <username>` chọn một kết nối đang mở. `/lookup <username>`
-ưu tiên chọn kết nối cục bộ nếu đã có, chỉ hỏi server khi chưa kết nối. CHAT_MESSAGE
-được ghi đúng một socket của peer đang chọn, không phát tới mọi peer. Chọn/lookup
-thất bại bỏ lựa chọn để tránh gửi nhầm sang peer trước. Thao tác chọn peer không
-phát sinh opcode hoặc session mới.
+**Example Hello ACK**
 
-### 5.3. Dữ liệu file nhị phân
-
-FILE_OFFER/FILE_DECISION P2P đi qua kênh chat mã hóa, trao đổi public key X25519
-riêng cho mỗi transfer. Hai bên dẫn xuất khóa AES theo metadata và public key
-theo thứ tự sender/receiver. Sau ACCEPT, sender mở socket dữ liệu riêng:
-
-```text
-Sender → Receiver: FILE_TRANSFER_START {transferId}, sequence=1 (chưa mã hóa)
-Receiver → Sender: FILE_READY {transferId, connectionNonce}, sequence=1, replyTo=1 (chưa mã hóa)
-Hai bên dẫn xuất khóa cho socket từ khóa transfer và connectionNonce, rồi bật AES-GCM.
-Sender → Receiver: KEY_CONFIRM_REQUEST, sequence=2 (mã hóa)
-Receiver → Sender: KEY_CONFIRM_RESPONSE, sequence=2, replyTo=2 (mã hóa)
-Receiver claim transfer sau khi xác nhận khóa thành công, trước khi nhận byte file.
-Sender → Receiver: các record dữ liệu file đã mã hóa
-Sender → Receiver: FILE_END, sequence=3 (mã hóa)
-Receiver → Sender: FILE_RESULT, sequence=3, replyTo=3 (mã hóa)
+```json
+{
+  "opcode": 1,
+  "sequence": 1,
+  "body": {
+    "type": "HELLO_ACK",
+    "replyTo": 1,
+    "status": "OK",
+    "protocolVersion": 2,
+    "publicKey": "<server-x25519-public-key-base64>",
+    "serverSignature": "<ed25519-signature-base64>"
+  }
+}
 ```
 
-Socket broadcast thực hiện handshake và xác nhận khóa với server trước khi gửi
-UPLOAD/DOWNLOAD_START. Sau đó file, FILE_END và FILE_RESULT cũng đi qua AES-GCM.
+Chưa mã hóa. Server ký purpose=server-handshake, toàn bộ body Hello và serverPublicKey. Sau kiểm tra chữ ký, hai bên dẫn xuất K1/K2, bật AES-GCM và trao đổi Key Confirm. Version khác trả UNSUPPORTED_PROTOCOL_VERSION.
 
-Mỗi socket file P2P được cấp nonce mới, kể cả khi mở lại cùng transferId. Socket
-không xác thực được không claim transfer, không xóa khóa gốc và không báo FAILED
-cho lời mời hợp lệ. Các lần thử không dùng lại traffic key/counter nonce.
-Khi chưa xác thực thành công, lời mời vẫn chịu timeout ACCEPT 30 giây như cũ.
+<a id="connection-peer-hello"></a>
 
-Receiver đọc đúng fileSize byte bằng buffer tối đa 64 KiB, sau đó quay lại đọc
-JSON FILE_END. Ở lớp mã hóa, mỗi record có tiền tố độ dài ciphertext 4 byte,
-ciphertext và GCM tag 16 byte. Mỗi chiều dùng khóa và counter nonce riêng;
-counter dùng chung cho packet và dữ liệu file. Byte file không đổi sang string,
-JSON array hay Base64. Không dùng chunkCount vì ranh giới
-các lần đọc TCP không tương ứng ranh giới buffer bên gửi. File rỗng bỏ qua pha
-raw và đọc FILE_END ngay.
+#### Peer Hello
 
-Receiver ghi file tạm, kiểm tra transferId và SHA-256 với offer/FILE_END rồi lưu
-file đích. Sender chỉ báo hoàn tất khi FILE_RESULT có status OK và replyTo khớp
-sequence FILE_END. EOF hoặc thiếu xác nhận không phải thành công. Lỗi sớm có thể
-trả FILE_RESULT FAIL theo quy tắc replyTo ở mục 2.2.
+**Event:** `CONNECTION/PEER_HELLO` · **Opcode:** `1` · **Direction:** P initiator → P responder
 
-P2P có connect timeout 10 giây, read timeout 30 giây. Lời mời chưa trả lời hết hạn
-sau 2 phút; bên nhận chờ socket và xác nhận khóa tối đa 30 giây sau ACCEPT.
-Socket dữ liệu broadcast có read timeout 60 giây.
-File nhận trùng tên được thêm hậu tố; file tạm được dọn khi thất bại.
-Công bố file và hủy dùng cùng khóa trạng thái. Khi file đã lưu hợp lệ nhưng ACK
-không gửi được, receiver vẫn tải thành công; sender chỉ thành công khi nhận ACK.
-Mỗi lần ghi packet/chunk có deadline 30 giây, bao gồm thời gian chờ khóa ghi;
-hết hạn đóng socket để giải phóng writer. Không giới hạn tổng thời gian truyền file.
+Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng nghe và public key đã được server ký.
 
-### 5.4. Phiên và discovery
+**Structure**
 
-UserSessionRegistry lưu user online, ChatSessionRegistry lưu metadata phiên P2P.
-Hai báo cáo CONNECTED cùng UUID được gộp; báo muộn không mở lại phiên đã đóng.
-Báo CONNECTED/DISCONNECTED được xếp hàng FIFO riêng để không chặn peer reader.
-Logout đóng peer/transfer và handshake đang chờ, thử báo DISCONNECTED và gửi
-LOGOUT_REQUEST trong ngân sách 500 ms; sau đó đóng TCP quản lý dù server im lặng.
-Server dọn user trên EOF nếu logout không nhận được xác nhận. Mất server chuyển metadata thành
-UNKNOWN nhưng không tự đóng các kết nối P2P đã thiết lập. Registry chỉ lưu RAM.
+| Field | Type | Description |
+| --- | --- | --- |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `username` | string | Tên tài khoản. |
+| `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
+| `sessionId` | string | UUID canonical của kết nối chat P2P. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+| `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
-Sau tái xác thực, report CONNECTED có cùng UUID và cặp username có thể gắn lại
-metadata UNKNOWN với các UserSession mới. Report không mở lại bản ghi DISCONNECTED.
-Nếu server restart, report tạo lại metadata cho P2P còn sống khi cả hai user online.
+**Example Peer Hello**
 
-Discovery dùng một thông điệp `[len][JSON]` trên mỗi datagram UDP. Request và
-response đều có sequence 1 vì mỗi datagram được xử lý độc lập; response replyTo 1.
-Datagram thừa byte bị bỏ. Client broadcast tới 255.255.255.255:41234 tối đa 5 lần,
-chờ 3 giây mỗi lần; lấy IP từ datagram và TCP port từ body. Truyền host cho run.sh
-để bỏ qua discovery.
-
-### 5.5. Heartbeat và kết nối lại
-
-Heartbeat bắt đầu sau AUTH OK, độc lập với request quản lý nhưng dùng cùng
-PacketChannel và bộ đếm sequence. Mỗi phía có tối đa một probe chờ ACK; gửi mỗi
-5 giây khi không còn probe pending. Hết 30 giây kể từ lúc chuẩn bị gửi mà chưa có
-ACK đúng replyTo thì đóng socket. Timer kiểm tra mỗi 5 giây nên phát hiện gián đoạn
-im lặng thường trong khoảng 30–35 giây, chưa tính độ trễ lập lịch. Timeout request
-hoặc EOF có thể đóng sớm hơn. Không áp dụng heartbeat cho socket chat/file P2P
-hoặc socket dữ liệu broadcast; các socket này giữ cơ chế lỗi/timeout riêng.
-
-Reader sẵn có trả lời HEARTBEAT và tiêu thụ HEARTBEAT_ACK trước khi ghép response
-quản lý. Không tạo reader thứ hai và không để ACK heartbeat thỏa mãn request khác.
-Timer không thực hiện I/O blocking; mỗi lần ghi probe chạy ở virtual thread,
-và đóng monitor sẽ hủy/gỡ timer. Phát hiện timeout đóng socket để giải phóng reader,
-writer và future pending. Server sau đó xóa UserSession; client dừng polling và
-hủy controller broadcast cũ, giữ PeerListener, peer map và transfer P2P.
-
-```text
-ONLINE → EOF / socket error / heartbeat timeout → SERVER_OFFLINE
-SERVER_OFFLINE → bấm Kết nối lại + mật khẩu → RECONNECTING
-RECONNECTING → HELLO + AUTH → ONLINE (GUI tải users/community trước khi mở chức năng server)
-RECONNECTING → lỗi / mật khẩu sai → SERVER_OFFLINE (cho thử lại)
-mọi trạng thái → logout → CLOSED (không được tái sinh bởi callback cũ)
+```json
+{
+  "opcode": 1,
+  "sequence": 1,
+  "body": {
+    "type": "PEER_HELLO",
+    "protocolVersion": 2,
+    "username": "alice",
+    "peerPort": 9001,
+    "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "publicKey": "<x25519-public-key-base64>",
+    "serverSignature": "<ed25519-signature-base64>"
+  }
+}
 ```
 
-Kết nối lại tạo TCP quản lý mới tới cùng endpoint, dùng lại username và cổng P2P.
-Không giữ mật khẩu, không tự retry, không replay message/request/offer cũ. Thay
-controller broadcast theo kết nối mới, giữ bộ cấp số offer dùng chung tăng liên tục.
-Callback/response/snapshot của kết nối cũ không được sửa trạng thái của kết nối mới.
-Community selection cũ được xóa; GUI chọn theo danh sách mới và giữ lịch sử theo ID.
-Reconnect đang handshake cũng được theo dõi socket để logout có thể hủy ngay.
+Chưa mã hóa. Bên nhận kiểm tra proof bằng public key server đã pin trước khi dùng public key peer. sessionId là UUID của kết nối chat.
 
-Đây không phải phục hồi dữ liệu qua một TCP P2P đã chết. File đang có đường P2P
-sống tiếp tục; file bị ngắt phải gửi lại từ đầu. Không tự dựng lại community hoặc
-phát lại broadcast sau server restart; registry RAM bị mất thì nhận danh sách mới.
+<a id="connection-peer-hello-ack"></a>
 
-## 6. Triển khai và tương thích
+#### Peer Hello ACK
 
-PacketCodec chỉ encode/decode `[len][JSON]`. PacketChannel sở hữu socket, bộ đếm
-sequence và khóa đọc/ghi; nó cũng cung cấp đọc/ghi raw cho socket file riêng.
-ServerConnection phía client sở hữu reader server và quản lý request/response,
-replyTo. ClientSession giữ tài nguyên từng lần đăng nhập; console, discovery,
-community và file broadcast nằm trong các lớp riêng. Phiên bản 2 giữ framing/schema
-envelope, bổ sung hành vi bắt buộc cho HEARTBEAT/ACK đã dành opcode sẵn. FileDataReader
-đọc đúng fileSize byte rồi kiểm tra FILE_END, dùng chung cho P2P và broadcast.
+**Event:** `CONNECTION/PEER_HELLO_ACK` · **Opcode:** `1` · **Direction:** P responder → P initiator
 
-Không tương thích phiên bản headerLength/header JSON/body cũ; cần cập nhật và
-khởi động lại cả server lẫn client. File đã lưu không cần chuyển đổi.
+Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
 
-PRESENCE_UPDATE, CHAT_RECEIPT, TYPING và ERROR vẫn là các opcode
-dự kiến. FILE_CHUNK không còn được dùng. Framing, request/response, TCP và GUI
-đã được kiểm thử trong đợt sửa lỗi; bộ test tạm đã dọn theo yêu cầu. Xem báo cáo
-sửa lỗi để biết kết quả và giới hạn kiểm chứng. Chưa có receipt
-cho chat, nên GUI hiển thị Sent (unconfirmed) sau khi ghi ra socket, không suy ra
-người nhận đã đọc hoặc nhận được. Không tự retry tin/file để tránh tạo bản trùng.
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 2. |
+| `username` | string | Tên tài khoản. |
+| `sessionId` | string | UUID canonical của kết nối chat P2P. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+| `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
+
+**Example Peer Hello ACK**
+
+```json
+{
+  "opcode": 1,
+  "sequence": 1,
+  "body": {
+    "type": "PEER_HELLO_ACK",
+    "replyTo": 1,
+    "status": "OK",
+    "protocolVersion": 2,
+    "username": "bob",
+    "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "publicKey": "<bob-x25519-public-key-base64>",
+    "serverSignature": "<server-signature-for-bob-base64>"
+  }
+}
+```
+
+Chưa mã hóa. Alice kiểm tra username Bob, sessionId và chữ ký. Hai peer dẫn xuất khóa từ transcript Hello/ACK rồi thực hiện SYSTEM/KEY_CONFIRM và KEY_CONFIRM_ACK trước khi công bố kết nối.
+
+### AUTH Events
+
+<a id="auth-login-request"></a>
+
+#### Login Request
+
+**Event:** `AUTH/LOGIN_REQUEST` · **Opcode:** `2` · **Direction:** C → S
+
+Đăng nhập trên kênh đã hoàn tất xác nhận khóa.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `username` | string | Tên tài khoản. |
+| `password` | string | Mật khẩu người dùng; chỉ gửi sau khi bật mã hóa và xác nhận khóa. |
+| `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
+
+**Example Login Request**
+
+```json
+{
+  "opcode": 2,
+  "sequence": 3,
+  "body": {
+    "type": "LOGIN_REQUEST",
+    "username": "alice",
+    "password": "<password>",
+    "peerPort": 9001
+  }
+}
+```
+
+Mật khẩu đi trong AES-GCM. Server lấy địa chỉ IP từ socket và kết hợp peerPort để đăng ký địa chỉ P2P.
+
+<a id="auth-login-response"></a>
+
+#### Login Response
+
+**Event:** `AUTH/LOGIN_RESPONSE` · **Opcode:** `2` · **Direction:** S → C
+
+Trả kết quả đăng nhập; OK tạo UserSession gắn với kết nối.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Login Response**
+
+```json
+{
+  "opcode": 2,
+  "sequence": 3,
+  "body": {
+    "type": "LOGIN_RESPONSE",
+    "replyTo": 3,
+    "status": "OK"
+  }
+}
+```
+
+**Example Login Failure**
+
+```json
+{
+  "opcode": 2,
+  "sequence": 3,
+  "body": {
+    "type": "LOGIN_RESPONSE",
+    "replyTo": 3,
+    "status": "INVALID_CREDENTIALS"
+  }
+}
+```
+
+Các status: OK, INVALID_AUTH_REQUEST, INVALID_CREDENTIALS, ALREADY_LOGGED_IN. Đăng nhập thất bại kết thúc kết nối.
+
+<a id="auth-logout-request"></a>
+
+#### Logout Request
+
+**Event:** `AUTH/LOGOUT_REQUEST` · **Opcode:** `2` · **Direction:** C → S
+
+Yêu cầu kết thúc phiên đăng nhập hiện tại.
+
+Body chỉ có `type`.
+
+**Example Logout Request**
+
+```json
+{
+  "opcode": 2,
+  "sequence": 10,
+  "body": {
+    "type": "LOGOUT_REQUEST"
+  }
+}
+```
+
+<a id="auth-logout-response"></a>
+
+#### Logout Response
+
+**Event:** `AUTH/LOGOUT_RESPONSE` · **Opcode:** `2` · **Direction:** S → C
+
+Xác nhận logout trước khi kết thúc xử lý kết nối.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Logout Response**
+
+```json
+{
+  "opcode": 2,
+  "sequence": 17,
+  "body": {
+    "type": "LOGOUT_RESPONSE",
+    "replyTo": 10,
+    "status": "OK"
+  }
+}
+```
+
+Client cũng đóng peer và transfer của phiên. Nếu không nhận được response, server dọn session khi socket đóng.
+
+### USER Events
+
+<a id="user-list-request"></a>
+
+#### User List Request
+
+**Event:** `USER/LIST_REQUEST` · **Opcode:** `3` · **Direction:** C → S
+
+Lấy danh sách tài khoản đang online trên server.
+
+Body chỉ có `type`.
+
+**Example User List Request**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 10,
+  "body": {
+    "type": "LIST_REQUEST"
+  }
+}
+```
+
+<a id="user-list-response"></a>
+
+#### User List Response
+
+**Event:** `USER/LIST_RESPONSE` · **Opcode:** `3` · **Direction:** S → C
+
+Trả danh sách username online, sắp xếp theo tên.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `users` | string[] | Danh sách tài khoản online. |
+
+**Example User List Response**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 17,
+  "body": {
+    "type": "LIST_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "users": [
+      "alice",
+      "bob"
+    ]
+  }
+}
+```
+
+Danh sách rỗng được biểu diễn bằng users: [].
+
+<a id="user-peer-lookup-request"></a>
+
+#### Peer Lookup Request
+
+**Event:** `USER/PEER_LOOKUP_REQUEST` · **Opcode:** `3` · **Direction:** C → S
+
+Tìm địa chỉ kết nối P2P của một tài khoản.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `username` | string | Tên tài khoản. |
+
+**Example Peer Lookup Request**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 10,
+  "body": {
+    "type": "PEER_LOOKUP_REQUEST",
+    "username": "bob"
+  }
+}
+```
+
+<a id="user-peer-lookup-response"></a>
+
+#### Peer Lookup Response
+
+**Event:** `USER/PEER_LOOKUP_RESPONSE` · **Opcode:** `3` · **Direction:** S → C
+
+Trả địa chỉ của peer đang online.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `ip` | string | Địa chỉ IP để kết nối peer. |
+| `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
+
+**Example Peer Lookup Response**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 17,
+  "body": {
+    "type": "PEER_LOOKUP_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "ip": "192.168.1.20",
+    "peerPort": 9002
+  }
+}
+```
+
+Peer offline trả USER_OFFLINE và không có ip/peerPort. Lookup không chuyển tiếp nội dung chat qua server.
+
+<a id="user-peer-key-request"></a>
+
+#### Peer Key Request
+
+**Event:** `USER/PEER_KEY_REQUEST` · **Opcode:** `3` · **Direction:** C → S
+
+Xin server ký public key X25519 của một kết nối P2P.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `sessionId` | string | UUID canonical của kết nối chat P2P. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+
+**Example Peer Key Request**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 10,
+  "body": {
+    "type": "PEER_KEY_REQUEST",
+    "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "publicKey": "<x25519-public-key-base64>"
+  }
+}
+```
+
+Chỉ dùng trên phiên đã đăng nhập. Server lấy username từ UserSession, không nhận username tự khai trong request.
+
+<a id="user-peer-key-response"></a>
+
+#### Peer Key Response
+
+**Event:** `USER/PEER_KEY_RESPONSE` · **Opcode:** `3` · **Direction:** S → C
+
+Trả proof gắn danh tính người đăng nhập với sessionId và public key.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `username` | string | Tên tài khoản. |
+| `sessionId` | string | UUID canonical của kết nối chat P2P. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+| `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
+
+**Example Peer Key Response**
+
+```json
+{
+  "opcode": 3,
+  "sequence": 17,
+  "body": {
+    "type": "PEER_KEY_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "username": "alice",
+    "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "publicKey": "<x25519-public-key-base64>",
+    "serverSignature": "<ed25519-signature-base64>"
+  }
+}
+```
+
+Chữ ký bao phủ purpose=peer-public-key, protocolVersion=2, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
+
+### CHAT Events
+
+<a id="chat-message"></a>
+
+#### Message
+
+**Event:** `CHAT/MESSAGE` · **Opcode:** `4` · **Direction:** P ↔ P
+
+Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `content` | string | Nội dung tin nhắn, tối đa 64 KiB theo byte UTF-8. |
+
+**Example Message**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 3,
+  "body": {
+    "type": "MESSAGE",
+    "content": "Chào Bob!"
+  }
+}
+```
+
+Giới hạn content là 64 KiB tính theo byte UTF-8. Danh tính bên gửi lấy từ kết nối đã xác thực; body không cần sender/receiver. Chưa có receipt nhận/đọc tin.
+
+<a id="chat-broadcast"></a>
+
+#### Broadcast
+
+**Event:** `CHAT/BROADCAST` · **Opcode:** `4` · **Direction:** C → S → C trong community
+
+Gửi tin nhắn tới các thành viên online của một community qua server.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+| `content` | string | Nội dung tin nhắn, tối đa 64 KiB theo byte UTF-8. |
+
+**Example Broadcast**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 10,
+  "body": {
+    "type": "BROADCAST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "content": "Nhóm mình bắt đầu nhé!"
+  }
+}
+```
+
+**Example Broadcast nhận từ server**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 17,
+  "body": {
+    "type": "BROADCAST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "sender": "alice",
+    "content": "Nhóm mình bắt đầu nhé!"
+  }
+}
+```
+
+Request C → S có communityId và content. Server kiểm tra membership, thêm sender từ session và phát cho thành viên khác; người gửi không nhận echo. Event này không có response riêng.
+
+<a id="chat-session-report"></a>
+
+#### Session Report
+
+**Event:** `CHAT/SESSION_REPORT` · **Opcode:** `4` · **Direction:** C → S
+
+Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `sessionId` | string | UUID canonical của kết nối chat P2P. |
+| `peerUsername` | string | Tài khoản peer còn lại của phiên chat. |
+| `state` | string | CONNECTED hoặc DISCONNECTED khi báo cáo phiên. |
+
+**Example Session Report**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 10,
+  "body": {
+    "type": "SESSION_REPORT",
+    "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+    "peerUsername": "bob",
+    "state": "CONNECTED"
+  }
+}
+```
+
+state gửi lên chỉ nhận CONNECTED hoặc DISCONNECTED. Đây là metadata; dữ liệu chat vẫn đi trực tiếp giữa hai peer.
+
+<a id="chat-session-report-response"></a>
+
+#### Session Report Response
+
+**Event:** `CHAT/SESSION_REPORT_RESPONSE` · **Opcode:** `4` · **Direction:** S → C
+
+Trả kết quả tiếp nhận báo cáo phiên P2P.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Session Report Response**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 17,
+  "body": {
+    "type": "SESSION_REPORT_RESPONSE",
+    "replyTo": 10,
+    "status": "OK"
+  }
+}
+```
+
+Các status: OK, INVALID_SESSION_REPORT, INVALID_SESSION, USER_OFFLINE. Hai báo cáo cùng UUID/cặp user được gộp; báo cáo muộn không mở lại phiên đã DISCONNECTED.
+
+<a id="chat-session-list-request"></a>
+
+#### Session List Request
+
+**Event:** `CHAT/SESSION_LIST_REQUEST` · **Opcode:** `4` · **Direction:** C → S
+
+Lấy danh sách metadata các phiên P2P mà server đang lưu.
+
+Body chỉ có `type`.
+
+**Example Session List Request**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 10,
+  "body": {
+    "type": "SESSION_LIST_REQUEST"
+  }
+}
+```
+
+<a id="chat-session-list-response"></a>
+
+#### Session List Response
+
+**Event:** `CHAT/SESSION_LIST_RESPONSE` · **Opcode:** `4` · **Direction:** S → C
+
+Trả danh sách phiên, sắp xếp theo UUID.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `sessions` | ChatSession[] | Danh sách metadata phiên P2P; xem Objects. |
+
+**Example Session List Response**
+
+```json
+{
+  "opcode": 4,
+  "sequence": 17,
+  "body": {
+    "type": "SESSION_LIST_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "sessions": [
+      {
+        "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+        "userA": "alice",
+        "userB": "bob",
+        "state": "CONNECTED"
+      }
+    ]
+  }
+}
+```
+
+state trả về là CONNECTED, DISCONNECTED hoặc UNKNOWN. UNKNOWN có thể xuất hiện khi mất kết nối quản lý với server.
+
+### FILE Events
+
+<a id="file-offer"></a>
+
+#### File Offer
+
+**Event:** `FILE/OFFER` · **Opcode:** `5` · **Direction:** P sender → P receiver, kênh chat
+
+Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transferId` | string | UUID canonical của transfer; với file community bằng fileId. |
+| `sender` | string | Tài khoản người gửi. |
+| `receiver` | string | Tài khoản nhận file P2P. |
+| `fileName` | string | Tên file gốc; bên nhận xử lý tên trước khi lưu. |
+| `fileSize` | integer | Kích thước file theo byte, từ 0 đến 524288000. |
+| `checksum` | string | SHA-256 của toàn bộ file, 64 ký tự hex thường. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
+
+**Example File Offer**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 10,
+  "body": {
+    "type": "OFFER",
+    "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "sender": "alice",
+    "receiver": "bob",
+    "fileName": "notes.txt",
+    "fileSize": 0,
+    "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "publicKey": "<sender-file-x25519-public-key-base64>"
+  }
+}
+```
+
+Người nhận phải ACCEPT trước khi mở lượt truyền. Checksum ví dụ là SHA-256 của file rỗng notes.txt. Public key file được xác thực nhờ kênh chat đã mã hóa.
+
+<a id="file-decision"></a>
+
+#### File Decision
+
+**Event:** `FILE/DECISION` · **Opcode:** `5` · **Direction:** P receiver → P sender, kênh chat
+
+Chấp nhận hoặc từ chối File Offer.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `transferId` | string | UUID canonical của transfer; với file community bằng fileId. |
+| `decision` | string | ACCEPT hoặc REJECT. |
+| `publicKey` | string | Public key X25519, X.509 DER rồi Base64. Chỉ bắt buộc khi ACCEPT. |
+
+**Example File Decision**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 17,
+  "body": {
+    "type": "DECISION",
+    "replyTo": 10,
+    "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "decision": "ACCEPT",
+    "publicKey": "<receiver-file-x25519-public-key-base64>"
+  }
+}
+```
+
+replyTo trỏ tới sequence File Offer. Khi REJECT, bỏ publicKey. ACCEPT dùng public key hai bên và metadata để dẫn xuất khóa transfer, sau đó sender mở socket file riêng.
+
+<a id="file-transfer-start"></a>
+
+#### File Transfer Start
+
+**Event:** `FILE/TRANSFER_START` · **Opcode:** `5` · **Direction:** P sender → P receiver, socket file
+
+Chọn transfer đã được chấp nhận trên socket dữ liệu mới.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transferId` | string | UUID canonical của transfer; với file community bằng fileId. |
+
+**Example File Transfer Start**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 1,
+  "body": {
+    "type": "TRANSFER_START",
+    "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10"
+  }
+}
+```
+
+Chưa mã hóa. transferId phải khớp lời mời đang ACCEPTED của người nhận; chỉ biết transferId chưa đủ để chiếm lượt truyền.
+
+<a id="file-ready"></a>
+
+#### File Ready
+
+**Event:** `FILE/READY` · **Opcode:** `5` · **Direction:** P receiver → P sender, socket file
+
+Trả nonce ngẫu nhiên mới cho lần kết nối socket file.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `transferId` | string | UUID canonical của transfer; với file community bằng fileId. |
+| `connectionNonce` | string | Nonce ngẫu nhiên 32 byte/Base64, mới cho từng lần thử socket file. |
+
+**Example File Ready**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 1,
+  "body": {
+    "type": "READY",
+    "replyTo": 1,
+    "status": "OK",
+    "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "connectionNonce": "<32-byte-random-connection-nonce-base64>"
+  }
+}
+```
+
+Chưa mã hóa. Hai bên dẫn xuất khóa socket từ khóa transfer và nonce, rồi trao đổi SYSTEM/KEY_CONFIRM/KEY_CONFIRM_ACK dưới AES-GCM. Receiver chỉ claim transfer sau xác nhận khóa thành công; lần thử lỗi không tiêu thụ offer hợp lệ.
+
+<a id="file-end"></a>
+
+#### File End
+
+**Event:** `FILE/END` · **Opcode:** `5` · **Direction:** Bên gửi file → bên nhận file
+
+Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transferId` | string | UUID canonical của transfer; với file community bằng fileId. |
+| `checksum` | string | SHA-256 của toàn bộ file, 64 ký tự hex thường. |
+
+**Example File End**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 3,
+  "body": {
+    "type": "END",
+    "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
+```
+
+Chỉ gửi sau đúng fileSize byte dữ liệu. File rỗng gửi End ngay sau xác nhận khóa. Dùng cho cả P2P và broadcast; với broadcast, transferId bằng fileId.
+
+<a id="file-result"></a>
+
+#### File Result
+
+**Event:** `FILE/RESULT` · **Opcode:** `5` · **Direction:** Bên nhận file → bên gửi file
+
+Trả kết quả sau khi kiểm tra checksum và lưu file.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example File Result**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 3,
+  "body": {
+    "type": "RESULT",
+    "replyTo": 3,
+    "status": "OK"
+  }
+}
+```
+
+**Example File Failure**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 3,
+  "body": {
+    "type": "RESULT",
+    "replyTo": 3,
+    "status": "FAIL",
+    "reason": "Checksum mismatch"
+  }
+}
+```
+
+OK phải trả lời File End. FAIL có thêm reason:string; lỗi sớm có thể trả lời JSON gần nhất. replyTo=0 chỉ được chấp nhận với FAIL khi chưa nhận JSON nào. Sender chỉ báo hoàn tất sau khi nhận OK đúng replyTo.
+
+<a id="file-broadcast-upload-request"></a>
+
+#### Broadcast Upload Request
+
+**Event:** `FILE/BROADCAST_UPLOAD_REQUEST` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
+
+Xin upload file vào community mà người gửi là thành viên.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+| `fileName` | string | Tên file gốc; bên nhận xử lý tên trước khi lưu. |
+| `fileSize` | integer | Kích thước file theo byte, từ 0 đến 524288000. |
+| `checksum` | string | SHA-256 của toàn bộ file, 64 ký tự hex thường. |
+
+**Example Broadcast Upload Request**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 10,
+  "body": {
+    "type": "BROADCAST_UPLOAD_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "fileName": "notes.txt",
+    "fileSize": 0,
+    "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
+```
+
+<a id="file-broadcast-upload-response"></a>
+
+#### Broadcast Upload Response
+
+**Event:** `FILE/BROADCAST_UPLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+
+Cấp fileId và token để upload trên socket dữ liệu riêng.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `fileId` | string | UUID file community do server cấp. |
+| `uploadToken` | string | Token upload một lần, thời hạn 5 phút. |
+
+**Example Broadcast Upload Response**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 17,
+  "body": {
+    "type": "BROADCAST_UPLOAD_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "uploadToken": "<one-use-upload-token>"
+  }
+}
+```
+
+Token dùng một lần, hết hạn sau 5 phút. Các status: OK, INVALID_REQUEST, INVALID_SIZE, NOT_MEMBER. fileId và uploadToken chỉ có khi OK.
+
+<a id="file-broadcast-upload-start"></a>
+
+#### Broadcast Upload Start
+
+**Event:** `FILE/BROADCAST_UPLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
+
+Bắt đầu upload bằng token đã nhận.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `fileId` | string | UUID file community do server cấp. |
+| `uploadToken` | string | Token upload một lần, thời hạn 5 phút. |
+
+**Example Broadcast Upload Start**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 3,
+  "body": {
+    "type": "BROADCAST_UPLOAD_START",
+    "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "uploadToken": "<one-use-upload-token>"
+  }
+}
+```
+
+Socket này đã hoàn tất CONNECTION/HELLO/ACK và SYSTEM/KEY_CONFIRM/ACK. Không đăng nhập lại bằng password; token cấp quyền cho lượt upload. Tiếp theo là dữ liệu file, FILE/END và FILE/RESULT.
+
+<a id="file-broadcast-offer"></a>
+
+#### Broadcast File Offer
+
+**Event:** `FILE/BROADCAST_OFFER` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+
+Thông báo file đã upload thành công cho các thành viên nhận trong community.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `fileId` | string | UUID file community do server cấp. |
+| `sender` | string | Tài khoản người gửi. |
+| `communityId` | string | ID community. |
+| `fileName` | string | Tên file gốc; bên nhận xử lý tên trước khi lưu. |
+| `fileSize` | integer | Kích thước file theo byte, từ 0 đến 524288000. |
+| `checksum` | string | SHA-256 của toàn bộ file, 64 ký tự hex thường. |
+
+**Example Broadcast File Offer**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 17,
+  "body": {
+    "type": "BROADCAST_OFFER",
+    "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "sender": "alice",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "fileName": "notes.txt",
+    "fileSize": 0,
+    "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
+```
+
+Sự kiện chủ động, không có replyTo/status. Chỉ các thành viên online được đưa vào danh sách người nhận tại lúc phát offer mới nhận lời mời.
+
+<a id="file-broadcast-decision"></a>
+
+#### Broadcast File Decision
+
+**Event:** `FILE/BROADCAST_DECISION` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
+
+Chấp nhận hoặc từ chối tải file đã được server thông báo.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `fileId` | string | UUID file community do server cấp. |
+| `decision` | string | ACCEPT hoặc REJECT. |
+
+**Example Broadcast File Decision**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 10,
+  "body": {
+    "type": "BROADCAST_DECISION",
+    "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "decision": "ACCEPT"
+  }
+}
+```
+
+Đây là request mới, không mang replyTo. Server kiểm tra người dùng thuộc danh sách người nhận và vẫn là thành viên community; trả FILE/BROADCAST_DOWNLOAD_RESPONSE.
+
+<a id="file-broadcast-download-response"></a>
+
+#### Broadcast Download Response
+
+**Event:** `FILE/BROADCAST_DOWNLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+
+Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downloadToken.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `downloadToken` | string | Token download một lần, thời hạn 5 phút. |
+
+**Example Broadcast Download Response**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 17,
+  "body": {
+    "type": "BROADCAST_DOWNLOAD_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "downloadToken": "<one-use-download-token>"
+  }
+}
+```
+
+Token dùng một lần, hết hạn sau 5 phút. Các status: OK, REJECTED, NOT_FOUND, NOT_AUTHORIZED, INVALID_DECISION; nhánh legacy Download Request trả USE_DATA_CONNECTION. Chỉ OK sau ACCEPT có downloadToken.
+
+<a id="file-broadcast-download-start"></a>
+
+#### Broadcast Download Start
+
+**Event:** `FILE/BROADCAST_DOWNLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
+
+Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `fileId` | string | UUID file community do server cấp. |
+| `downloadToken` | string | Token download một lần, thời hạn 5 phút. |
+
+**Example Broadcast Download Start**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 3,
+  "body": {
+    "type": "BROADCAST_DOWNLOAD_START",
+    "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
+    "downloadToken": "<one-use-download-token>"
+  }
+}
+```
+
+Server tiêu thụ token và kiểm tra lại quyền tải, rồi gửi dữ liệu file và FILE/END. Client lưu file, kiểm tra checksum và trả FILE/RESULT. Token sai/hết hạn nhận FILE/RESULT FAIL nếu kênh còn dùng được.
+
+<a id="file-broadcast-download-request"></a>
+
+#### Broadcast Download Request
+
+**Event:** `FILE/BROADCAST_DOWNLOAD_REQUEST` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
+
+Nhánh API cũ đã có handler nhưng không được dùng cho luồng download chính.
+
+Body chỉ có `type`.
+
+**Example Broadcast Download Request**
+
+```json
+{
+  "opcode": 5,
+  "sequence": 10,
+  "body": {
+    "type": "BROADCAST_DOWNLOAD_REQUEST"
+  }
+}
+```
+
+Không cấp token và không gửi dữ liệu. Luôn trả FILE/BROADCAST_DOWNLOAD_RESPONSE với status USE_DATA_CONNECTION. Luồng chính dùng Broadcast File Decision.
+
+### COMMUNITY Events
+
+<a id="community-list-request"></a>
+
+#### Community List Request
+
+**Event:** `COMMUNITY/LIST_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Lấy danh sách community và trạng thái membership của người gọi.
+
+Body chỉ có `type`.
+
+**Example Community List Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "LIST_REQUEST"
+  }
+}
+```
+
+<a id="community-list-response"></a>
+
+#### Community List Response
+
+**Event:** `COMMUNITY/LIST_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả các Community Object hiện có.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `communities` | Community[] | Danh sách community; xem Objects. |
+
+**Example Community List Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "LIST_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "communities": [
+      {
+        "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+        "name": "Network Study",
+        "owner": "alice",
+        "memberCount": 2,
+        "isMember": true,
+        "createdAt": "2026-11-15T08:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+<a id="community-create-request"></a>
+
+#### Community Create Request
+
+**Event:** `COMMUNITY/CREATE_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Tạo community mới; người tạo trở thành owner và thành viên đầu tiên.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | Tên community không rỗng, tối đa 100 ký tự. |
+
+**Example Community Create Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "CREATE_REQUEST",
+    "name": "Network Study"
+  }
+}
+```
+
+<a id="community-create-response"></a>
+
+#### Community Create Response
+
+**Event:** `COMMUNITY/CREATE_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả community vừa tạo và chọn community đó trên client.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `communityId` | string | ID community. |
+| `name` | string | Tên community không rỗng, tối đa 100 ký tự. |
+
+**Example Community Create Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "CREATE_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "name": "Network Study"
+  }
+}
+```
+
+Tên không hợp lệ trả INVALID_NAME hoặc NAME_TOO_LONG. Khi mới tạo, memberCount là 1. Nếu cùng owner đã có community cùng tên không phân biệt hoa/thường, server trả community hiện có.
+
+<a id="community-join-request"></a>
+
+#### Community Join Request
+
+**Event:** `COMMUNITY/JOIN_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Tham gia một community hiện có.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+
+**Example Community Join Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "JOIN_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90"
+  }
+}
+```
+
+<a id="community-join-response"></a>
+
+#### Community Join Response
+
+**Event:** `COMMUNITY/JOIN_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả kết quả thao tác join community.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `communityId` | string | ID community. |
+| `name` | string | Tên community không rỗng, tối đa 100 ký tự. |
+
+**Example Community Join Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "JOIN_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "name": "Network Study"
+  }
+}
+```
+
+Có thể trả NOT_FOUND hoặc ALREADY_MEMBER.
+
+<a id="community-leave-request"></a>
+
+#### Community Leave Request
+
+**Event:** `COMMUNITY/LEAVE_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Rời community hiện tại.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+
+**Example Community Leave Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "LEAVE_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90"
+  }
+}
+```
+
+<a id="community-leave-response"></a>
+
+#### Community Leave Response
+
+**Event:** `COMMUNITY/LEAVE_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả kết quả thao tác leave community.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+
+**Example Community Leave Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "LEAVE_RESPONSE",
+    "replyTo": 10,
+    "status": "OK"
+  }
+}
+```
+
+Có thể trả NOT_FOUND hoặc NOT_MEMBER. Owner vẫn được rời: quyền sở hữu chuyển cho thành viên còn lại có username nhỏ nhất theo thứ tự sắp xếp; nếu không còn thành viên, community bị xóa.
+
+<a id="community-select-request"></a>
+
+#### Community Select Request
+
+**Event:** `COMMUNITY/SELECT_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Kiểm tra và chọn một community đã tham gia làm đích thao tác của client.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+
+**Example Community Select Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "SELECT_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90"
+  }
+}
+```
+
+<a id="community-select-response"></a>
+
+#### Community Select Response
+
+**Event:** `COMMUNITY/SELECT_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả kết quả thao tác select community.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `communityId` | string | ID community. |
+| `name` | string | Tên community không rỗng, tối đa 100 ký tự. |
+
+**Example Community Select Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "SELECT_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+    "name": "Network Study"
+  }
+}
+```
+
+Có thể trả NOT_FOUND hoặc NOT_MEMBER. Việc chọn không tạo socket mới.
+
+<a id="community-members-request"></a>
+
+#### Community Members Request
+
+**Event:** `COMMUNITY/MEMBERS_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Lấy danh sách thành viên của community đã tham gia.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+
+**Example Community Members Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "MEMBERS_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90"
+  }
+}
+```
+
+<a id="community-members-response"></a>
+
+#### Community Members Response
+
+**Event:** `COMMUNITY/MEMBERS_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả username và trạng thái online của các thành viên.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `members` | Member[] | Danh sách thành viên và trạng thái online; xem Objects. |
+
+**Example Community Members Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "MEMBERS_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "members": [
+      {
+        "username": "alice",
+        "online": true
+      },
+      {
+        "username": "bob",
+        "online": true
+      }
+    ]
+  }
+}
+```
+
+Có thể trả NOT_FOUND hoặc NOT_MEMBER.
+
+<a id="community-info-request"></a>
+
+#### Community Info Request
+
+**Event:** `COMMUNITY/INFO_REQUEST` · **Opcode:** `6` · **Direction:** C → S
+
+Lấy thông tin chi tiết một community theo ID; handler hiện tại không yêu cầu membership.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | ID community. |
+
+**Example Community Info Request**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 10,
+  "body": {
+    "type": "INFO_REQUEST",
+    "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90"
+  }
+}
+```
+
+<a id="community-info-response"></a>
+
+#### Community Info Response
+
+**Event:** `COMMUNITY/INFO_RESPONSE` · **Opcode:** `6` · **Direction:** S → C
+
+Trả một Community Object.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `community` | Community | Chi tiết community; xem Objects. |
+
+**Example Community Info Response**
+
+```json
+{
+  "opcode": 6,
+  "sequence": 17,
+  "body": {
+    "type": "INFO_RESPONSE",
+    "replyTo": 10,
+    "status": "OK",
+    "community": {
+      "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
+      "name": "Network Study",
+      "owner": "alice",
+      "memberCount": 2,
+      "isMember": true,
+      "createdAt": "2026-11-15T08:00:00Z"
+    }
+  }
+}
+```
+
+Community không tồn tại trả NOT_FOUND; isMember trong object thể hiện membership của người gọi.
+
+### DISCOVERY Events
+
+<a id="discovery-request"></a>
+
+#### Discovery Request
+
+**Event:** `DISCOVERY/REQUEST` · **Opcode:** `7` · **Direction:** C → LAN, UDP
+
+Tìm server trên LAN bằng UDP port 41234.
+
+Body chỉ có `type`.
+
+**Example Discovery Request**
+
+```json
+{
+  "opcode": 7,
+  "sequence": 1,
+  "body": {
+    "type": "REQUEST"
+  }
+}
+```
+
+Chưa mã hóa. Client gửi qua broadcast của từng giao diện IPv4, tối đa 5 lần, chờ phản hồi 3 giây mỗi lần.
+
+<a id="discovery-response"></a>
+
+#### Discovery Response
+
+**Event:** `DISCOVERY/RESPONSE` · **Opcode:** `7` · **Direction:** S → C, UDP
+
+Thông báo TCP port mà server đang lắng nghe.
+
+**Structure**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
+| `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
+| `tcpPort` | integer | Cổng TCP server, từ 1 đến 65535. |
+
+**Example Discovery Response**
+
+```json
+{
+  "opcode": 7,
+  "sequence": 1,
+  "body": {
+    "type": "RESPONSE",
+    "replyTo": 1,
+    "status": "OK",
+    "tcpPort": 8080
+  }
+}
+```
+
+IP lấy từ địa chỉ nguồn datagram. Client probe TCP, nhưng chỉ handshake có kiểm tra chữ ký bằng khóa đã pin mới xác thực danh tính server; Discovery Response chưa được ký.
+
+## Objects
+
+### Community Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `communityId` | string | UUID của community. |
+| `name` | string | Tên hiển thị. |
+| `owner` | string | Username người sở hữu. |
+| `memberCount` | integer | Tổng số thành viên. |
+| `isMember` | boolean | Người gọi có là thành viên hay không. |
+| `createdAt` | string | Thời điểm tạo, ISO 8601. |
+
+### Member Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `username` | string | Tên tài khoản. |
+| `online` | boolean | Có phiên quản lý đang online trên server hay không. |
+
+### ChatSession Object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `sessionId` | string | UUID của kết nối P2P. |
+| `userA` | string | Username một bên. |
+| `userB` | string | Username bên còn lại. |
+| `state` | string | CONNECTED, DISCONNECTED hoặc UNKNOWN. |
+
+## Errors and Limits
+
+Lỗi nghiệp vụ thường nằm trong status của response tương ứng. Khi status khác
+OK, không giả định các trường của response thành công còn tồn tại. Sai cấu trúc,
+sai sequence, response không khớp request, lỗi xác thực AES-GCM hoặc lỗi socket
+có thể kết thúc kết nối. Server không gửi lỗi plaintext sau khi đã bật mã hóa.
+
+| Scope | Behavior |
+| --- | --- |
+| Request quản lý | Chờ response tối đa 10 giây; timeout đóng kênh quản lý. |
+| Heartbeat | Gửi mỗi 5 giây; quá 30 giây chưa có Pong đúng thì đóng kết nối. |
+| Nội dung chat | Tối đa 64 KiB theo byte UTF-8. |
+| Tên community | Không rỗng, tối đa 100 ký tự. |
+| File | Tối đa 500 MiB; kiểm tra SHA-256 trước khi công bố file. |
+| File offer P2P | Hết hạn sau 2 phút nếu chưa có quyết định. |
+| Sau ACCEPT P2P | Chờ socket/xác nhận khóa tối đa 30 giây. |
+| Socket file P2P | Connect timeout 10 giây, read timeout 30 giây. |
+| Socket dữ liệu broadcast | Read timeout 60 giây khi truyền. |
+| Upload/download token | Một lần, thời hạn 5 phút. |
+
+File nhận trùng tên được thêm hậu tố. Lỗi nhận dọn file tạm. Receiver có thể đã
+lưu file nhưng không gửi được Result; sender chỉ xác nhận hoàn tất khi nhận OK.
+Không tự retry tin nhắn hoặc file để tránh tạo bản trùng.
+
+## Reserved Events
+
+Các type dưới đây có trong enum nhưng chưa có luồng gửi/nhận ứng dụng. Chúng
+không phải API đang hoạt động; không gửi chúng để yêu cầu hành vi chưa triển khai.
+
+| Opcode | Type | Intended purpose |
+| --- | --- | --- |
+| 0 | ERROR | Thông báo lỗi giao thức. Validator yêu cầu reason:string không rỗng; chưa có handler ứng dụng. |
+| 3 | PRESENCE_UPDATE | Thông báo thay đổi trạng thái online. |
+| 4 | RECEIPT | Xác nhận nhận tin nhắn. |
+| 4 | TYPING | Thông báo đang nhập tin. |
+
+FILE/BROADCAST_DOWNLOAD_REQUEST đã có handler nhưng chỉ trả USE_DATA_CONNECTION;
+luồng tải hiện tại dùng FILE/BROADCAST_DECISION. Không có event FILE/CHUNK:
+dữ liệu file được truyền trực tiếp trên socket file giữa Ready/Key Confirm và End.
+
+## Implementation Notes
+
+App dùng TCP cho kênh server và P2P, UDP cho Discovery. Payload trong tài liệu là
+JSON ở lớp event; PacketCodec và PacketChannel xử lý đóng khung và mã hóa khi
+truyền. Đây là cách trình bày tài liệu theo event, không đổi app sang WebSocket.
+
+Phiên bản 2 không tương thích phiên bản 1; client và server phải cập nhật đồng thời.
+Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từng nhóm.
+
+## Documentation References
+
+Bố cục tổng quan kết nối tham khảo [Discord Gateway](https://docs.discord.com/developers/events/gateway).
+Cách mô tả event bằng Structure và Example tham khảo [Discord Gateway Events](https://docs.discord.com/developers/events/gateway-events).
+Các opcode, field, trạng thái và ví dụ trong tài liệu này mô tả ứng dụng DLP.

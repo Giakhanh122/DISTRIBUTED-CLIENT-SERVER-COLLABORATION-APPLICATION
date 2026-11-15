@@ -1,5 +1,8 @@
 package client;
 
+import protocols.AuthType;
+import protocols.ConnectionType;
+
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.file.Path;
@@ -13,7 +16,6 @@ import client.connection.ServerDiscovery;
 import client.security.ServerKeyPinning;
 import network.PacketChannel;
 import protocols.Json;
-import protocols.OpCode;
 import protocols.Packet;
 import protocols.PacketValidator;
 import security.SessionKeys;
@@ -80,13 +82,13 @@ public class Client {
         new SecureRandom().nextBytes(serverVerificationChallenge);
         String encodedChallenge = Base64.getEncoder().encodeToString(serverVerificationChallenge);
 
-        Packet hello = Packet.json(OpCode.HELLO,
+        Packet hello = Packet.json(ConnectionType.HELLO,
                 Json.object("protocolVersion", Packet.PROTOCOL_VERSION,
                         "serverVerificationChallenge", encodedChallenge,
                         "publicKey", encodedPublicKey));
         long sequence = channel.send(hello);
         Packet response = channel.read();
-        PacketValidator.validateResponse(response, OpCode.HELLO_ACK, sequence);
+        PacketValidator.validateResponse(response, ConnectionType.HELLO_ACK, sequence);
         PacketValidator.requireSuccess(response);
         if (response.integer("protocolVersion") != Packet.PROTOCOL_VERSION) throw new IOException("Unsupported protocol version");
 
@@ -115,9 +117,9 @@ public class Client {
     }
 
     private void authenticate(PacketChannel channel, String username, String password, int peerPort) throws IOException {
-        long sequence = channel.send(Packet.json(OpCode.AUTH_REQUEST,
+        long sequence = channel.send(Packet.json(AuthType.LOGIN_REQUEST,
                 Json.object("username", username, "password", password, "peerPort", peerPort)));
-        Packet response = PacketValidator.validateResponse(channel.read(), OpCode.AUTH_RESPONSE, sequence);
+        Packet response = PacketValidator.validateResponse(channel.read(), AuthType.LOGIN_RESPONSE, sequence);
         if (!response.status().equals("OK")) throw new IOException("Login failed: " + response.status());
     }
 
