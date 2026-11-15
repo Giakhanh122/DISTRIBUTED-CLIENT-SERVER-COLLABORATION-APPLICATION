@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the DISCOVERY opcode group. */
 public enum DiscoveryType implements MessageType {

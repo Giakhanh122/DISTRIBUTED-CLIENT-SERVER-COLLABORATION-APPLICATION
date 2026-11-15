@@ -1,6 +1,6 @@
 package transfer;
 
-import protocols.FileType;
+import protocols.type.FileType;
 
 import java.io.File;
 import java.io.IOException;
@@ -16,6 +16,12 @@ import protocols.Packet;
 import network.PacketChannel;
 
 public class FileReceiver {
+    public static final class CleanupException extends IOException {
+        public CleanupException(Path path, IOException cause) {
+            super("Không thể xóa file tải dở: " + path, cause);
+        }
+    }
+
     @FunctionalInterface
     public interface ProgressListener {
         void onProgress(long bytesReceived, long totalBytes, int percent);
@@ -61,6 +67,7 @@ public class FileReceiver {
             // Never use untrusted metadata as the temporary file's path.
             tempFile = Files.createTempFile(directory, ".transfer-", ".tmp");
 
+            if (listener != null) listener.onProgress(0, meta.fileSize(), meta.fileSize() == 0 ? 100 : 0);
             try (OutputStream fileOutput = Files.newOutputStream(tempFile)) {
                 FileDataReader.receive(channel, fileOutput, meta.transferId(), meta.fileSize(), meta.checksum(),
                         (length, received) -> {
@@ -106,8 +113,9 @@ public class FileReceiver {
                 try {
                     Files.deleteIfExists(tempFile);
                 } catch (IOException cleanupError) {
-                    if (failure == null) throw cleanupError;
-                    failure.addSuppressed(cleanupError);
+                    CleanupException cleanupFailure = new CleanupException(tempFile, cleanupError);
+                    if (failure != null) cleanupFailure.addSuppressed(failure);
+                    throw cleanupFailure;
                 }
             }
         }

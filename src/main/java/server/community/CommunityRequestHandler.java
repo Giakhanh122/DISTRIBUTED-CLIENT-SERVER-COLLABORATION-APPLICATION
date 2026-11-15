@@ -1,6 +1,6 @@
 package server.community;
 
-import protocols.CommunityType;
+import protocols.type.CommunityType;
 
 import com.google.gson.JsonObject;
 import java.io.IOException;

@@ -1,6 +1,6 @@
 package client.transfer;
 
-import protocols.FileType;
+import protocols.type.FileType;
 
 import client.ClientEvents;
 import client.peer.PeerConnection;
@@ -49,6 +49,7 @@ public final class FileTransferController implements AutoCloseable {
         PublicKey peerPublicKey;
         SessionKeys keys;
         Socket socket;
+        boolean workerActive;
         ScheduledFuture<?> timeout;
 
         Transfer(FileTransferMeta meta, PeerConnection peer, File source) {
@@ -115,11 +116,55 @@ public final class FileTransferController implements AutoCloseable {
             cancelTimeout(transfer);
             events.onFileState(transfer.id(), ClientEvents.FileState.TRANSFERRING,
                     "Accepted by " + transfer.session.meta().receiver());
+            transfer.workerActive = true;
             Thread.startVirtualThread(() -> sendFile(transfer));
         } catch (IOException | RuntimeException e) {
             fail(transfer, e);
             throw e;
         }
+    }
+
+    public void cancel(String id) {
+        Transfer transfer;
+        synchronized (this) { transfer = findOffer(id); }
+        if (transfer != null) cancel(transfer, true);
+    }
+
+    public void handleIncomingCancel(PeerConnection peer, Packet packet) throws IOException {
+        PacketValidator.validateRequest(packet, FileType.CANCEL, 1, 1024);
+        Transfer transfer;
+        synchronized (this) {
+            transfer = transfers.get(packet.string("transferId"));
+            if (transfer == null || transfer.peer != peer) return;
+        }
+        cancel(transfer, false);
+    }
+
+    private void cancel(Transfer transfer, boolean notifyPeer) {
+        synchronized (this) {
+            if (transfers.get(transfer.id()) != transfer) return;
+            synchronized (transfer.session) {
+                if (transfer.session.isTerminal()) return;
+                transfer.session.cancel();
+            }
+            cancelTimeout(transfer);
+            events.onFileState(transfer.id(), ClientEvents.FileState.CANCELING, "Đang hủy truyền file");
+            if (transfer.socket != null) {
+                try { transfer.socket.close(); }
+                catch (IOException e) { System.err.println("Cannot close canceled transfer: " + message(e)); }
+            }
+            if (!transfer.workerActive) {
+                report(transfer, ClientEvents.FileState.CANCELED, "Đã hủy truyền file");
+                finish(transfer);
+            }
+        }
+        if (notifyPeer) Thread.startVirtualThread(() -> {
+            try {
+                transfer.peer.sendPacket(Packet.json(FileType.CANCEL, Json.object("transferId", transfer.id())));
+            } catch (IOException e) {
+                System.err.println("Cannot notify peer of cancellation: " + message(e));
+            }
+        });
     }
 
     public void offer(PeerConnection peer, String receiver, File file) {
@@ -212,7 +257,7 @@ public final class FileTransferController implements AutoCloseable {
             if (!transfer.id().equals(ready.string("transferId"))) throw new IOException("File channel transfer ID mismatch");
             SessionKeys connectionKeys = connectionKeys(keys, ready.string("connectionNonce"));
             channel.confirmEncryption(connectionKeys, PacketChannel.Role.INITIATOR);
-            FileSender sender = new FileSender(transfer.source, transfer.id(), channel, transfer.session, null);
+            FileSender sender = new FileSender(transfer.source, transfer.id(), channel, transfer.session, new FileProgress(events, transfer.id()));
             sender.send();
             sender.awaitResult();
             report(transfer, ClientEvents.FileState.COMPLETED, transfer.source.getAbsolutePath());
@@ -255,9 +300,10 @@ public final class FileTransferController implements AutoCloseable {
                 transfer.keys = null;
                 transfer.session.startTransfer();
                 cancelTimeout(transfer);
+                transfer.workerActive = true;
                 claimed = true;
             }
-            File saved = new FileReceiver(channel, downloadDir, transfer.session.meta(), transfer.session, null).receive();
+            File saved = new FileReceiver(channel, downloadDir, transfer.session.meta(), transfer.session, new FileProgress(events, transfer.id())).receive();
             report(transfer, ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
         } catch (IOException | RuntimeException e) {
             if (claimed) fail(transfer, e);
@@ -322,7 +368,7 @@ public final class FileTransferController implements AutoCloseable {
             throw new IOException("Peer chat connection is closed");
         }
         if (transfers.putIfAbsent(transfer.id(), transfer) != null) throw new IOException("Duplicate file transfer ID");
-        scheduleTimeout(transfer, FileTransferSession.State.OFFERED, OFFER_TIMEOUT_MS, "File offer expired");
+        scheduleTimeout(transfer, FileTransferSession.State.OFFERED, OFFER_TIMEOUT_MS, "File đã hết hạn");
     }
 
     private void requireActive(Transfer transfer, FileTransferSession.State state) throws IOException {
@@ -348,7 +394,9 @@ public final class FileTransferController implements AutoCloseable {
                     if (transfer.session.state() != state) return;
                     transfer.session.fail();
                 }
-                try { report(transfer, ClientEvents.FileState.FAILED, reason); }
+                ClientEvents.FileState result = state == FileTransferSession.State.OFFERED
+                        ? ClientEvents.FileState.EXPIRED : ClientEvents.FileState.FAILED;
+                try { report(transfer, result, reason); }
                 finally { finish(transfer); }
             }
         }, delayMillis, TimeUnit.MILLISECONDS);
@@ -367,7 +415,10 @@ public final class FileTransferController implements AutoCloseable {
 
     private void fail(Transfer transfer, Exception failure) {
         transfer.session.fail();
-        try { report(transfer, ClientEvents.FileState.FAILED, message(failure)); }
+        ClientEvents.FileState result = transfer.session.state() == FileTransferSession.State.CANCELED
+                && !(failure instanceof FileReceiver.CleanupException)
+                ? ClientEvents.FileState.CANCELED : ClientEvents.FileState.FAILED;
+        try { report(transfer, result, result == ClientEvents.FileState.CANCELED ? "Đã hủy truyền file" : message(failure)); }
         finally { finish(transfer); }
     }
 

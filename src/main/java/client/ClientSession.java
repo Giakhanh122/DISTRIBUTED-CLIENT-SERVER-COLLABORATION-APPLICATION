@@ -1,11 +1,11 @@
 package client;
 
-import protocols.AuthType;
-import protocols.ChatType;
-import protocols.FileType;
-import protocols.MessageType;
-import protocols.UserType;
-import protocols.SystemType;
+import protocols.type.AuthType;
+import protocols.type.ChatType;
+import protocols.type.FileType;
+import protocols.type.MessageType;
+import protocols.type.UserType;
+import protocols.type.SystemType;
 
 import client.community.CommunityClient;
 import client.connection.ServerConnection;
@@ -53,6 +53,7 @@ public final class ClientSession implements AutoCloseable {
     private final PeerListener listener;
     private final CommunityClient communities;
     private final FileTransferController files;
+    private final File downloadDirectory;
     private final ConcurrentHashMap<String, PeerConnection> peers = new ConcurrentHashMap<>();
     private final Set<Socket> connectingSockets = ConcurrentHashMap.newKeySet();
     private final ExecutorService reports = Executors.newSingleThreadExecutor(
@@ -69,7 +70,7 @@ public final class ClientSession implements AutoCloseable {
             server = new ServerConnection(channel, packet -> {
                 if (serverContext == this) receiveEvent(this, packet);
             }, () -> serverClosed(this));
-            broadcasts = new BroadcastFileController(server, host, port, username, offerNumbers::incrementAndGet, events);
+            broadcasts = new BroadcastFileController(server, host, port, username, offerNumbers::incrementAndGet, events, downloadDirectory, serverKeyPinning);
         }
 
     }
@@ -86,14 +87,15 @@ public final class ClientSession implements AutoCloseable {
     }
 
     ClientSession(String username, String host, int port, PacketChannel channel, ClientEvents events,
-                  ServerKeyPinning serverKeyPinning) throws IOException {
+                  ServerKeyPinning serverKeyPinning, File downloadDirectory) throws IOException {
         this.events = java.util.Objects.requireNonNull(events);
         this.serverKeyPinning = java.util.Objects.requireNonNull(serverKeyPinning);
         this.username = username;
+        this.downloadDirectory = java.util.Objects.requireNonNull(downloadDirectory);
         this.host = host;
         this.port = port;
         listener = new PeerListener(serverKeyPinning, this::requestPeerKey, this::registerPeer, this::receiveFile);
-        files = new FileTransferController(username, new File("downloads/" + username),
+        files = new FileTransferController(username, downloadDirectory,
                 peers, offerNumbers::incrementAndGet, events);
         serverContext = new ServerContext(channel);
         communities = new CommunityClient(() -> serverContext.server);
@@ -142,7 +144,7 @@ public final class ClientSession implements AutoCloseable {
                 if (previous.server.isOpen()) throw new IOException("Server is still connected");
                 connectingSockets.add(socket);
             }
-            PacketChannel channel = new Client().reconnect(socket, host, port, username, password, peerPort());
+            PacketChannel channel = new Client(serverKeyPinning).reconnect(socket, host, port, username, password, peerPort());
             synchronized (peerLock) {
                 if (isClosed() || serverContext != previous) throw new IOException("Session changed during reconnect");
                 ServerContext replacement = new ServerContext(channel);
@@ -284,6 +286,10 @@ public final class ClientSession implements AutoCloseable {
         if (!serverContext.broadcasts.accept(number)) files.sendDecision(number, "ACCEPT");
     }
 
+    public void cancelFile(String id) throws IOException {
+        if (!serverContext.broadcasts.cancel(id)) files.cancel(id);
+    }
+
     public void reject(String number) throws IOException {
         if (!serverContext.broadcasts.reject(number)) files.sendDecision(number, "REJECT");
     }
@@ -404,6 +410,7 @@ public final class ClientSession implements AutoCloseable {
             connection.readMessages(name, (messageId, content) -> events.onMessage(name, content), packet -> {
                 try {
                     if (packet.type() == FileType.OFFER) files.handleIncomingOffer(name, connection, packet);
+                    else if (packet.type() == FileType.CANCEL) files.handleIncomingCancel(connection, packet);
                     else files.handleIncomingDecision(connection, packet);
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());

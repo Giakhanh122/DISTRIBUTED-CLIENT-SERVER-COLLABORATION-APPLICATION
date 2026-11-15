@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the CONNECTION opcode group. */
 public enum ConnectionType implements MessageType {

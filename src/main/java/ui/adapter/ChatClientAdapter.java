@@ -311,6 +311,17 @@ public final class ChatClientAdapter {
         submitServer(s -> s.broadcastFile(target, file));
     }
     public void acceptFileOffer(String id) { decideFile(id, true); }
+    public void cancelFileTransfer(String id) {
+        long token = generation.get();
+        ClientSession current = session;
+        Thread.startVirtualThread(() -> {
+            if (current == null || current != session || generation.get() != token) return;
+            try { current.cancelFile(id); }
+            catch (IOException | RuntimeException e) {
+                events(token).onFileState(id, ClientEvents.FileState.FAILED, e.getMessage());
+            }
+        });
+    }
     public void rejectFileOffer(String id) { decideFile(id, false); }
     private void decideFile(String id, boolean accept) {
         submit(s -> {
@@ -381,6 +392,16 @@ public final class ChatClientAdapter {
                     listeners.forEach(l -> l.onFileOfferReceived(model));
                 });
             }
+            public void onFileProgress(String id, long transferred, long total, double bytesPerSecond, long remainingSeconds) {
+                JavaFxUtils.runOnFxThread(() -> {
+                    if (generation.get() != token) return;
+                    FileOfferModel model = fileOffers.get(id);
+                    if (model == null || model.getStatus() != FileOfferModel.Status.TRANSFERRING) return;
+                    double progress = total == 0 ? 1 : (double) transferred / total;
+                    model.setProgress(Math.max(0, Math.min(1, progress)));
+                    model.updateTransferStats(bytesPerSecond, remainingSeconds);
+                });
+            }
             public void onFileState(String id, FileState state, String detail) {
                 JavaFxUtils.runOnFxThread(() -> {
                     if (generation.get() != token) return;
@@ -391,17 +412,22 @@ public final class ChatClientAdapter {
                     }
                     if (model.getStatus() == FileOfferModel.Status.COMPLETED
                             || model.getStatus() == FileOfferModel.Status.FAILED
-                            || model.getStatus() == FileOfferModel.Status.REJECTED) return;
+                            || model.getStatus() == FileOfferModel.Status.REJECTED
+                            || model.getStatus() == FileOfferModel.Status.EXPIRED
+                            || model.getStatus() == FileOfferModel.Status.CANCELED) return;
                     model.setStatus(switch (state) {
                         case TRANSFERRING -> FileOfferModel.Status.TRANSFERRING;
                         case REJECTED -> FileOfferModel.Status.REJECTED;
                         case COMPLETED -> FileOfferModel.Status.COMPLETED;
+                        case EXPIRED -> FileOfferModel.Status.EXPIRED;
+                        case CANCELING -> FileOfferModel.Status.CANCELING;
+                        case CANCELED -> FileOfferModel.Status.CANCELED;
                         case FAILED -> FileOfferModel.Status.FAILED;
                     });
                     if (state == FileState.COMPLETED) {
                         model.setLocalPath(detail);
                         model.setProgress(1);
-                    } else if (detail != null) model.setStatusText(detail);
+                    } else if (state != FileState.EXPIRED && detail != null) model.setStatusText(detail);
                 });
             }
         };

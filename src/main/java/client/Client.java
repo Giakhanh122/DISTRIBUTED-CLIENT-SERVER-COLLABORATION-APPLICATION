@@ -1,9 +1,11 @@
 package client;
 
-import protocols.AuthType;
-import protocols.ConnectionType;
+import protocols.type.AuthType;
+import protocols.type.ConnectionType;
 
 import java.io.IOException;
+import java.io.File;
+import client.transfer.DownloadDirectory;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -26,6 +28,21 @@ public class Client {
     private static final Path SERVER_PUBLIC_KEY_PATH = Path.of("config/server-public.key");
     private ServerKeyPinning serverKeyPinning;
 
+    private final File downloadDirectory;
+
+    public Client() {
+        downloadDirectory = DownloadDirectory.resolve();
+    }
+
+    public Client(ServerKeyPinning serverKeyPinning) {
+        this(serverKeyPinning, DownloadDirectory.resolve());
+    }
+
+    Client(ServerKeyPinning serverKeyPinning, File downloadDirectory) {
+        this.serverKeyPinning = java.util.Objects.requireNonNull(serverKeyPinning);
+        this.downloadDirectory = java.util.Objects.requireNonNull(downloadDirectory);
+    }
+
     public record ServerInfo(String address, int port) {}
 
     public ClientSession login(String host, int port, String username, String password, ClientEvents events)
@@ -37,7 +54,7 @@ public class Client {
             socket.connect(new java.net.InetSocketAddress(host, port), 10000);
             socket.setSoTimeout(10000);
             PacketChannel channel = secureChannel(socket);
-            session = new ClientSession(username, host, port, channel, events, serverKeyPinning);
+            session = new ClientSession(username, host, port, channel, events, serverKeyPinning, downloadDirectory);
             authenticate(channel, username, password, session.peerPort());
             socket.setSoTimeout(0);
             return session;

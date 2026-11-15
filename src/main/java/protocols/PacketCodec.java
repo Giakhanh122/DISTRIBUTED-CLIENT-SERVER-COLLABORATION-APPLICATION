@@ -1,5 +1,6 @@
 package protocols;
 
+import protocols.type.MessageType;
 import com.google.gson.JsonObject;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;

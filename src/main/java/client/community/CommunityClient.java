@@ -1,7 +1,7 @@
 package client.community;
 
-import protocols.CommunityType;
-import protocols.MessageType;
+import protocols.type.CommunityType;
+import protocols.type.MessageType;
 
 import client.connection.ServerConnection;
 

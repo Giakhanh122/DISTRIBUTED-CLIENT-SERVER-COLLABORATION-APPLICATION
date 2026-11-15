@@ -129,6 +129,15 @@
                 </HBox>
             </HBox>
 
+            <HBox fx:id="serverOfflineBanner" alignment="CENTER_LEFT" spacing="12.0"
+                  visible="false" managed="false"
+                  style="-fx-background-color: #FEF3C7; -fx-padding: 10px 16px;">
+                <Label fx:id="serverOfflineMessage" wrapText="true" maxWidth="Infinity"
+                       HBox.hgrow="ALWAYS" style="-fx-text-fill: #92400E; -fx-font-size: 12px;"/>
+                <Button fx:id="bannerReconnectBtn" text="Kết nối lại" onAction="#handleReconnect"
+                        styleClass="btn-secondary"/>
+            </HBox>
+
             <StackPane VBox.vgrow="ALWAYS">
                 <VBox fx:id="emptyStateView" alignment="CENTER" spacing="10.0" style="-fx-padding: 30px;">
                     <StackPane fx:id="emptyStateIconContainer" prefWidth="48.0" prefHeight="48.0"/>

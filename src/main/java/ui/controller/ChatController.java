@@ -75,6 +75,9 @@ public class ChatController implements ClientEventListener {
     @FXML private Label connectionStatusLabel;
     @FXML private Circle connectionStatusDot;
     @FXML private Button reconnectBtn;
+    @FXML private HBox serverOfflineBanner;
+    @FXML private Label serverOfflineMessage;
+    @FXML private Button bannerReconnectBtn;
     @FXML private Button logoutBtn;
 
     @FXML private HBox chatHeader;
@@ -123,6 +126,7 @@ public class ChatController implements ClientEventListener {
 
     private CommunityModel activeCommunity = null;
     private UserModel activePeer = null;
+    private boolean syncingUserList;
     private final Map<String, PendingReceipt> pendingReceipts = new HashMap<>();
     private final PauseTransition localTypingTimeout = new PauseTransition(Duration.seconds(2));
     private final PauseTransition remoteTypingTimeout = new PauseTransition(Duration.seconds(5));
@@ -134,16 +138,16 @@ public class ChatController implements ClientEventListener {
 
     @FXML
     public void initialize() {
-        connectionView = new ConnectionStatusView(connectionStatusLabel, connectionStatusDot, reconnectBtn);
-        messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::rejectFileOffer);
+        connectionView = new ConnectionStatusView(connectionStatusLabel, connectionStatusDot, reconnectBtn,
+                serverOfflineBanner, serverOfflineMessage, bannerReconnectBtn);
+        messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::cancelFileTransfer);
         localTypingTimeout.setOnFinished(event -> stopLocalTyping());
         remoteTypingTimeout.setOnFinished(event -> {
             String peer = remoteTypingPeer;
             clearRemoteTyping();
             if (peer != null && currentMode == Mode.DIRECT && activePeer != null
                     && activePeer.getUsername().equalsIgnoreCase(peer)) {
-                targetMetaLabel.setText(adapter.isPeerConnected(peer)
-                        ? "Direct P2P Session Active" : "Peer disconnected");
+                updateDirectPeerStatus();
             }
         });
         messageInput.textProperty().addListener((observable, oldText, newText) -> updateLocalTyping(newText));
@@ -231,7 +235,7 @@ public class ChatController implements ClientEventListener {
         usersListView.setCellFactory(list -> ConversationCells.user());
 
         usersListView.getSelectionModel().selectedItemProperty().addListener((obs, oldV, newV) -> {
-            if (newV != null && currentMode == Mode.DIRECT) {
+            if (newV != null && currentMode == Mode.DIRECT && !syncingUserList) {
                 selectPeerUser(newV);
             }
         });
@@ -321,6 +325,7 @@ public class ChatController implements ClientEventListener {
         else if (!direct && activeCommunity != null && (mode == Mode.EXPLORE || activeCommunity.isJoined())) {
             selectCommunity(activeCommunity);
         } else showEmptyChatState();
+        updateConnectionState();
     }
 
     private void updateRailButton(Button button, Mode mode, String icon) {
@@ -408,8 +413,8 @@ public class ChatController implements ClientEventListener {
         targetStatusDot.setVisible(true);
         targetStatusDot.getStyleClass().clear();
         targetStatusDot.getStyleClass().add(user.isOnline() ? "status-dot-online" : "status-dot-offline");
-        targetMetaLabel.setText(connectedPeer ? "Direct P2P Session Active"
-                : adapter.isServerConnected() ? "Connecting..." : "Cần kết nối server để tìm peer mới");
+        updateDirectPeerStatus();
+        if (!connectedPeer && adapter.isServerConnected()) targetMetaLabel.setText("Connecting...");
 
         joinLeaveCommunityBtn.setVisible(false);
         joinLeaveCommunityBtn.setManaged(false);
@@ -455,7 +460,7 @@ public class ChatController implements ClientEventListener {
     }
 
     private void loadConversation(String convKey) {
-        messagesContainer.getChildren().clear();
+        messageView.clear();
         ObservableList<ChatMessageModel> history = conversations.history(convKey);
         for (ChatMessageModel msg : history) {
             messageView.render(msg);
@@ -495,13 +500,18 @@ public class ChatController implements ClientEventListener {
             messageView.render(msg);
             if (direct) {
                 String messageId = UUID.randomUUID().toString();
+                msg.setMessageId(messageId);
                 trackPendingReceipt(messageId, target, msg);
                 adapter.sendChatMessage(target, text, messageId, error -> {
                     msg.sent(error);
                     if (error != null) clearPendingReceipt(messageId);
+                    else {
+                        PendingReceipt pending = pendingReceipts.get(messageId);
+                        if (pending != null) pending.timeout().playFromStart();
+                    }
                 });
             }
-            else adapter.broadcastMessage(target, text, msg::sent);
+            else adapter.broadcastMessage(target, text, msg::broadcastSent);
         }
 
         for (File file : attachments) {
@@ -546,9 +556,11 @@ public class ChatController implements ClientEventListener {
 
     private void trackPendingReceipt(String messageId, String peer, ChatMessageModel message) {
         PauseTransition timeout = new PauseTransition(Duration.seconds(30));
-        timeout.setOnFinished(event -> pendingReceipts.remove(messageId));
+        timeout.setOnFinished(event -> {
+            PendingReceipt pending = pendingReceipts.remove(messageId);
+            if (pending != null) pending.message().unconfirmed();
+        });
         pendingReceipts.put(messageId, new PendingReceipt(peer, message, timeout));
-        timeout.playFromStart();
     }
 
     private void clearPendingReceipt(String messageId) {
@@ -558,7 +570,10 @@ public class ChatController implements ClientEventListener {
 
     private void clearPendingReceipts(String peer) {
         for (var entry : new ArrayList<>(pendingReceipts.entrySet())) {
-            if (entry.getValue().peer().equalsIgnoreCase(peer)) clearPendingReceipt(entry.getKey());
+            if (entry.getValue().peer().equalsIgnoreCase(peer)) {
+                entry.getValue().message().unconfirmed();
+                clearPendingReceipt(entry.getKey());
+            }
         }
     }
 
@@ -836,33 +851,38 @@ public class ChatController implements ClientEventListener {
             if (adapter.isPeerConnected(existing.getUsername())
                     && updated.stream().noneMatch(user -> user.getUsername().equals(existing.getUsername()))) {
                 existing.setOnline(true);
+                existing.setStatusMessage("P2P còn kết nối");
                 updated.add(existing);
             }
         }
-        allUsers.setAll(updated);
-        if (currentMode == Mode.DIRECT && activePeer != null) {
-            UserModel latestPeer = allUsers.stream()
-                    .filter(user -> user.getUsername().equalsIgnoreCase(activePeer.getUsername()))
-                    .findFirst().orElse(null);
-            if (latestPeer != null) {
-                activePeer = latestPeer;
-                usersListView.getSelectionModel().select(latestPeer);
-            } else {
-                activePeer.setOnline(false);
+        syncingUserList = true;
+        try {
+            allUsers.setAll(updated);
+            if (currentMode == Mode.DIRECT && activePeer != null) {
+                UserModel latestPeer = allUsers.stream()
+                        .filter(user -> user.getUsername().equalsIgnoreCase(activePeer.getUsername()))
+                        .findFirst().orElse(null);
+                if (latestPeer != null) {
+                    activePeer = latestPeer;
+                    usersListView.getSelectionModel().select(latestPeer);
+                } else {
+                    activePeer.setOnline(false);
+                }
+                boolean peerConnected = adapter.isPeerConnected(activePeer.getUsername());
+                targetStatusDot.getStyleClass().setAll(peerConnected ? "status-dot-online" : "status-dot-offline");
+                if (remoteTypingPeer == null || !peerConnected) updateDirectPeerStatus();
             }
-            boolean online = activePeer.isOnline() || adapter.isPeerConnected(activePeer.getUsername());
-            targetStatusDot.getStyleClass().setAll(online ? "status-dot-online" : "status-dot-offline");
-            if (!online) {
-                targetMetaLabel.setText("Peer offline");
-            }
+        } finally {
+            syncingUserList = false;
         }
     }
 
     @Override
     public void onPeerConnected(String peerUsername) {
+        onUserListUpdated(adapter.getLastKnownOnlineUsers());
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
             clearRemoteTyping();
-            targetMetaLabel.setText("Direct P2P Session Active");
+            updateDirectPeerStatus();
             targetStatusDot.setVisible(true);
             targetStatusDot.getStyleClass().clear();
             targetStatusDot.getStyleClass().add("status-dot-online");
@@ -873,7 +893,8 @@ public class ChatController implements ClientEventListener {
     @Override
     public void onPeerConnectionFailed(String peerUsername, String reason) {
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
-            targetMetaLabel.setText("Connection failed: " + reason);
+            if (adapter.isServerConnected()) targetMetaLabel.setText("Connection failed: " + reason);
+            else updateDirectPeerStatus();
         }
     }
 
@@ -885,9 +906,15 @@ public class ChatController implements ClientEventListener {
     @Override
     public void onMessageDelivered(String peerUsername, String messageId) {
         PendingReceipt pending = pendingReceipts.get(messageId);
-        if (pending == null || !pending.peer().equalsIgnoreCase(peerUsername)) return;
-        clearPendingReceipt(messageId);
-        pending.message().delivered();
+        if (pending != null) {
+            if (!pending.peer().equalsIgnoreCase(peerUsername)) return;
+            clearPendingReceipt(messageId);
+            pending.message().delivered();
+        } else {
+            conversations.history(ConversationStore.directKey(peerUsername)).stream()
+                    .filter(message -> message.isMine() && messageId.equals(message.getMessageId()))
+                    .findFirst().ifPresent(ChatMessageModel::delivered);
+        }
     }
 
     @Override
@@ -897,13 +924,13 @@ public class ChatController implements ClientEventListener {
         if (!typing) {
             if (peerUsername.equalsIgnoreCase(remoteTypingPeer)) {
                 clearRemoteTyping();
-                targetMetaLabel.setText(adapter.isPeerConnected(peerUsername)
-                        ? "Direct P2P Session Active" : "Peer disconnected");
+                updateDirectPeerStatus();
             }
             return;
         }
         remoteTypingPeer = peerUsername;
-        targetMetaLabel.setText(peerUsername + " is typing...");
+        targetMetaLabel.setText(peerUsername + " is typing..."
+                + (adapter.isServerConnected() ? "" : " • mất kết nối tới server"));
         remoteTypingTimeout.playFromStart();
     }
 
@@ -938,18 +965,17 @@ public class ChatController implements ClientEventListener {
         clearPendingReceipts(peerUsername);
         if (peerUsername.equalsIgnoreCase(localTypingPeer)) stopLocalTyping();
         if (peerUsername.equalsIgnoreCase(remoteTypingPeer)) clearRemoteTyping();
+        onUserListUpdated(adapter.getLastKnownOnlineUsers());
         if (currentMode == Mode.DIRECT && activePeer != null && activePeer.getUsername().equals(peerUsername)) {
-            targetMetaLabel.setText("Peer disconnected");
+            updateDirectPeerStatus();
             inputContainer.setDisable(true);
         }
     }
 
     @Override
     public void onConnectionClosed() {
+        clearRemoteTyping();
         updateConnectionState();
-        if (currentMode == Mode.DIRECT && activePeer != null && adapter.isPeerConnected(activePeer.getUsername())) {
-            targetMetaLabel.setText("P2P vẫn kết nối • server không khả dụng");
-        }
     }
 
     @FXML
@@ -961,19 +987,27 @@ public class ChatController implements ClientEventListener {
 
     private void updateConnectionState() {
         boolean ready = adapter.isServerConnected() && !adapter.isReconnecting();
-        connectionView.render(adapter.connectionState());
+        connectionView.render(adapter.connectionState(), currentMode != Mode.DIRECT);
         addCommunityBtn.setDisable(!ready);
         joinLeaveCommunityBtn.setDisable(!ready);
         if (currentMode == Mode.DIRECT) {
             inputContainer.setDisable(activePeer == null || !adapter.isPeerConnected(activePeer.getUsername()));
+            if (remoteTypingPeer == null || !ready) updateDirectPeerStatus();
         } else inputContainer.setDisable(!ready || activeCommunity == null || !activeCommunity.isJoined());
+    }
+
+    private void updateDirectPeerStatus() {
+        if (currentMode != Mode.DIRECT || activePeer == null) return;
+        boolean peerConnected = adapter.isPeerConnected(activePeer.getUsername());
+        targetStatusDot.getStyleClass().setAll(peerConnected ? "status-dot-online" : "status-dot-offline");
+        targetMetaLabel.setText(peerConnected ? "Online" : "Offline");
     }
 
     @Override public void onReconnecting() { updateConnectionState(); }
     @Override public void onReconnected() {
         updateConnectionState();
-        if (currentMode == Mode.DIRECT && activePeer != null && adapter.isPeerConnected(activePeer.getUsername())) {
-            targetMetaLabel.setText("Direct P2P Session Active");
+        if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.isJoined()) {
+            adapter.selectCommunity(activeCommunity.getId());
         }
     }
     @Override public void onReconnectFailed(String reason) {

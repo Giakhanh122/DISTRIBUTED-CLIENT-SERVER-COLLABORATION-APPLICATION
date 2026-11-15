@@ -1,7 +1,7 @@
 package client.peer;
 
-import protocols.ConnectionType;
-import protocols.FileType;
+import protocols.type.ConnectionType;
+import protocols.type.FileType;
 
 import client.security.ServerKeyPinning;
 import java.io.IOException;

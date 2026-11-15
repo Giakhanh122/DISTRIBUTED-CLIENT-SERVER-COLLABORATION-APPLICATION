@@ -103,6 +103,7 @@ AES-GCM. Kết nối chỉ xử lý đăng nhập sau khi xác nhận khóa thà
    rồi trả CONNECTION/PEER_HELLO_ACK.
 5. Alice kiểm tra proof Bob. Hai bên dẫn xuất khóa và trao đổi SYSTEM/KEY_CONFIRM/ACK.
 6. Công bố kết nối P2P, gửi CHAT/MESSAGE hoặc FILE/OFFER trực tiếp.
+7. Reader hiện có xử lý SYSTEM/PING/PONG cho heartbeat riêng từng peer (5s/30s).
 
 Hai peer đều tin public key Ed25519 server đã pin. Server ký xác nhận danh tính
 và public key; nội dung chat P2P không đi qua server.
@@ -164,6 +165,7 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
 | [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Hủy transfer theo ID, đóng socket dữ liệu và dọn file tải dở. |
 | [FILE/TRANSFER_START](#file-transfer-start) | P sender → P receiver, socket file | Chọn transfer đã được chấp nhận trên socket dữ liệu mới. |
 | [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
 | [FILE/BROADCAST_UPLOAD_REQUEST](#file-broadcast-upload-request) | C → S, kênh quản lý | Xin upload file vào community mà người gửi là thành viên. |
@@ -205,6 +207,7 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
 | [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Hủy transfer theo ID, đóng socket dữ liệu và dọn file tải dở. |
 | [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
 | [FILE/END](#file-end) | Bên gửi file → bên nhận file | Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng. |
 | [FILE/RESULT](#file-result) | Bên nhận file → bên gửi file | Trả kết quả sau khi kiểm tra checksum và lưu file. |
@@ -2171,3 +2174,76 @@ Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từ
 Bố cục tổng quan kết nối tham khảo [Discord Gateway](https://docs.discord.com/developers/events/gateway).
 Cách mô tả event bằng Structure và Example tham khảo [Discord Gateway Events](https://docs.discord.com/developers/events/gateway-events).
 Các opcode, field, trạng thái và ví dụ trong tài liệu này mô tả ứng dụng DLP.
+
+
+## Hủy file, tiến trình và trạng thái hiện tại
+
+### FILE/CANCEL
+
+**Opcode:** `5` · **Direction:** một peer → peer còn lại, trên kênh chat P2P đã mã hóa.
+
+```json
+{"opcode":5,"sequence":20,"body":{"type":"CANCEL","transferId":"8f38b564-4b4f-46ae-94c1-2a9d7b5f0011"}}
+```
+
+Không phải ACK, không có `replyTo`. Chỉ áp dụng transfer thuộc đúng kết nối peer.
+Đóng transfer đã kết thúc không xóa file đã nhận hoàn chỉnh. Nếu transfer còn
+hoạt động, đổi session sang CANCELED, đóng socket dữ liệu riêng và dọn file tạm.
+FILE/CANCEL không đóng kênh chat. Hai peer phải chạy bản hỗ trợ event này.
+
+Với community, hủy được thực hiện cục bộ theo ID tác vụ: đóng đúng socket upload
+hoặc download; không đóng control socket. Receiver xóa `.transfer-*.tmp`; server
+xóa `.upload-*.tmp` khi upload lỗi. Không xóa file nguồn dùng chung của người khác.
+Nếu file đã được lưu hoàn chỉnh trước khi yêu cầu hủy được xử lý, kết quả COMPLETED
+được giữ. Lỗi cleanup được báo riêng. Hủy khi đang đợi response quản lý sẽ chặn
+bước mở socket dữ liệu kế tiếp, không ngắt reader quản lý dùng chung.
+
+Tiến trình tính bằng `transferred / total`. Tốc độ lấy từ chênh lệch byte theo
+`System.nanoTime`, làm mượt và cập nhật tối đa khoảng 4 lần/giây (ngoài mẫu đầu/cuối).
+ETA = byte còn lại / tốc độ ước tính. 100% byte chưa đồng nghĩa hoàn tất: vẫn cần
+checksum và FILE/RESULT hợp lệ. Các số đo là event nội bộ, không thêm frame progress.
+
+### Trạng thái phiên server
+
+```mermaid
+stateDiagram-v2
+    [*] --> CONNECTING
+    CONNECTING --> ONLINE: handshake + key confirm + login OK
+    CONNECTING --> CLOSED: login lỗi / đóng
+    ONLINE --> SERVER_OFFLINE: EOF / timeout / lỗi socket
+    SERVER_OFFLINE --> RECONNECTING: nhập mật khẩu
+    RECONNECTING --> ONLINE: xác thực lại thành công
+    RECONNECTING --> SERVER_OFFLINE: thất bại
+    ONLINE --> CLOSED: logout
+    SERVER_OFFLINE --> CLOSED: logout
+    RECONNECTING --> CLOSED: logout
+```
+
+Server giữ chỗ username trước khi gửi LOGIN_RESPONSE, nhưng chỉ kích hoạt session
+sau khi gửi xong phản hồi. Presence/broadcast/user list chỉ dùng session đã kích
+hoạt, nên sự kiện chủ động không chen trước phản hồi đăng nhập khi nhiều client vào cùng lúc.
+
+### Trạng thái file
+
+```mermaid
+stateDiagram-v2
+    [*] --> OFFERED
+    OFFERED --> ACCEPTED: bấm tải / DECISION ACCEPT
+    OFFERED --> REJECTED: DECISION REJECT (CLI)
+    OFFERED --> FAILED: hết hạn / lỗi
+    ACCEPTED --> TRANSFERRING: socket dữ liệu + key confirm
+    TRANSFERRING --> COMPLETED: đủ byte + checksum + xác nhận
+    OFFERED --> CANCELED: CANCEL
+    ACCEPTED --> CANCELED: CANCEL
+    TRANSFERRING --> CANCELED: CANCEL + cleanup
+    ACCEPTED --> FAILED: timeout / lỗi
+    TRANSFERRING --> FAILED: socket / checksum / cleanup lỗi
+```
+
+Session truyền không có state EXPIRED riêng: timeout OFFERED kết thúc session
+bằng FAILED, nhưng event client và GUI dùng EXPIRED (“File đã hết hạn”). GUI còn
+có CANCELING trong thời gian worker đang dọn; chỉ CANCELED khi tác vụ đã dừng.
+Không phát lại dữ liệu cũ, không resume và không giới hạn số file đồng thời.
+
+Phạm vi hiện tại giữ P2P + community; không triển khai global chat/server relay
+cho tin riêng trong đợt hoàn thiện này. Tham khảo README cho lệnh kiểm thử và giới hạn xác minh.

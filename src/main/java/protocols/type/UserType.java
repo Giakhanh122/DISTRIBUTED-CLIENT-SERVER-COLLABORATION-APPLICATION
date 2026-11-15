@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the USER opcode group. */
 public enum UserType implements MessageType {

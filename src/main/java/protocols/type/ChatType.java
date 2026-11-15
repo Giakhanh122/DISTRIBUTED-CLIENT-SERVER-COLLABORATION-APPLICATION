@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the CHAT opcode group. */
 public enum ChatType implements MessageType {

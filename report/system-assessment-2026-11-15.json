@@ -1,0 +1,628 @@
+{
+  "evaluatedAt": "2026-11-15T16:14:54+07:00",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "commit": "12896c9fceaafe98e0552e5ec9f9fd9e00e5cc4c",
+  "mainJavaSourceSha256": "71100e8c9b10c051bdbde996bc44a2fe9bf0b6c7407e23b9e93571fb24448c11",
+  "temporarySuiteSha256": "6f49f42bee2bf45f6a2960e0d2e59890b53c3cadfd7c3ea22bda0e702880467a",
+  "counts": {
+    "PASS": 68,
+    "FAIL": 4
+  },
+  "total": 72,
+  "methodCounts": {
+    "liveIntegration": 70,
+    "cryptoComponent": 1,
+    "sourceAssertion": 1
+  },
+  "existingRegressionTests": {
+    "passed": 12,
+    "failed": 0,
+    "command": "mvn -o test"
+  },
+  "executions": [
+    {
+      "stage": "results",
+      "cases": 63,
+      "counts": {
+        "PASS": 54,
+        "ERROR": 5,
+        "FAIL": 4
+      }
+    },
+    {
+      "stage": "rerun",
+      "cases": 12,
+      "counts": {
+        "PASS": 12
+      }
+    },
+    {
+      "stage": "confirm",
+      "cases": 7,
+      "counts": {
+        "FAIL": 4,
+        "PASS": 3
+      }
+    }
+  ],
+  "runnerCorrection": "5 initial ERROR results were a null dereference in test helper when receiving EOF; all 5 reran PASS after correcting only the helper. Final result uses latest execution per case.",
+  "cleanup": "Temporary assessment suite, compiled classes, fixtures and raw logs removed after report generation; pre-existing repository regression tests preserved.",
+  "cases": [
+    {
+      "id": "A01",
+      "title": "Đăng nhập hợp lệ",
+      "expected": "Tài khoản hợp lệ mở được phiên và gọi danh sách online",
+      "status": "PASS",
+      "actual": "Login + users successful",
+      "durationMs": 183
+    },
+    {
+      "id": "A02",
+      "title": "Sai mật khẩu",
+      "expected": "Từ chối xác thực, không tạo phiên",
+      "status": "PASS",
+      "actual": "Rejected; no user session",
+      "durationMs": 35
+    },
+    {
+      "id": "A03",
+      "title": "Không dò tài khoản bằng lỗi login",
+      "expected": "Username không tồn tại và sai password trả lỗi chung",
+      "status": "PASS",
+      "actual": "Both return INVALID_CREDENTIALS",
+      "durationMs": 46
+    },
+    {
+      "id": "A04",
+      "title": "Trường login rỗng",
+      "expected": "Không tạo phiên với username/password rỗng",
+      "status": "PASS",
+      "actual": "Empty username rejected",
+      "durationMs": 22
+    },
+    {
+      "id": "A05",
+      "title": "Chặn thao tác trước login",
+      "expected": "Chưa xác thực không lấy được user list",
+      "status": "PASS",
+      "actual": "Pre-auth management rejected",
+      "durationMs": 123
+    },
+    {
+      "id": "A06",
+      "title": "Phiên trùng không chiếm tài khoản",
+      "expected": "Login thứ hai không đẩy phiên hiện tại ra",
+      "status": "PASS",
+      "actual": "Duplicate denied, original alive",
+      "durationMs": 35
+    },
+    {
+      "id": "A07",
+      "title": "Logout vô hiệu hóa phiên",
+      "expected": "Sau logout không dùng lại socket, tài khoản có thể login lại",
+      "status": "PASS",
+      "actual": "Socket closed; relogin successful",
+      "durationMs": 53
+    },
+    {
+      "id": "A08",
+      "title": "Đăng nhập trùng đồng thời",
+      "expected": "Chỉ một phiên hợp lệ được tạo khi 6 lần login chạy đồng thời",
+      "status": "PASS",
+      "actual": "Exactly 1 of 6 accepted",
+      "durationMs": 25
+    },
+    {
+      "id": "A09",
+      "title": "Chống dò password",
+      "expected": "Tiêu chí đánh giá: 20 lần sai nhanh phải gặp throttle/lockout/challenge hoặc delay đáng kể",
+      "status": "FAIL",
+      "actual": "20 wrong-password attempts accepted for checking in 255ms; statuses=[INVALID_CREDENTIALS]",
+      "durationMs": 293
+    },
+    {
+      "id": "A10",
+      "title": "Server giả không được tin",
+      "expected": "Khóa pin không khớp phải từ chối handshake",
+      "status": "PASS",
+      "actual": "Mismatched server identity rejected",
+      "durationMs": 10
+    },
+    {
+      "id": "M01",
+      "title": "Tin nhắn Unicode giữ nguyên",
+      "expected": "Nội dung đa ngôn ngữ/emoji/newline không hỏng",
+      "status": "PASS",
+      "actual": "Exact Unicode round-trip",
+      "durationMs": 60
+    },
+    {
+      "id": "M02",
+      "title": "Chat hai chiều",
+      "expected": "Cả hai bên nhận đúng tin",
+      "status": "PASS",
+      "actual": "Both directions delivered",
+      "durationMs": 33
+    },
+    {
+      "id": "M03",
+      "title": "Giữ thứ tự và không trùng",
+      "expected": "300 tin liên tiếp phải đến đúng thứ tự, không mất/trùng",
+      "status": "PASS",
+      "actual": "300/300 ordered; elapsed=213ms (localhost)",
+      "durationMs": 247
+    },
+    {
+      "id": "M04",
+      "title": "Không lộ tin cho người thứ ba",
+      "expected": "Tin Alice→Bob không được chuyển tới user khác",
+      "status": "PASS",
+      "actual": "Only intended recipient received",
+      "durationMs": 309
+    },
+    {
+      "id": "M05",
+      "title": "Không gửi nhầm sau chọn peer lỗi",
+      "expected": "Chọn peer không tồn tại phải bỏ đích cũ",
+      "status": "PASS",
+      "actual": "Stale selection cleared",
+      "durationMs": 245
+    },
+    {
+      "id": "M06",
+      "title": "Người nhận offline có kết quả rõ",
+      "expected": "Không âm thầm thành công khi người nhận offline",
+      "status": "PASS",
+      "actual": "Sender receives offline failure",
+      "durationMs": 10
+    },
+    {
+      "id": "M07",
+      "title": "Payload lớn không phá kênh tốt",
+      "expected": "Vượt giới hạn phải từ chối, tin hợp lệ tiếp theo vẫn gửi được",
+      "status": "PASS",
+      "actual": "Oversized rejected; next message delivered",
+      "durationMs": 34
+    },
+    {
+      "id": "M08",
+      "title": "Biên kích thước Unicode",
+      "expected": "Tin đúng 65536 byte được giữ nguyên",
+      "status": "PASS",
+      "actual": "65536 UTF-8 bytes delivered intact",
+      "durationMs": 34
+    },
+    {
+      "id": "M09",
+      "title": "Chat đồng thời hai chiều",
+      "expected": "2 luồng gửi 100 tin mỗi chiều không mất/trùng",
+      "status": "PASS",
+      "actual": "200/200 delivered in per-direction order",
+      "durationMs": 69
+    },
+    {
+      "id": "M10",
+      "title": "Không giả danh sender",
+      "expected": "Field sender giả không được thay danh tính người gửi",
+      "status": "PASS",
+      "actual": "Identity remains authenticated alice",
+      "durationMs": 26
+    },
+    {
+      "id": "M11",
+      "title": "Quyền riêng tư metadata DM",
+      "expected": "Tiêu chí riêng tư: user ngoài cuộc không liệt kê UUID và người tham gia DM khác",
+      "status": "FAIL",
+      "actual": "Unrelated user sees Alice/Bob private session metadata: [{\"sessionId\":\"fa07b055-aafd-4371-bc36-4415f82769b7\",\"userA\":\"alice\",\"userB\":\"bob\",\"state\":\"CONNECTED\"}]",
+      "durationMs": 242
+    },
+    {
+      "id": "G01",
+      "title": "Tạo/tham gia/xem nhóm",
+      "expected": "Nhóm có đúng thành viên, tạo nhóm không mất danh tính owner",
+      "status": "PASS",
+      "actual": "2 members; owner preserved",
+      "durationMs": 54
+    },
+    {
+      "id": "G02",
+      "title": "Broadcast chỉ tới thành viên",
+      "expected": "Không rò tin nhóm cho người ngoài",
+      "status": "PASS",
+      "actual": "Members-only fan-out",
+      "durationMs": 269
+    },
+    {
+      "id": "G03",
+      "title": "Người ngoài không gửi vào nhóm",
+      "expected": "Bypass client vẫn bị server chặn",
+      "status": "PASS",
+      "actual": "Unauthorized group send rejected",
+      "durationMs": 200
+    },
+    {
+      "id": "G04",
+      "title": "Chặn xem danh sách thành viên trái quyền",
+      "expected": "Người chưa join không lấy được member list",
+      "status": "PASS",
+      "actual": "NOT_MEMBER",
+      "durationMs": 24
+    },
+    {
+      "id": "G05",
+      "title": "Rời nhóm ngừng nhận tin",
+      "expected": "Sau leave không còn nhận tin mới",
+      "status": "PASS",
+      "actual": "No post-leave delivery",
+      "durationMs": 280
+    },
+    {
+      "id": "G06",
+      "title": "Owner rời không làm nhóm mồ côi",
+      "expected": "Nhóm còn thành viên phải có owner hợp lệ",
+      "status": "PASS",
+      "actual": "Ownership transferred to remaining member",
+      "durationMs": 21
+    },
+    {
+      "id": "G07",
+      "title": "Validation tên nhóm",
+      "expected": "Tên rỗng/quá dài bị từ chối, kết nối còn sống",
+      "status": "PASS",
+      "actual": "Invalid names rejected without session loss",
+      "durationMs": 7
+    },
+    {
+      "id": "G08",
+      "title": "Không giả sender broadcast",
+      "expected": "Server phải lấy sender từ phiên đã xác thực",
+      "status": "PASS",
+      "actual": "Sender bound to bob session",
+      "durationMs": 47
+    },
+    {
+      "id": "G09",
+      "title": "Dữ liệu nhóm bền qua server restart",
+      "expected": "Baseline sản phẩm: tạo nhóm không mất khi server khởi động lại",
+      "status": "FAIL",
+      "actual": "Community disappears after new server instance; only RAM registry",
+      "durationMs": 20
+    },
+    {
+      "id": "F01",
+      "title": "File toàn vẹn 0 byte",
+      "expected": "Chỉ hoàn tất sau khi receiver lưu đủ dữ liệu đúng checksum",
+      "status": "PASS",
+      "actual": "0 exact bytes saved; sender and receiver completed",
+      "durationMs": 63
+    },
+    {
+      "id": "F02",
+      "title": "File toàn vẹn 7 byte",
+      "expected": "Chỉ hoàn tất sau khi receiver lưu đủ dữ liệu đúng checksum",
+      "status": "PASS",
+      "actual": "7 exact bytes saved; sender and receiver completed",
+      "durationMs": 78
+    },
+    {
+      "id": "F03",
+      "title": "File toàn vẹn 200000 byte",
+      "expected": "Chỉ hoàn tất sau khi receiver lưu đủ dữ liệu đúng checksum",
+      "status": "PASS",
+      "actual": "200000 exact bytes saved; sender and receiver completed",
+      "durationMs": 89
+    },
+    {
+      "id": "F04",
+      "title": "Từ chối file",
+      "expected": "Reject không tạo file và sender được báo rejected",
+      "status": "PASS",
+      "actual": "Rejected; no output file",
+      "durationMs": 50
+    },
+    {
+      "id": "F05",
+      "title": "Không ghi đè file cùng tên",
+      "expected": "Hai file cùng tên giữ được cả hai nội dung",
+      "status": "PASS",
+      "actual": "Distinct destinations preserved",
+      "durationMs": 173
+    },
+    {
+      "id": "F06",
+      "title": "File lỗi checksum không được công bố",
+      "expected": "Sai nội dung bị từ chối, dọn temp, chat vẫn dùng được",
+      "status": "PASS",
+      "actual": "Corrupt transfer failed; no final/temp; chat alive",
+      "durationMs": 73
+    },
+    {
+      "id": "F07",
+      "title": "Path traversal qua tên file",
+      "expected": "Tên ../ không được ghi ra ngoài thư mục nhận",
+      "status": "PASS",
+      "actual": "Sanitized and contained in receiver directory",
+      "durationMs": 90
+    },
+    {
+      "id": "F08",
+      "title": "Offer giả danh bị từ chối",
+      "expected": "Peer Alice không được gửi offer với sender Bob",
+      "status": "PASS",
+      "actual": "Forged participant rejected; chat alive",
+      "durationMs": 342
+    },
+    {
+      "id": "F09",
+      "title": "Truyền file đồng thời không lẫn",
+      "expected": "3 transfer đồng thời, mỗi file đúng nội dung",
+      "status": "PASS",
+      "actual": "3 concurrent files preserved",
+      "durationMs": 148
+    },
+    {
+      "id": "F10",
+      "title": "Chat còn đáp ứng trong lúc gửi file",
+      "expected": "Gửi 4MiB file không chặn tin nhắn điều khiển",
+      "status": "PASS",
+      "actual": "Chat latency=0ms during 4MiB transfer",
+      "durationMs": 130
+    },
+    {
+      "id": "F11",
+      "title": "Socket giả không chiếm lượt file",
+      "expected": "Biết transferId nhưng không có khóa không được phá offer hợp lệ",
+      "status": "PASS",
+      "actual": "Bad-key socket rejected; legitimate same offer completed",
+      "durationMs": 224
+    },
+    {
+      "id": "F12",
+      "title": "Quyết định file không dùng lại",
+      "expected": "Accept lại offer đã xong phải bị từ chối",
+      "status": "PASS",
+      "actual": "Completed offer cannot be accepted twice",
+      "durationMs": 114
+    },
+    {
+      "id": "F13",
+      "title": "File bị cắt giữa chừng không báo hoàn tất",
+      "expected": "EOF giữa file phải FAIL, không để file cuối hay temp",
+      "status": "PASS",
+      "actual": "Mid-file disconnect failed and cleaned output",
+      "durationMs": 46
+    },
+    {
+      "id": "B01",
+      "title": "Broadcast file toàn vẹn",
+      "expected": "Upload/download qua server đúng byte và chỉ người nhận được lưu file",
+      "status": "PASS",
+      "actual": "120000 bytes uploaded, downloaded and confirmed",
+      "durationMs": 131
+    },
+    {
+      "id": "B02",
+      "title": "Chặn upload người ngoài nhóm",
+      "expected": "Người ngoài không lấy được upload token",
+      "status": "PASS",
+      "actual": "NOT_MEMBER",
+      "durationMs": 11
+    },
+    {
+      "id": "B03",
+      "title": "Chặn download người ngoài nhóm",
+      "expected": "Biết fileId không đủ để lấy download token",
+      "status": "PASS",
+      "actual": "NOT_AUTHORIZED",
+      "durationMs": 69
+    },
+    {
+      "id": "B04",
+      "title": "Upload token dùng một lần",
+      "expected": "Replay token upload đã dùng phải bị từ chối",
+      "status": "PASS",
+      "actual": "Initial upload OK; replay FAIL",
+      "durationMs": 61
+    },
+    {
+      "id": "B05",
+      "title": "Rời nhóm làm mất quyền tải đã cấp",
+      "expected": "Token còn trong tay không được vượt qua membership đã thu hồi",
+      "status": "PASS",
+      "actual": "Previously granted token denied after leave",
+      "durationMs": 65
+    },
+    {
+      "id": "B06",
+      "title": "Metadata file sai kích thước",
+      "expected": "Server chặn kích thước âm hoặc vượt hạn, không cấp token",
+      "status": "PASS",
+      "actual": "Negative and over-limit sizes denied",
+      "durationMs": 12
+    },
+    {
+      "id": "B07",
+      "title": "Token download giả bị chặn",
+      "expected": "Tự chọn fileId/token không được lấy dữ liệu",
+      "status": "PASS",
+      "actual": "Forged capability rejected",
+      "durationMs": 19
+    },
+    {
+      "id": "R01",
+      "title": "P2P còn hoạt động khi mất server",
+      "expected": "Kênh quản lý mất không phá đường P2P đã có",
+      "status": "PASS",
+      "actual": "Server connections lost; P2P message delivered",
+      "durationMs": 21
+    },
+    {
+      "id": "R02",
+      "title": "Reconnect không làm mất peer đang mở",
+      "expected": "Đăng nhập lại dùng được quản lý và P2P, không tự giữ password",
+      "status": "PASS",
+      "actual": "Management restored; original peer usable",
+      "durationMs": 28
+    },
+    {
+      "id": "R03",
+      "title": "Reconnect sai password không hồi sinh phiên",
+      "expected": "Giữ offline sau sai password, cho phép thử lại đúng",
+      "status": "PASS",
+      "actual": "Wrong rejected; later valid retry successful",
+      "durationMs": 18
+    },
+    {
+      "id": "R04",
+      "title": "Peer đóng được phát hiện và có thể mở lại",
+      "expected": "Không giữ peer chết như một kết nối dùng được",
+      "status": "PASS",
+      "actual": "Dead peer removed; new session works",
+      "durationMs": 36
+    },
+    {
+      "id": "R05",
+      "title": "Heartbeat duy trì kênh yên lặng",
+      "expected": "Client không bị ngắt sai sau các vòng heartbeat",
+      "status": "PASS",
+      "actual": "2 heartbeat intervals + management request passed",
+      "durationMs": 10516
+    },
+    {
+      "id": "R06",
+      "title": "Thu hồi phiên im lặng",
+      "expected": "Client không trả heartbeat phải bị đóng trong khoảng 36 giây",
+      "status": "PASS",
+      "actual": "Unresponsive authenticated session evicted in 35010ms",
+      "durationMs": 35023
+    },
+    {
+      "id": "R07",
+      "title": "Kết nối P2P giao nhau không làm kẹt",
+      "expected": "Hai peer chủ động cùng lúc cuối cùng còn một đường dùng được",
+      "status": "PASS",
+      "actual": "Crossed connects converge; message delivered",
+      "durationMs": 82
+    },
+    {
+      "id": "R08",
+      "title": "Logout không được hồi sinh",
+      "expected": "Session đã CLOSED không thể reconnect",
+      "status": "PASS",
+      "actual": "Closed session remains CLOSED",
+      "durationMs": 14
+    },
+    {
+      "id": "R09",
+      "title": "UDP discovery phản hồi endpoint hợp lệ",
+      "expected": "Yêu cầu discovery hợp lệ nhận được TCP endpoint của server",
+      "status": "PASS",
+      "actual": "Actual server UDP handler returns live TCP endpoint (loopback, ephemeral UDP port)",
+      "durationMs": 11
+    },
+    {
+      "id": "S01",
+      "title": "Duplicate JSON field",
+      "expected": "Từ chối dữ liệu mơ hồ/không hợp lệ và không làm server chết",
+      "status": "PASS",
+      "actual": "Malformed connection rejected; subsequent login alive",
+      "durationMs": 7
+    },
+    {
+      "id": "S02",
+      "title": "Type thuộc nhóm khác",
+      "expected": "Từ chối dữ liệu mơ hồ/không hợp lệ và không làm server chết",
+      "status": "PASS",
+      "actual": "Malformed connection rejected; subsequent login alive",
+      "durationMs": 5
+    },
+    {
+      "id": "S03",
+      "title": "Sequence bỏ bước",
+      "expected": "Từ chối dữ liệu mơ hồ/không hợp lệ và không làm server chết",
+      "status": "PASS",
+      "actual": "Malformed connection rejected; subsequent login alive",
+      "durationMs": 7
+    },
+    {
+      "id": "S04",
+      "title": "Opcode không hợp lệ",
+      "expected": "Từ chối dữ liệu mơ hồ/không hợp lệ và không làm server chết",
+      "status": "PASS",
+      "actual": "Malformed connection rejected; subsequent login alive",
+      "durationMs": 6
+    },
+    {
+      "id": "S05",
+      "title": "Ciphertext bị sửa bị từ chối",
+      "expected": "Sửa một byte trên mạng phải ngăn thao tác và đóng socket",
+      "status": "PASS",
+      "actual": "Unauthenticated ciphertext rejected; no session created",
+      "durationMs": 62
+    },
+    {
+      "id": "S06",
+      "title": "Handshake chậm không làm cạn server ở tải nhỏ",
+      "expected": "32 socket không hoàn tất handshake không chặn login hợp lệ",
+      "status": "PASS",
+      "actual": "Login served with 32 stalled sockets, 9ms",
+      "durationMs": 31
+    },
+    {
+      "id": "S07",
+      "title": "Không chấp nhận đổi username trên phiên",
+      "expected": "Gửi lại login để đổi tài khoản trên socket đã auth bị từ chối",
+      "status": "PASS",
+      "actual": "Reauthentication opcode rejected on active socket",
+      "durationMs": 23
+    },
+    {
+      "id": "S08",
+      "title": "Khóa peer gắn đúng danh tính",
+      "expected": "Peer proof hợp lệ của Alice không được dùng như proof Bob",
+      "status": "PASS",
+      "actual": "Wrong username/session binding rejected",
+      "durationMs": 7
+    },
+    {
+      "id": "S09",
+      "title": "Replay record không được xử lý lần hai",
+      "expected": "Replay ciphertext đã nhận phải bị chặn bởi counter/sequence",
+      "status": "PASS",
+      "actual": "Record encrypted at counter 0 rejected at counter 1 (component check)",
+      "durationMs": 2
+    },
+    {
+      "id": "S10",
+      "title": "Không giữ password dạng rõ trong nguồn",
+      "expected": "Theo baseline triển khai thật, credentials phải được hash và không hardcode",
+      "status": "FAIL",
+      "actual": "Hardcoded demo passwords and plaintext comparison in AuthService.java",
+      "durationMs": 1
+    },
+    {
+      "id": "S11",
+      "title": "Password và payload login không xuất hiện rõ trên dây",
+      "expected": "Proxy thụ động không thấy password hoặc tên event đăng nhập dạng rõ",
+      "status": "PASS",
+      "actual": "605 bytes captured; no plaintext password/login body",
+      "durationMs": 15
+    },
+    {
+      "id": "S12",
+      "title": "Không downgrade giao thức cũ",
+      "expected": "Handshake version không hỗ trợ không được tiếp tục đăng nhập",
+      "status": "PASS",
+      "actual": "Old protocol version rejected: UNSUPPORTED_PROTOCOL_VERSION",
+      "durationMs": 2
+    },
+    {
+      "id": "S13",
+      "title": "Frame quá lớn không cấp phát vô hạn",
+      "expected": "Length cực lớn phải bị từ chối, server tiếp tục phục vụ",
+      "status": "PASS",
+      "actual": "Oversized length rejected before payload allocation",
+      "durationMs": 11
+    }
+  ]
+}

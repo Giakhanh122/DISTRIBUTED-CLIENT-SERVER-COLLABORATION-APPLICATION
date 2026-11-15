@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the SYSTEM opcode group. */
 public enum SystemType implements MessageType {

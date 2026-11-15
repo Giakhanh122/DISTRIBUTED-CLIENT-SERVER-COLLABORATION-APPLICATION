@@ -1,6 +1,6 @@
 package client.connection;
 
-import protocols.MessageType;
+import protocols.type.MessageType;
 
 import java.io.IOException;
 import java.util.Objects;

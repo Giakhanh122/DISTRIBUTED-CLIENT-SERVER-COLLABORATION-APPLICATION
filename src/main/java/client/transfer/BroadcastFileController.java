@@ -1,10 +1,11 @@
 package client.transfer;
 
-import protocols.FileType;
-import protocols.MessageType;
+import protocols.type.FileType;
+import protocols.type.MessageType;
 
 import client.ClientEvents;
 import client.Client;
+import client.security.ServerKeyPinning;
 import client.community.CommunityClient;
 import client.connection.ServerConnection;
 
@@ -41,24 +42,29 @@ public final class BroadcastFileController implements AutoCloseable {
     private final int port;
     private final String username;
     private final File downloadDir;
+    private final Client dataClient;
     private final LongSupplier nextOfferNumber;
     private final Object lifecycleLock = new Object();
     private final Map<String, Offer> offers = new HashMap<>();
     private final Map<String, String> offerIds = new HashMap<>();
     private final Set<Socket> sockets = new HashSet<>();
+    private final Map<String, Socket> transferSockets = new HashMap<>();
+    private final Set<String> canceledIds = new HashSet<>();
     private final Map<String, FileTransferSession> sessions = new HashMap<>();
     private final Set<Thread> workers = new HashSet<>();
     private final Set<String> activeIds = new HashSet<>();
     private volatile boolean closed;
 
     public BroadcastFileController(ServerConnection server, String host, int port,
-                            String username, LongSupplier nextOfferNumber, ClientEvents events) {
+                            String username, LongSupplier nextOfferNumber, ClientEvents events,
+                            File downloadDirectory, ServerKeyPinning serverKeyPinning) {
         this.events = events;
         this.server = server;
         this.host = host;
         this.port = port;
         this.username = username;
-        this.downloadDir = new File("downloads/" + username);
+        this.downloadDir = downloadDirectory;
+        this.dataClient = new Client(serverKeyPinning);
         this.nextOfferNumber = nextOfferNumber;
     }
 
@@ -84,11 +90,39 @@ public final class BroadcastFileController implements AutoCloseable {
     }
 
     public boolean accept(String number) throws IOException {
-        Offer offer = claim(number);
-        if (offer == null) return false;
-        events.onFileState(offer.fileId(), ClientEvents.FileState.TRANSFERRING, "Downloading from server");
-        startWorker(offer.fileId(), "[BROADCAST DOWNLOAD ERROR] ", () -> downloadFile(offer));
-        return true;
+        synchronized (lifecycleLock) {
+            Offer offer = claim(number);
+            if (offer == null) return false;
+            events.onFileState(offer.fileId(), ClientEvents.FileState.TRANSFERRING, "Downloading from server");
+            startWorker(offer.fileId(), "[BROADCAST DOWNLOAD ERROR] ", () -> downloadFile(offer));
+            return true;
+        }
+    }
+
+    public boolean cancel(String id) {
+        synchronized (lifecycleLock) {
+            if (!activeIds.contains(id)) {
+                if (offers.remove(id) == null) return false;
+                offerIds.values().removeIf(id::equals);
+                events.onFileState(id, ClientEvents.FileState.CANCELED, "Đã hủy truyền file");
+                return true;
+            }
+            FileTransferSession session = sessions.get(id);
+            if (session != null) {
+                synchronized (session) {
+                    if (session.isTerminal()) return true;
+                    session.cancel();
+                }
+            }
+            if (!canceledIds.add(id)) return true;
+            events.onFileState(id, ClientEvents.FileState.CANCELING, "Đang hủy truyền file");
+            Socket socket = transferSockets.get(id);
+            if (socket != null) {
+                try { socket.close(); }
+                catch (IOException e) { System.err.println("Cannot close canceled transfer: " + e.getMessage()); }
+            }
+            return true;
+        }
     }
 
     public boolean reject(String number) throws IOException {
@@ -128,14 +162,14 @@ public final class BroadcastFileController implements AutoCloseable {
                 Json.object("communityId", community.id(), "fileName", file.getName(),
                         "fileSize", size, "checksum", checksum)), FileType.BROADCAST_UPLOAD_RESPONSE);
         String fileId = response.string("fileId");
-        Socket socket = openDataSocket();
+        Socket socket = openDataSocket(id);
         try (socket) {
-            PacketChannel channel = new Client().secureChannel(socket);
+            PacketChannel channel = dataClient.secureChannel(socket);
             channel.send(Packet.json(FileType.BROADCAST_UPLOAD_START,
                     Json.object("fileId", fileId, "uploadToken", response.string("uploadToken"))));
             FileTransferSession upload = trackSession(new FileTransferMeta(fileId, username, community.name(),
                     file.getName(), size, checksum), id);
-            FileSender sender = new FileSender(file, fileId, channel, upload, null);
+            FileSender sender = new FileSender(file, fileId, channel, upload, new FileProgress(events, id));
             sender.send();
             sender.awaitResult();
         } finally {
@@ -147,15 +181,15 @@ public final class BroadcastFileController implements AutoCloseable {
     private void downloadFile(Offer offer) throws IOException {
         Packet response = request(Packet.json(FileType.BROADCAST_DECISION,
                 Json.object("fileId", offer.fileId(), "decision", "ACCEPT")), FileType.BROADCAST_DOWNLOAD_RESPONSE);
-        Socket socket = openDataSocket();
+        Socket socket = openDataSocket(offer.fileId());
         try (socket) {
-            PacketChannel channel = new Client().secureChannel(socket);
+            PacketChannel channel = dataClient.secureChannel(socket);
             channel.send(Packet.json(FileType.BROADCAST_DOWNLOAD_START,
                     Json.object("fileId", offer.fileId(), "downloadToken", response.string("downloadToken"))));
             FileTransferMeta meta = new FileTransferMeta(offer.fileId(), offer.sender(), username,
                     offer.fileName(), offer.fileSize(), offer.checksum());
             FileTransferSession download = trackSession(meta, offer.fileId());
-            File saved = new FileReceiver(channel, downloadDir, meta, download, null).receive();
+            File saved = new FileReceiver(channel, downloadDir, meta, download, new FileProgress(events, offer.fileId())).receive();
             finish(offer.fileId(), ClientEvents.FileState.COMPLETED, saved.getAbsolutePath());
         } finally {
             forgetSocket(socket);
@@ -164,7 +198,7 @@ public final class BroadcastFileController implements AutoCloseable {
 
     private FileTransferSession trackSession(FileTransferMeta meta, String id) throws IOException {
         synchronized (lifecycleLock) {
-            requireOpen();
+            requireActive(id);
             FileTransferSession session = new FileTransferSession(meta);
             session.accept();
             sessions.put(id, session);
@@ -180,12 +214,13 @@ public final class BroadcastFileController implements AutoCloseable {
         return response;
     }
 
-    private Socket openDataSocket() throws IOException {
+    private Socket openDataSocket(String id) throws IOException {
         Socket socket = new Socket();
         try {
             synchronized (lifecycleLock) {
-                requireOpen();
+                requireActive(id);
                 sockets.add(socket);
+                transferSockets.put(id, socket);
             }
             socket.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
             socket.setSoTimeout(READ_TIMEOUT_MS);
@@ -202,7 +237,10 @@ public final class BroadcastFileController implements AutoCloseable {
     }
 
     private void forgetSocket(Socket socket) {
-        synchronized (lifecycleLock) { sockets.remove(socket); }
+        synchronized (lifecycleLock) {
+            sockets.remove(socket);
+            transferSockets.values().removeIf(value -> value == socket);
+        }
     }
 
     private void startWorker(String id, String errorPrefix, TransferTask task) throws IOException {
@@ -214,13 +252,20 @@ public final class BroadcastFileController implements AutoCloseable {
                     requireOpen();
                     task.run();
                 } catch (IOException | RuntimeException e) {
-                    finish(id, ClientEvents.FileState.FAILED, e.getMessage());
-                    if (!closed) System.err.println(errorPrefix + e.getMessage());
+                    synchronized (lifecycleLock) {
+                        if (e instanceof FileReceiver.CleanupException) canceledIds.remove(id);
+                        boolean canceled = canceledIds.contains(id);
+                        finish(id, canceled ? ClientEvents.FileState.CANCELED : ClientEvents.FileState.FAILED,
+                                canceled ? "Đã hủy truyền file" : e.getMessage());
+                        if (!closed && !canceled) System.err.println(errorPrefix + e.getMessage());
+                    }
                 } finally {
                     synchronized (lifecycleLock) {
                         workers.remove(Thread.currentThread());
                         sessions.remove(id);
                         activeIds.remove(id);
+                        canceledIds.remove(id);
+                        transferSockets.remove(id);
                     }
                 }
             });
@@ -231,7 +276,13 @@ public final class BroadcastFileController implements AutoCloseable {
 
     private void finish(String id, ClientEvents.FileState state, String detail) {
         synchronized (lifecycleLock) {
-            if (activeIds.remove(id)) events.onFileState(id, state, detail);
+            if (activeIds.remove(id)) {
+                if (canceledIds.contains(id) && state != ClientEvents.FileState.FAILED) {
+                    state = ClientEvents.FileState.CANCELED;
+                    detail = "Đã hủy truyền file";
+                }
+                events.onFileState(id, state, detail);
+            }
         }
     }
 
@@ -250,6 +301,11 @@ public final class BroadcastFileController implements AutoCloseable {
                 return;
             }
         }
+    }
+
+    private void requireActive(String id) throws IOException {
+        requireOpen();
+        if (!activeIds.contains(id) || canceledIds.contains(id)) throw new IOException("File transfer canceled");
     }
 
     private void requireOpen() throws IOException {
@@ -274,6 +330,7 @@ public final class BroadcastFileController implements AutoCloseable {
             offerIds.clear();
             closing = Set.copyOf(sockets);
             sockets.clear();
+            transferSockets.clear();
         }
         for (Socket socket : closing) {
             try { socket.close(); } catch (IOException e) {
