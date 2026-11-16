@@ -7,7 +7,6 @@ public enum ChatType implements MessageType {
     MESSAGE,
     BROADCAST,
     RECEIPT,
-    TYPING,
     SESSION_REPORT,
     SESSION_REPORT_RESPONSE(true),
     SESSION_LIST_REQUEST,

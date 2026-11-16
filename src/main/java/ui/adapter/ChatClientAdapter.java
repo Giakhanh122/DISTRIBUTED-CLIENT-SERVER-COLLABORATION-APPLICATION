@@ -279,9 +279,6 @@ public final class ChatClientAdapter {
     public void sendChatMessage(String peer, String text, String messageId, Consumer<String> result) {
         submitMessage(s -> s.sendMessage(peer, text, messageId), result);
     }
-    public void sendTyping(String peer, boolean typing) {
-        if (isPeerConnected(peer)) submit(s -> s.sendTyping(peer, typing));
-    }
     public void broadcastMessage(String id, String text, Consumer<String> result) {
         long revision = connectionRevision.get();
         submitMessage(s -> {
@@ -340,9 +337,6 @@ public final class ChatClientAdapter {
             public void onMessageDelivered(String peer, String messageId) {
                 dispatch(token, l -> l.onMessageDelivered(peer, messageId));
             }
-            public void onTyping(String peer, boolean typing) {
-                dispatch(token, l -> l.onTypingIndicator(peer, typing));
-            }
             public void onPresenceUpdate(String username, boolean online) {
                 presenceRevision.incrementAndGet();
                 JavaFxUtils.runOnFxThread(() -> {
@@ -386,6 +380,9 @@ public final class ChatClientAdapter {
                     if (generation.get() != token) return;
                     FileOfferModel model = new FileOfferModel(id, meta.sender(), meta.receiver(), meta.fileName(),
                             meta.fileSize(), meta.checksum(), incoming);
+                    if (!incoming && offer.localPath() != null && !offer.localPath().isBlank()) {
+                        model.setLocalPath(offer.localPath());
+                    }
                     model.setBroadcast(communityId != null);
                     if (communityId != null) model.setCommunityId(communityId);
                     fileOffers.put(id, model);

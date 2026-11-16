@@ -159,7 +159,6 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [USER/PEER_KEY_REQUEST](#user-peer-key-request) | C → S | Xin server ký public key X25519 của một kết nối P2P. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
-| [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/SESSION_REPORT](#chat-session-report) | C → S | Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat. |
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
@@ -201,7 +200,6 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [USER/PEER_KEY_RESPONSE](#user-peer-key-response) | S → C | Trả proof gắn danh tính người đăng nhập với sessionId và public key. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
-| [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/SESSION_REPORT_RESPONSE](#chat-session-report-response) | S → C | Trả kết quả tiếp nhận báo cáo phiên P2P. |
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
@@ -943,30 +941,6 @@ Xác nhận peer đã nhận và xử lý một message trên kết nối P2P. C
     "type": "RECEIPT",
     "messageId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "receipt": "DELIVERED"
-  }
-}
-```
-
-<a id="chat-typing"></a>
-
-#### Typing
-
-**Event:** `CHAT/TYPING` · **Opcode:** `4` · **Direction:** P → P
-
-Thông báo trạng thái nhập tin. Client chỉ gửi khi trạng thái bắt đầu hoặc dừng,
-không gửi từng phím; UI tự hết hạn chỉ báo nếu sự kiện dừng bị mất.
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `typing` | boolean | true khi bắt đầu nhập, false khi dừng. |
-
-```json
-{
-  "opcode": 4,
-  "sequence": 5,
-  "body": {
-    "type": "TYPING",
-    "typing": true
   }
 }
 ```
@@ -2153,7 +2127,7 @@ Không tự retry tin nhắn hoặc file để tránh tạo bản trùng.
 
 ## Event Status
 
-ERROR, PRESENCE_UPDATE, RECEIPT và TYPING hiện có luồng gửi/nhận trong core và UI.
+ERROR, PRESENCE_UPDATE và RECEIPT hiện có luồng gửi/nhận trong core và UI.
 Receipt chỉ xác nhận DELIVERED, không xác nhận đã đọc. Không có event FILE/CHUNK:
 dữ liệu file được truyền trực tiếp trên socket dữ liệu giữa Ready/Key Confirm và End.
 Luồng download community bắt đầu bằng FILE/BROADCAST_DECISION, sau đó dùng

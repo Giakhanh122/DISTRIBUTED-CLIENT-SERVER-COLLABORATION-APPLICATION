@@ -60,9 +60,15 @@
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
 
-            <Button fx:id="railCommunitiesBtn" onAction="#handleSelectCommunitiesTab" styleClass="rail-btn-active"/>
+            <StackPane maxWidth="44.0" prefWidth="44.0">
+                <Button fx:id="railCommunitiesBtn" onAction="#handleSelectCommunitiesTab" styleClass="rail-btn-active"/>
+                <Label fx:id="communityUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
+            </StackPane>
             <Button fx:id="railExploreBtn" onAction="#handleSelectExploreTab" styleClass="rail-btn"/>
-            <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
+            <StackPane maxWidth="44.0" prefWidth="44.0">
+                <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
+                <Label fx:id="directUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
+            </StackPane>
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
 

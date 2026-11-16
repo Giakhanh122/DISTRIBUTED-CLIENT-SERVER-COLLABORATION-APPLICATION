@@ -164,9 +164,6 @@ public class PeerConnection implements AutoCloseable {
         sendPacket(Packet.json(ChatType.MESSAGE, Json.object("messageId", messageId, "content", message)));
     }
 
-    public void sendTyping(boolean typing) throws IOException {
-        sendPacket(Packet.json(ChatType.TYPING, Json.object("typing", typing)));
-    }
 
     public long sendPacket(Packet packet) throws IOException {
         return channel.send(packet);
@@ -197,11 +194,11 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void readMessages(String peerUsername, Consumer<String> onMessage, Consumer<Packet> onFilePacket) throws IOException {
-        readMessages(peerUsername, (id, content) -> onMessage.accept(content), onFilePacket, id -> {}, typing -> {});
+        readMessages(peerUsername, (id, content) -> onMessage.accept(content), onFilePacket, id -> {});
     }
 
     public void readMessages(String peerUsername, BiConsumer<String, String> onMessage,
-            Consumer<Packet> onFilePacket, Consumer<String> onReceipt, Consumer<Boolean> onTyping) throws IOException {
+            Consumer<Packet> onFilePacket, Consumer<String> onReceipt) throws IOException {
         heartbeat.start();
         try {
             Packet packet;
@@ -228,7 +225,6 @@ public class PeerConnection implements AutoCloseable {
                         }
                         onReceipt.accept(messageId);
                     }
-                    case ChatType.TYPING -> onTyping.accept(packet.bool("typing"));
                     case SystemType.ERROR -> throw new IOException("Peer protocol error: " + packet.string("reason"));
                     default -> throw new IOException("Unexpected peer chat packet: " + packet.type());
                 }

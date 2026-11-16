@@ -334,11 +334,6 @@ public final class ClientSession implements AutoCloseable {
         peer.sendMessage(messageId, message);
     }
 
-    public void sendTyping(String target, boolean typing) throws IOException {
-        PeerConnection peer = peers.get(target);
-        if (peer == null || peer.isClosed()) throw new IOException("Peer disconnected: " + target);
-        peer.sendTyping(typing);
-    }
 
     private Packet request(Packet packet, MessageType responseOp) throws IOException {
         Packet response = serverContext.server.request(packet, responseOp);
@@ -415,8 +410,7 @@ public final class ClientSession implements AutoCloseable {
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());
                 }
-            }, messageId -> events.onMessageDelivered(name, messageId),
-                    typing -> events.onTyping(name, typing));
+            }, messageId -> events.onMessageDelivered(name, messageId));
         } catch (IOException e) {
             if (!isClosed()) System.err.println("Peer " + name + ": " + e.getMessage());
         } finally {

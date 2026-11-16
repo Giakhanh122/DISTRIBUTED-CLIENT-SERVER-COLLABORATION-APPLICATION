@@ -1,16 +1,17 @@
 package ui.view;
 
 import java.util.function.Consumer;
-import java.time.LocalDate;
 import java.time.Duration;
-import java.time.format.DateTimeFormatter;
 import javafx.beans.binding.Bindings;
 import javafx.scene.Cursor;
+import javafx.scene.Node;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.KeyCode;
-import javafx.scene.layout.Region;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Tooltip;
@@ -31,41 +32,18 @@ public final class ChatMessageView {
     private final Consumer<String> cancel;
     private ChatMessageModel previousMessage;
     private VBox activeGroup;
-    private LocalDate renderedDate;
 
     public void clear() {
         container.getChildren().clear();
         previousMessage = null;
         activeGroup = null;
-        renderedDate = null;
     }
 
-    private void renderDate(ChatMessageModel message) {
-        LocalDate date = message.getCreatedAt().toLocalDate();
-        if (date.equals(renderedDate)) return;
-        LocalDate today = LocalDate.now();
-        String title = date.equals(today) ? "Hôm nay" : date.equals(today.minusDays(1)) ? "Hôm qua"
-                : date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-        Label label = new Label(title);
-        label.getStyleClass().add("chat-date-label");
-        Region left = new Region();
-        Region right = new Region();
-        left.getStyleClass().add("chat-date-line");
-        right.getStyleClass().add("chat-date-line");
-        HBox.setHgrow(left, Priority.ALWAYS);
-        HBox.setHgrow(right, Priority.ALWAYS);
-        HBox divider = new HBox(12, left, label, right);
-        divider.setAlignment(Pos.CENTER);
-        divider.getStyleClass().add("chat-date-divider");
-        container.getChildren().add(divider);
-        renderedDate = date;
-        previousMessage = null;
-        activeGroup = null;
-    }
 
     private boolean continuesGroup(ChatMessageModel message) {
         if (previousMessage == null || activeGroup == null || previousMessage.isSystem()
-                || previousMessage.isFileOffer() || previousMessage.isMine() != message.isMine()
+                || previousMessage.isFileOffer() != message.isFileOffer()
+                || previousMessage.isMine() != message.isMine()
                 || !previousMessage.getSender().equals(message.getSender())) return false;
         Duration gap = Duration.between(previousMessage.getCreatedAt(), message.getCreatedAt());
         return !gap.isNegative() && gap.compareTo(Duration.ofMinutes(5)) < 0;
@@ -78,7 +56,6 @@ public final class ChatMessageView {
     }
 
     public void render(ChatMessageModel msg) {
-        renderDate(msg);
         if (msg.isSystem()) {
             HBox systemRow = new HBox();
             systemRow.setAlignment(Pos.CENTER);
@@ -94,12 +71,9 @@ public final class ChatMessageView {
 
         if (msg.isFileOffer()) {
             renderFileOfferCard(msg);
-            previousMessage = null;
-            activeGroup = null;
             return;
         }
 
-        boolean grouped = continuesGroup(msg);
         VBox messageBubbleBox = new VBox(3);
         messageBubbleBox.setMaxWidth(480.0);
 
@@ -132,15 +106,6 @@ public final class ChatMessageView {
             });
             messageBubbleBox.getChildren().addAll(contentLbl, timeLbl, status);
 
-            if (!grouped) {
-                activeGroup = new VBox(4);
-                activeGroup.setAlignment(Pos.TOP_RIGHT);
-                activeGroup.setMaxWidth(480);
-                HBox row = new HBox(activeGroup);
-                row.setAlignment(Pos.CENTER_RIGHT);
-                container.getChildren().add(row);
-            }
-            activeGroup.getChildren().add(messageBubbleBox);
         } else {
             contentLbl.getStyleClass().add("bubble-received");
             contentLbl.getStyleClass().add("bubble-received-text");
@@ -148,32 +113,39 @@ public final class ChatMessageView {
             messageBubbleBox.setAlignment(Pos.TOP_LEFT);
             messageBubbleBox.getChildren().addAll(contentLbl, timeLbl);
 
-            if (!grouped) {
-                HBox row = new HBox(8);
-                row.setAlignment(Pos.TOP_LEFT);
-
-                StackPane smallAvatar = new StackPane();
-                smallAvatar.setMinSize(28, 28);
-                smallAvatar.setPrefSize(28, 28);
-                smallAvatar.setMaxSize(28, 28);
-                smallAvatar.getStyleClass().add("avatar-circle");
-                smallAvatar.setStyle("-fx-background-color: " + JavaFxUtils.getAvatarColor(msg.getSender()) + ";");
-
-                String inits = msg.getSender().length() <= 2 ? msg.getSender().toUpperCase() : msg.getSender().substring(0, 2).toUpperCase();
-                Label initsLbl = new Label(inits);
-                initsLbl.setStyle("-fx-font-size: 10px; -fx-text-fill: white; -fx-font-weight: bold;");
-                smallAvatar.getChildren().add(initsLbl);
-                Tooltip.install(smallAvatar, new Tooltip(msg.getSender()));
-
-                activeGroup = new VBox(4);
-                activeGroup.setAlignment(Pos.TOP_LEFT);
-                activeGroup.setMaxWidth(480);
-                row.getChildren().addAll(smallAvatar, activeGroup);
-                container.getChildren().add(row);
-            }
-            activeGroup.getChildren().add(messageBubbleBox);
         }
+        appendBubble(msg, messageBubbleBox);
+    }
+
+    private void appendBubble(ChatMessageModel msg, VBox bubble) {
+        if (!continuesGroup(msg)) {
+            activeGroup = new VBox(4);
+            activeGroup.setAlignment(msg.isMine() ? Pos.TOP_RIGHT : Pos.TOP_LEFT);
+            activeGroup.setMaxWidth(480);
+            HBox row = new HBox(8);
+            row.setAlignment(msg.isMine() ? Pos.TOP_RIGHT : Pos.TOP_LEFT);
+            if (!msg.isMine()) row.getChildren().add(createAvatar(msg.getSender()));
+            row.getChildren().add(activeGroup);
+            if (msg.isMine() && msg.isFileOffer()) row.getChildren().add(createAvatar(msg.getSender()));
+            container.getChildren().add(row);
+        }
+        activeGroup.getChildren().add(bubble);
         previousMessage = msg;
+    }
+
+    private static StackPane createAvatar(String sender) {
+        StackPane avatar = new StackPane();
+        avatar.setMinSize(28, 28);
+        avatar.setPrefSize(28, 28);
+        avatar.setMaxSize(28, 28);
+        avatar.getStyleClass().add("avatar-circle");
+        avatar.setStyle("-fx-background-color: " + JavaFxUtils.getAvatarColor(sender) + ";");
+        String initials = sender.length() <= 2 ? sender.toUpperCase() : sender.substring(0, 2).toUpperCase();
+        Label label = new Label(initials);
+        label.setStyle("-fx-font-size: 10px; -fx-text-fill: white; -fx-font-weight: bold;");
+        avatar.getChildren().add(label);
+        Tooltip.install(avatar, new Tooltip(sender));
+        return avatar;
     }
 
     private void renderFileOfferCard(ChatMessageModel msg) {
@@ -183,6 +155,36 @@ public final class ChatMessageView {
         VBox card = new VBox(8);
         card.getStyleClass().add("file-card");
         card.setMaxWidth(400.0);
+        card.setPickOnBounds(true);
+        card.cursorProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
+                .then(Cursor.HAND).otherwise(Cursor.DEFAULT));
+        card.focusTraversableProperty().bind(offer.localPathProperty().isNotEmpty());
+        card.setAccessibleText("Mở thư mục chứa " + offer.getFileName());
+        card.setOnMouseClicked(event -> {
+            if (event.getButton() == MouseButton.PRIMARY && !isButtonTarget(event.getTarget())
+                    && !offer.getLocalPath().isBlank()) {
+                openDownloadedFolder(offer.getLocalPath());
+                event.consume();
+            }
+        });
+        card.setOnKeyPressed(event -> {
+            if ((event.getCode() == KeyCode.ENTER || event.getCode() == KeyCode.SPACE)
+                    && !isButtonTarget(event.getTarget()) && !offer.getLocalPath().isBlank()) {
+                openDownloadedFolder(offer.getLocalPath());
+                event.consume();
+            }
+        });
+        MenuItem openFile = new MenuItem("Mở file");
+        openFile.setOnAction(event -> openDownloadedFile(offer.getLocalPath()));
+        MenuItem openFolder = new MenuItem("Mở thư mục chứa file");
+        openFolder.setOnAction(event -> openDownloadedFolder(offer.getLocalPath()));
+        ContextMenu fileMenu = new ContextMenu(openFile, openFolder);
+        card.setOnContextMenuRequested(event -> {
+            if (!offer.getLocalPath().isBlank() && !isButtonTarget(event.getTarget())) {
+                fileMenu.show(card, event.getScreenX(), event.getScreenY());
+                event.consume();
+            }
+        });
 
         HBox topRow = new HBox(10);
         topRow.setAlignment(Pos.CENTER_LEFT);
@@ -197,23 +199,10 @@ public final class ChatMessageView {
         nameLbl.setMaxWidth(Double.MAX_VALUE);
         Tooltip fileTooltip = new Tooltip();
         fileTooltip.textProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
-                .then(offer.getFileName() + "\nBấm để mở file").otherwise(offer.getFileName()));
+                .then(offer.getFileName() + "\nBấm để mở thư mục chứa file; chuột phải để mở file").otherwise(offer.getFileName()));
         nameLbl.setTooltip(fileTooltip);
         nameLbl.cursorProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
                 .then(Cursor.HAND).otherwise(Cursor.DEFAULT));
-        nameLbl.focusTraversableProperty().bind(offer.localPathProperty().isNotEmpty());
-        nameLbl.setOnMouseClicked(event -> {
-            if (event.getButton() == MouseButton.PRIMARY && !offer.getLocalPath().isBlank()) {
-                openDownloadedFile(offer.getLocalPath());
-            }
-        });
-        nameLbl.setOnKeyPressed(event -> {
-            if ((event.getCode() == KeyCode.ENTER || event.getCode() == KeyCode.SPACE)
-                    && !offer.getLocalPath().isBlank()) {
-                openDownloadedFile(offer.getLocalPath());
-                event.consume();
-            }
-        });
         Label metaLbl = new Label(offer.getFormattedSize());
         metaLbl.getStyleClass().add("file-card-meta");
         fileInfo.getChildren().addAll(nameLbl, metaLbl);
@@ -248,9 +237,11 @@ public final class ChatMessageView {
         }, offer.statusProperty(), offer.statusTextProperty()));
         statusIcon.setTooltip(statusTooltip);
         statusIcon.accessibleTextProperty().bind(statusTooltip.textProperty());
-        statusIcon.visibleProperty().bind(offer.localPathProperty().isEmpty().and(
-                offer.statusProperty().isNotEqualTo(FileOfferModel.Status.PENDING)
-                        .or(Bindings.createBooleanBinding(() -> !offer.isIncoming(), offer.incomingProperty()))));
+        statusIcon.visibleProperty().bind(Bindings.createBooleanBinding(() -> switch (offer.getStatus()) {
+            case FAILED, REJECTED, CANCELED, EXPIRED, CANCELING -> true;
+            case PENDING -> !offer.isIncoming() && offer.getLocalPath().isBlank();
+            default -> offer.getLocalPath().isBlank();
+        }, offer.statusProperty(), offer.localPathProperty(), offer.incomingProperty()));
         statusIcon.managedProperty().bind(statusIcon.visibleProperty());
         topRow.getChildren().add(statusIcon);
 
@@ -301,9 +292,21 @@ public final class ChatMessageView {
 
         card.getChildren().addAll(topRow, pb, statistics);
 
-        HBox outer = new HBox(card);
-        outer.setAlignment(msg.isMine() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
-        container.getChildren().add(outer);
+        Label time = new Label(msg.getTimestamp());
+        time.getStyleClass().add("bubble-timestamp");
+        VBox bubble = new VBox(3, card, time);
+        bubble.setMaxWidth(400);
+        bubble.setAlignment(msg.isMine() ? Pos.TOP_RIGHT : Pos.TOP_LEFT);
+        appendBubble(msg, bubble);
+    }
+
+    private static boolean isButtonTarget(Object target) {
+        Node node = target instanceof Node ? (Node) target : null;
+        while (node != null) {
+            if (node instanceof ButtonBase) return true;
+            node = node.getParent();
+        }
+        return false;
     }
 
     private void openDownloadedFile(String path) {

@@ -1,79 +1,46 @@
 \section{Khó khăn và giải pháp}
+\begingroup
+\small
+\setstretch{1.08}
+Phần khó nhất khi xây dựng ứng dụng không nằm ở việc mở socket, mà ở việc giữ
+thứ tự dữ liệu và vòng đời tài nguyên khi nhiều tác vụ hoạt động đồng thời.
+Bốn vấn đề dưới đây phản ánh các tình huống đã được xử lý và kiểm tra trong hệ thống.
 
-Trong quá trình thiết kế và triển khai hệ thống, nhóm gặp phải nhiều thách thức kỹ thuật liên quan đến lập trình socket,
-đồng bộ hóa luồng và truyền dữ liệu. Phần này trình bày các vấn đề thực tế được ghi nhận trong mã nguồn,
-phân biệt rõ giữa những vấn đề đã được giải quyết và những vấn đề còn tồn tại.
+\paragraph{TCP chia nhỏ hoặc gộp dữ liệu.}
+Một lần gửi không tương ứng một lần đọc. Vì vậy, receiver không dựa vào số byte
+trả về của một lần read để suy ra ranh giới message. PacketCodec dùng length-prefix
+4 byte, kiểm tra giới hạn rồi đọc đủ JSON; dữ liệu file đọc đúng fileSize byte trước
+FILE/END. Kiểm thử chia frame thành từng byte, gộp hai frame, cắt ngắn luồng và sai
+checksum xác nhận parser không nhầm ranh giới và không công bố file lỗi.
 
-% =========================================================
-\subsection{Các vấn đề đã được giải quyết}
-% =========================================================
+\paragraph{Tranh chấp ghi và thứ tự đăng nhập.}
+Response, heartbeat và broadcast có thể cùng ghi vào một socket. Mọi thao tác đi
+qua khóa ghi của PacketChannel, bao gồm cấp sequence và ghi trọn frame; đóng socket
+không đợi khóa này để tránh kẹt với writer. Kiểm thử 20 client còn phát hiện một
+race: PRESENCE\_UPDATE có thể tới trước LOGIN\_RESPONSE. Giải pháp là giữ chỗ
+username để chống đăng nhập trùng, nhưng chỉ kích hoạt session sau khi gửi xong
+ACK đăng nhập. Nhờ đó phản hồi đăng nhập luôn đi trước sự kiện chủ động trên phiên mới.
 
-\subsubsection{Phân mảnh gói tin TCP}
+\paragraph{Hủy file mà không để lại dữ liệu dở.}
+Chỉ đổi trạng thái UI không giải phóng read/write đang chờ. Controller phải đánh
+dấu session và đóng data socket riêng; worker kiểm tra trạng thái dưới khóa trước
+khi công bố file. File tạm được xóa trong finally, chỉ sau đó mới báo đã hủy;
+cleanup lỗi không bị nuốt thành thành công. Kiểm thử hủy cả P2P lẫn community,
+ngắt TCP giữa file và giữ một file cũ cùng tên chứng minh không xóa nhầm dữ liệu
+đã có. File khác và chat vẫn hoạt động vì không dùng chung data socket.
 
-TCP là giao thức hướng luồng (stream-oriented): không có ranh giới gói tin tự nhiên, dữ liệu có thể đến theo từng mảnh nhỏ hoặc bị ghép lại tùy ý.
-Nếu không có cơ chế phân tách gói tin rõ ràng, bên nhận sẽ không thể xác định điểm bắt đầu và kết thúc của mỗi thông điệp.
+\paragraph{Phân biệt mất server với mất peer.}
+Nếu gắn toàn bộ vòng đời P2P vào control socket, việc server dừng sẽ làm mất cả
+cuộc trò chuyện trực tiếp. ClientSession giữ các peer độc lập; mỗi control/chat
+socket có heartbeat riêng. Reconnect chỉ thay context server và xác thực lại,
+không lưu password hoặc tự gửi lại yêu cầu cũ. Thử nghiệm restart server, reconnect
+sai rồi đúng mật khẩu xác nhận P2P và cổng listener còn được giữ.
 
-\textbf{Giải pháp:} \texttt{PacketCodec} đọc độ dài 4 byte big-endian rồi đọc đủ
-JSON UTF-8. Luồng file đọc đúng số byte khai báo trước khi quay lại đọc frame
-\texttt{FILE\_END}; việc TCP chia nhỏ hoặc gộp dữ liệu không làm mất ranh giới.
-
-\subsubsection{Đồng bộ hóa ghi lên socket dùng chung}
-
-Nhiều virtual thread có thể cùng lúc muốn ghi lên cùng một \texttt{OutputStream} của một socket.
-Nếu không đồng bộ hóa, các byte từ hai gói tin khác nhau sẽ bị xen kẽ, gây lỗi phân tích giao thức ở phía nhận.
-
-\textbf{Giải pháp:} Mọi nơi ghi lên một socket đều đi qua cùng \texttt{PacketChannel}.
-Khóa ghi bảo vệ thao tác cấp sequence và ghi trọn frame, bao gồm phản hồi,
-broadcast và heartbeat. Đóng socket không chờ khóa ghi để giải phóng writer đang bị kẹt.
-
-\subsubsection{Phân luồng kết nối đến trên cùng một cổng}
-
-Server lắng nghe trên một cổng TCP duy nhất (8080). Tuy nhiên, cổng này phải phục vụ ba loại kết nối khác nhau:
-phiên điều khiển thông thường, luồng upload file broadcast, và luồng download file broadcast.
-Tương tự, \texttt{PeerListener} phía client cũng phải phân biệt kết nối chat và kết nối dữ liệu file.
-
-\textbf{Giải pháp:} Cả hai đều sử dụng chiến lược \textit{đọc gói tin đầu tiên để phân loại}.
-Tại \texttt{ClientHandler.run()}: nếu gói đầu tiên là \texttt{HELLO} → khởi chạy phiên điều khiển;
-nếu là \texttt{FILE\_BROADCAST\_UPLOAD\_START} → chuyển sang trình xử lý upload;
-nếu là \texttt{FILE\_BROADCAST\_DOWNLOAD\_START} → chuyển sang trình xử lý download.
-Tại \texttt{PeerListener}: nếu là \texttt{PEER\_HELLO} → khởi tạo kết nối chat;
-nếu là \texttt{FILE\_OFFER} → chuyển cho \texttt{FileTransferController} xử lý luồng file.
-
-\subsubsection{Điều kiện tranh chấp trong thiết lập kết nối P2P}
-
-Khi hai client cùng thực hiện \texttt{/lookup} nhau gần như đồng thời, có thể xảy ra trường hợp cả hai đều gửi yêu cầu kết nối,
-dẫn đến hai kết nối P2P song song giữa cùng một cặp client.
-
-\textbf{Giải pháp:} Mỗi kết nối chat mang một UUID. Khi hai handshake giao nhau,
-cả hai phía giữ kết nối có UUID nhỏ hơn; map peer được cập nhật dưới khóa của
-\texttt{ClientSession}. Callback đóng của kết nối cũ chỉ được xóa chính kết nối đó,
-không được xóa socket thay thế. Báo cáo metadata được xếp hàng riêng theo thứ tự.
-
-\subsubsection{Tính toàn vẹn dữ liệu file}
-
-File truyền qua mạng có thể bị hỏng do lỗi đường truyền hoặc gián đoạn kết nối.
-Ngoài ra, file tạm thời (đang ghi) không được để lộ ra hệ thống tệp cho đến khi quá trình nhận hoàn tất.
-
-\textbf{Giải pháp:} \texttt{FileSender} tính toán SHA-256 trực tiếp trong quá trình gửi chunk và đính kèm vào gói \texttt{FILE\_END}.
-\texttt{FileReceiver} tính lại SHA-256 độc lập trong quá trình nhận và so sánh với giá trị nhận được.
-Nếu khớp, file tạm được di chuyển đến vị trí đích bằng \texttt{Files.move(..., StandardCopyOption.ATOMIC\_MOVE)};
-nếu không khớp, file tạm bị xóa và trả về \texttt{FILE\_RESULT(CHECKSUM\_MISMATCH)}.
-
-% =========================================================
-\subsection{Vấn đề còn tồn tại}
-% =========================================================
-
-\subsubsection{Không có cơ chế bền vững (Persistence)}
-
-Toàn bộ trạng thái hệ thống — bao gồm phiên đăng nhập, danh sách cộng đồng, thành viên, và metadata file broadcast —
-chỉ tồn tại trong bộ nhớ (\texttt{ConcurrentHashMap} trong RAM).
-Khi server khởi động lại, mọi dữ liệu đều bị mất.
-\texttt{AuthService} hiện tại sử dụng tài khoản hardcode, không có cơ sở dữ liệu hay file cấu hình.
-Đây là giới hạn thiết kế quan trọng cần giải quyết trước khi triển khai trong môi trường thực tế.
-
-\subsubsection{Giới hạn phục hồi kết nối}
-
-Heartbeat hai chiều đã phát hiện thiếu ACK trên control socket. Người dùng có thể
-kết nối lại bằng mật khẩu và tải trạng thái mới; P2P còn sống được giữ nguyên.
-App chưa tự nối lại một peer đã chết và chưa resume file theo offset; file bị ngắt
-phải gửi lại. Thử nghiệm localhost chưa thay thế được kiểm thử nhiều máy qua NAT/firewall.
+\paragraph{Kết quả và giới hạn.}
+Bộ 12 bài kiểm thử localhost đã qua, gồm 20 client đồng thời, file P2P và community
+200 MiB, file rỗng/Unicode, hủy, framing, checksum và xác thực/mã hóa bị sai.
+Bài học chính là phải gắn đồng bộ hóa với đúng tài nguyên, đồng thời phân biệt đủ
+byte, đã công bố file và đã được xác nhận. Chưa khẳng định kết quả trên nhiều máy,
+NAT/firewall hay mất điện; metadata vẫn ở RAM và file gián đoạn chưa resume theo offset.
+\par
+\endgroup

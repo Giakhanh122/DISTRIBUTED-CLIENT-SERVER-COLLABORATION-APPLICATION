@@ -26,15 +26,15 @@ class TransportRobustnessTest {
     @Test
     void fragmentedAndCoalescedFramesPreserveMessageBoundaries() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        PacketCodec.write(bytes, Packet.json(ChatType.TYPING, Json.object("typing", true)), 1);
-        PacketCodec.write(bytes, Packet.json(ChatType.TYPING, Json.object("typing", false)), 2);
+        PacketCodec.write(bytes, Packet.json(ChatType.MESSAGE, Json.object("content", "first")), 1);
+        PacketCodec.write(bytes, Packet.json(ChatType.MESSAGE, Json.object("content", "second")), 2);
         var input = new ByteArrayInputStream(bytes.toByteArray()) {
             @Override public synchronized int read(byte[] b, int off, int len) {
                 return super.read(b, off, Math.min(1, len));
             }
         };
-        assertTrue(PacketCodec.read(input).bool("typing"));
-        assertFalse(PacketCodec.read(input).bool("typing"));
+        assertEquals("first", PacketCodec.read(input).string("content"));
+        assertEquals("second", PacketCodec.read(input).string("content"));
         assertNull(PacketCodec.read(input));
     }
 

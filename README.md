@@ -127,9 +127,10 @@ tốc độ, thời gian còn lại ước tính và nút × để hủy từng 
 liệu riêng, xóa file tải dở rồi kết thúc; lỗi xóa được báo thay vì coi là đã dọn.
 File gốc và file đã hoàn tất không bị xóa. Các file khác và chat tiếp tục hoạt động.
 Mỗi file dùng một TCP riêng; không giới hạn số file đồng thời.
-Sau khi hoàn tất, bấm tên file để mở hoặc icon thư mục để mở vị trí lưu.
+Sau khi hoàn tất, bấm thẻ file, tên file hoặc icon thư mục để mở vị trí lưu.
+Muốn mở file bằng ứng dụng tương ứng, bấm chuột phải thẻ file rồi chọn “Mở file”.
 
-Tin nhắn liên tiếp cùng người gửi trong dưới 5 phút được nhóm; có mốc ngày.
+Tin nhắn liên tiếp cùng người gửi trong dưới 5 phút được nhóm; mỗi tin giữ thời gian riêng.
 Trạng thái gửi mặc định ẩn, bấm nội dung tin gửi đi để hiện/ẩn. “Đã gửi” không
 có nghĩa đã đọc; tooltip phân biệt xác nhận P2P với gửi community.
 

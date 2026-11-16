@@ -183,7 +183,7 @@ public final class FileTransferController implements AutoCloseable {
                 body.addProperty("publicKey", encode(transfer.keyPair.getPublic()));
                 synchronized (this) {
                     register(transfer);
-                    events.onFileOffer(new FileOffer(transfer.id(), null, meta, null, false));
+                    events.onFileOffer(new FileOffer(transfer.id(), null, meta, null, false, file.getAbsolutePath()));
                 }
                 Transfer offered = transfer;
                 peer.sendPacket(Packet.json(FileType.OFFER, body), sequence -> recordOfferSequence(offered, sequence));

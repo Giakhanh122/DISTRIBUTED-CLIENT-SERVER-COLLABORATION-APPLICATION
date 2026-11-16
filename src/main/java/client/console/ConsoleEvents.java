@@ -16,9 +16,6 @@ final class ConsoleEvents implements ClientEvents {
     @Override public void onMessageDelivered(String peer, String messageId) {
         System.out.println("[DELIVERED] Message to " + peer + " was delivered.");
     }
-    @Override public void onTyping(String peer, boolean typing) {
-        System.out.println(typing ? peer + " is typing..." : peer + " stopped typing.");
-    }
     @Override public void onPresenceUpdate(String username, boolean online) {
         System.out.println("[PRESENCE] " + username + (online ? " is online." : " is offline."));
     }

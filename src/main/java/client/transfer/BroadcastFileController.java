@@ -155,7 +155,7 @@ public final class BroadcastFileController implements AutoCloseable {
         synchronized (lifecycleLock) {
             requireOpen();
             events.onFileOffer(new FileOffer(id, null,
-                    new FileTransferMeta(id, username, community.name(), file.getName(), size, checksum), community.id(), false));
+                    new FileTransferMeta(id, username, community.name(), file.getName(), size, checksum), community.id(), false, file.getAbsolutePath()));
             events.onFileState(id, ClientEvents.FileState.TRANSFERRING, "Uploading to community storage");
         }
         Packet response = request(Packet.json(FileType.BROADCAST_UPLOAD_REQUEST,
