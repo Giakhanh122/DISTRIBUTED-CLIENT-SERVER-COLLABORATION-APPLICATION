@@ -1,6 +1,6 @@
 package network;
 
-import protocols.SystemType;
+import protocols.type.SystemType;
 
 import protocols.Packet;
 import protocols.PacketValidator;

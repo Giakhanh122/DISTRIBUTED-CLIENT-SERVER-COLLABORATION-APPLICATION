@@ -5,9 +5,21 @@
 \ProcessOptions\relax
 \LoadClass[12pt,a4paper]{article}
 
-\RequirePackage[utf8]{vntex,inputenc}
-\RequirePackage{anyfontsize,amsmath,amssymb}
-\RequirePackage[T5]{fontenc}
+\RequirePackage{iftex}
+\ifPDFTeX
+    \RequirePackage[utf8]{vntex,inputenc}
+    \RequirePackage[T5]{fontenc}
+    \RequirePackage{anyfontsize}
+\else
+    \RequirePackage{fontspec}
+    \defaultfontfeatures{Ligatures=TeX}
+    \setmainfont[BoldFont=lmroman10-bold.otf,
+        ItalicFont=lmroman10-italic.otf,
+        BoldItalicFont=lmroman10-bolditalic.otf]{lmroman10-regular.otf}
+    \setsansfont{lmsans10-regular.otf}
+    \setmonofont[BoldFont=lmmonolt10-bold.otf]{lmmono10-regular.otf}
+\fi
+\RequirePackage{amsmath,amssymb}
 
 \RequirePackage{geometry,graphicx,indentfirst,setspace}
 \RequirePackage{booktabs}

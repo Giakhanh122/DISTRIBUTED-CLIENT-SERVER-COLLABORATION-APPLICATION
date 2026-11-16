@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the AUTH opcode group. */
 public enum AuthType implements MessageType {

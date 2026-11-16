@@ -1,6 +1,6 @@
 package transfer;
 
-import protocols.FileType;
+import protocols.type.FileType;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -71,6 +71,7 @@ public class FileSender {
         }
 
         long totalBytesSent = 0;
+        if (listener != null) listener.onProgress(0, fileSize, fileSize == 0 ? 100 : 0);
 
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[CHUNK_SIZE];

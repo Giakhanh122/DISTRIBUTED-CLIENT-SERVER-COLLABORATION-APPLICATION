@@ -1,7 +1,7 @@
 package server.broadcast;
 
-import protocols.ChatType;
-import protocols.FileType;
+import protocols.type.ChatType;
+import protocols.type.FileType;
 
 import com.google.gson.JsonObject;
 import java.io.IOException;
@@ -154,17 +154,24 @@ public final class BroadcastService {
 
         channel.socket().setSoTimeout(60000);
 
+        java.nio.file.Path committed = null;
         try {
             try (OutputStream fileOut = fileStorageService.openTempForWrite(fileId)) {
                 FileDataReader.receive(channel, fileOut, fileId, meta.fileSize(), meta.checksum(), null);
             }
 
             // Commit file
-            fileStorageService.commit(fileId, meta.fileName());
+            committed = fileStorageService.commit(fileId, meta.fileName());
             channel.send(Packet.status(FileType.RESULT, channel.lastReceivedSequence(), "OK"));
 
         } catch (IOException | RuntimeException e) {
-            fileStorageService.deleteTempIfExists(fileId);
+            try {
+                fileStorageService.deleteTempIfExists(fileId);
+                if (committed != null) java.nio.file.Files.deleteIfExists(committed);
+            } catch (IOException cleanupError) {
+                e.addSuppressed(cleanupError);
+                System.err.println("Cannot clean up failed upload " + fileId + ": " + cleanupError.getMessage());
+            }
             broadcastFileRegistry.discard(fileId);
             try {
                 channel.send(Packet.failure(channel.lastReceivedSequence(), e.getMessage()));

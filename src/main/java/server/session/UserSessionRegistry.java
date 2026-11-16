@@ -13,7 +13,7 @@ public class UserSessionRegistry {
     }
 
     public Optional<UserSession> find(String username) {
-        return Optional.ofNullable(onlineUsers.get(username));
+        return Optional.ofNullable(onlineUsers.get(username)).filter(UserSession::isReady);
     }
 
     public boolean remove(UserSession session) {
@@ -21,6 +21,6 @@ public class UserSessionRegistry {
     }
 
     public List<UserSession> listOnlineUsers() {
-        return List.copyOf(onlineUsers.values());
+        return onlineUsers.values().stream().filter(UserSession::isReady).toList();
     }
 }

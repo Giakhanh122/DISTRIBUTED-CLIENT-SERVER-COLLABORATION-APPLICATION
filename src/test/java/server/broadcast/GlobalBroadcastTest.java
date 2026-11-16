@@ -13,9 +13,9 @@ import java.util.List;
 import network.PacketChannel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import protocols.ChatType;
 import protocols.Json;
 import protocols.Packet;
+import protocols.type.ChatType;
 import server.community.CommunityRegistry;
 import server.community.CommunityService;
 import server.session.UserSession;
@@ -43,8 +43,13 @@ class GlobalBroadcastTest {
             UserSessionRegistry users = new UserSessionRegistry();
             UserSession aliceSession = new UserSession("alice", "127.0.0.1", 9001, alice.server());
             assertTrue(users.register(aliceSession));
-            assertTrue(users.register(new UserSession("bob", "127.0.0.1", 9002, bob.server())));
-            assertTrue(users.register(new UserSession("carol", "127.0.0.1", 9003, carol.server())));
+            aliceSession.activate();
+            UserSession bobSession = new UserSession("bob", "127.0.0.1", 9002, bob.server());
+            UserSession carolSession = new UserSession("carol", "127.0.0.1", 9003, carol.server());
+            assertTrue(users.register(bobSession));
+            assertTrue(users.register(carolSession));
+            bobSession.activate();
+            carolSession.activate();
 
             BroadcastService service = new BroadcastService(users,
                     new CommunityService(new CommunityRegistry(), users),

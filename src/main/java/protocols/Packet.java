@@ -5,6 +5,9 @@ import java.util.Objects;
 
 import com.google.gson.JsonObject;
 
+import protocols.type.FileType;
+import protocols.type.MessageType;
+
 /** One JSON envelope: opcode, sequence, body. */
 public final class Packet {
     public static final int PROTOCOL_VERSION = 4;

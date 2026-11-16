@@ -1,9 +1,12 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the FILE opcode group. */
 public enum FileType implements MessageType {
     OFFER,
     DECISION,
+    CANCEL,
     TRANSFER_START,
     READY(true),
     END,

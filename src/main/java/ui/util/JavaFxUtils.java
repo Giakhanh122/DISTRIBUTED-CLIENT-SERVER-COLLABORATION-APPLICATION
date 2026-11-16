@@ -150,6 +150,34 @@ public final class JavaFxUtils {
         showMessageDialog(owner, title, message);
     }
 
+    public static void showPathError(Window owner, String title, String reason, String path) {
+        runOnFxThread(() -> {
+            Stage stage = createCustomDialogStage(owner);
+            Label message = new Label(reason == null ? title : reason);
+            message.setWrapText(true);
+            message.setMaxWidth(420);
+            TextField location = new TextField(path);
+            location.setEditable(false);
+            location.setPrefWidth(420);
+            VBox content = new VBox(10, message, location);
+            Button copy = new Button("Sao chép đường dẫn");
+            copy.getStyleClass().add("btn-secondary");
+            copy.setDisable(path == null || path.isBlank());
+            copy.setOnAction(event -> {
+                javafx.scene.input.ClipboardContent clipboard = new javafx.scene.input.ClipboardContent();
+                clipboard.putString(path);
+                javafx.scene.input.Clipboard.getSystemClipboard().setContent(clipboard);
+            });
+            Button close = new Button("Đóng");
+            close.getStyleClass().add("btn-primary");
+            close.setDefaultButton(true);
+            close.setOnAction(event -> stage.close());
+            HBox actions = new HBox(10, copy, close);
+            actions.setAlignment(Pos.CENTER_RIGHT);
+            showDialog(stage, owner, title, content, actions);
+        });
+    }
+
     private static void showMessageDialog(Window owner, String title, String message) {
         runOnFxThread(() -> {
             Stage stage = createCustomDialogStage(owner);

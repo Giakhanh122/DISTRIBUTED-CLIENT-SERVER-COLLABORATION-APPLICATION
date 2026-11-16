@@ -3,7 +3,7 @@ package network;
 import protocols.Packet;
 import protocols.PacketCodec;
 import protocols.PacketValidator;
-import protocols.SystemType;
+import protocols.type.SystemType;
 
 import java.io.IOException;
 import java.io.EOFException;

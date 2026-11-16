@@ -1,30 +1,148 @@
-\section{Mô tả giao thức}
+\section{Đặc tả giao thức}
+\begingroup
+\setstretch{1.1}
+\setlength{\emergencystretch}{2em}
 
-\subsection{Đóng khung và phản hồi}
-Mỗi frame gồm độ dài JSON 4 byte big-endian, tiếp theo là đúng số byte JSON UTF-8.
-Envelope có ba trường: \texttt{opcode}, \texttt{sequence}, \texttt{body}.
-Sequence bắt đầu từ 1 cho mỗi chiều TCP và tăng theo từng frame. Phản hồi dùng
-\texttt{body.replyTo} để trỏ tới sequence yêu cầu, kèm \texttt{body.status}.
-Handshake \texttt{HELLO/HELLO\_ACK} hiện dùng protocolVersion 1, sau đó
-\texttt{AUTH\_REQUEST} gửi username, password và cổng lắng nghe P2P.
+\subsection{Framing và envelope}
+Giao thức hiện tại có \texttt{protocolVersion = 3}. Trước khi bật mã hóa,
+\texttt{PacketCodec} mã hóa thông điệp theo cấu trúc:
+\begin{center}
+\fbox{\texttt{[JSON length: 4 byte big-endian][JSON UTF-8: length byte]}}
+\end{center}
+Length đếm byte UTF-8 của JSON.
+Receiver đọc đủ 4 byte độ dài rồi đọc đủ payload; các frame có thể bị TCP chia nhỏ
+hoặc gộp lại. JSON tối đa 1 MiB. JSON sai kiểu, trùng trường hoặc quá giới hạn bị từ chối.
 
-\subsection{Chat và truyền file}
-Server tra cứu địa chỉ peer và quản lý cộng đồng. Chat trực tiếp dùng socket P2P;
-broadcast dùng control socket tới server và được phân phối theo community ID.
-Offer file P2P đi trên socket chat, người nhận quyết định accept hoặc reject.
-Sender mở socket dữ liệu riêng, gửi \texttt{FILE\_OFFER}, đúng \texttt{fileSize}
-byte nhị phân, rồi \texttt{FILE\_END}. Receiver kiểm tra kích thước và SHA-256,
-lưu file rồi trả \texttt{FILE\_RESULT}. Không có frame JSON cho từng chunk dữ liệu.
-Broadcast file có upload/download token, dữ liệu đi trên socket riêng tới server.
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{l l >{\raggedright\arraybackslash}X}
+\toprule
+Trường & Kiểu & Ý nghĩa \\
+\midrule
+\texttt{opcode} & integer & Nhóm chức năng, từ 0 đến 7. \\
+\texttt{sequence} & integer & Số thứ tự tăng dần riêng từng chiều TCP, bắt đầu 1. \\
+\texttt{body} & object & Payload có kiểu; luôn chứa \texttt{type}. \\
+\texttt{body.type} & string & Tên thao tác, ví dụ MESSAGE hoặc LOGIN\_\allowbreak{}REQUEST. \\
+\texttt{body.replyTo} & integer & Sequence của request được phản hồi; có ở response và FILE/DECISION. \\
+\texttt{body.status} & string & Kết quả response: OK hoặc mã lỗi. FILE/DECISION dùng decision thay status. \\
+\bottomrule
+\end{tabularx}
+\caption{Envelope JSON và các trường điều khiển.}
+\end{table}
 
-\subsection{Phát hiện lỗi và kết nối lại}
-Hai phía gửi heartbeat trên control socket mỗi 5 giây nếu chưa có probe pending.
-Thiếu ACK đúng \texttt{replyTo} sau 30 giây làm đóng control socket; timer kiểm tra
-mỗi 5 giây. EOF, lỗi socket hoặc timeout request có thể phát hiện sớm hơn.
-Server xóa user online và đánh dấu metadata P2P chưa đóng là \texttt{UNKNOWN}.
-Client hủy broadcast của kết nối cũ, giữ chat/file P2P còn sống.
+Ví dụ tin nhắn P2P trước lớp mã hóa:
+\begin{verbatim}
+{"opcode":4,"sequence":3,"body":{
+  "type":"MESSAGE",
+  "messageId":"8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
+  "content":"Hello Bob"}}
+\end{verbatim}
+Phản hồi phải khớp opcode, type và replyTo, không chỉ dựa vào sequence của chính
+response. FILE/RESULT lỗi sớm có thể dùng replyTo bằng 0 khi chưa có request tương ứng.
 
-Người dùng kết nối lại bằng mật khẩu; app tạo control socket mới, handshake và
-đăng nhập lại, lấy danh sách user/community mới. Không lưu mật khẩu, không tự
-phát lại yêu cầu hoặc resume file theo offset. Logout đóng toàn bộ tài nguyên.
-Đặc tả opcode và payload chi tiết được lưu trong \texttt{docs/protocol.md}.
+\subsection{Nhóm opcode và payload chính}
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{c l >{\raggedright\arraybackslash}X}
+\toprule
+Mã & Nhóm & Thao tác tiêu biểu \\
+\midrule
+0 & SYSTEM & KEY\_\allowbreak{}CONFIRM/ACK, PING/PONG, ERROR. \\
+1 & CONNECTION & HELLO/ACK; PEER\_\allowbreak{}HELLO/ACK. \\
+2 & AUTH & LOGIN\_\allowbreak{}REQUEST/RESPONSE; LOGOUT\_\allowbreak{}REQUEST/RESPONSE. \\
+3 & USER & LIST, PRESENCE\_\allowbreak{}UPDATE, PEER\_\allowbreak{}LOOKUP, PEER\_\allowbreak{}KEY. \\
+4 & CHAT & MESSAGE, RECEIPT, BROADCAST, SESSION\_\allowbreak{}REPORT, SESSION\_\allowbreak{}LIST. \\
+5 & FILE & Offer/decision, mở data socket, END/RESULT, CANCEL và community file. \\
+6 & COMMUNITY & CREATE, JOIN, LEAVE, LIST, SELECT, MEMBERS, INFO. \\
+7 & DISCOVERY & UDP REQUEST/RESPONSE. \\
+\bottomrule
+\end{tabularx}
+\caption{Các nhóm chức năng; enum tương ứng nằm trong protocols/type.}
+\end{table}
+
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{l >{\raggedright\arraybackslash}X}
+\toprule
+Thông điệp & Payload ngoài type \\
+\midrule
+HELLO & protocolVersion, serverVerificationChallenge, publicKey X25519. \\
+HELLO\_\allowbreak{}ACK & status, replyTo, protocolVersion, publicKey X25519, serverSignature. \\
+LOGIN\_\allowbreak{}REQUEST & username, password, peerPort. \\
+LOGIN\_\allowbreak{}RESPONSE & status, replyTo; ví dụ INVALID\_\allowbreak{}CREDENTIALS hoặc ALREADY\_\allowbreak{}LOGGED\_\allowbreak{}IN. \\
+PEER\_\allowbreak{}HELLO/ACK & username, peerPort trong request, sessionId, publicKey và serverSignature; ACK thêm status/replyTo. \\
+CHAT/MESSAGE & messageId dạng UUID và content, tối đa 64 KiB UTF-8. \\
+CHAT/RECEIPT & messageId, receipt=DELIVERED; không phải xác nhận đã đọc. \\
+CHAT/BROADCAST & Client gửi communityId, content; server bổ sung sender khi phân phối. \\
+PRESENCE\_\allowbreak{}UPDATE & username, online; chỉ gửi tới các session đã hoàn tất login ACK. \\
+DISCOVERY/RESPONSE & status, replyTo, tcpPort; client lấy IP từ địa chỉ nguồn UDP. \\
+\bottomrule
+\end{tabularx}
+\caption{Payload đại diện cho đăng nhập, discovery và nhắn tin.}
+\end{table}
+
+\subsection{Lớp bảo mật}
+Client pin public key Ed25519 của server tại \path{config/server-public.key}. HELLO/ACK trao đổi public key X25519;
+server ký transcript chứa HELLO và public key phiên. Client kiểm tra chữ ký trước
+khi tạo shared secret. X25519 và HKDF dẫn xuất hai khóa AES-256-GCM theo chiều.
+Hai bên trao đổi SYSTEM/KEY\_\allowbreak{}CONFIRM và KEY\_\allowbreak{}CONFIRM\_\allowbreak{}ACK đã mã hóa trước login.
+Discovery không mã hóa và không tự thiết lập khóa tin cậy.
+
+Sau khi bật mã hóa, PacketChannel đóng các frame JSON hoặc khối byte file trong
+bản ghi có cấu trúc \texttt{[ciphertext length:4][ciphertext + GCM tag:16 byte]}.
+Counter theo chiều được dùng để tạo nonce 12 byte; khóa hai chiều khác nhau.
+Receiver từ chối bản ghi bị sửa hoặc cắt ngắn. Giới hạn counter buộc mở phiên mới
+trước khi dùng lại nonce. Không gửi password hay nội dung file dưới dạng rõ sau handshake.
+
+Peer chat mang proof do server ký, ràng buộc username, sessionId và public key.
+File P2P dùng cặp khóa transfer riêng; READY cung cấp nonce mới để dẫn xuất khóa
+cho từng socket dữ liệu. File community xác thực server bằng khóa tin cậy của phiên.
+
+\subsection{Toàn bộ loại thông điệp FILE}
+Ký hiệu P là peer, C là client, S là server; G/N là phía gửi/nhận file. Socket chat/control mang lệnh;
+socket dữ liệu riêng mang file. Cùng một enum FILE phục vụ P2P và community.
+
+\begin{small}
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.41\linewidth}>{\raggedright\arraybackslash}p{0.14\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}}
+\toprule Loại & Chiều & Vai trò và payload chính \\ \midrule
+\endfirsthead
+\toprule Loại & Chiều & Vai trò và payload chính \\ \midrule
+\endhead
+OFFER & P$\to$P & transferId, sender, receiver, fileName, fileSize, checksum, publicKey. \\
+DECISION & P$\to$P & transferId, replyTo, decision=ACCEPT/REJECT; ACCEPT thêm publicKey. \\
+CANCEL & P$\leftrightarrow$P & transferId trên chat mã hóa; không có replyTo. \\
+TRANSFER\_\allowbreak{}START & P$\to$P & transferId, chọn transfer trên TCP dữ liệu mới. \\
+READY & P$\to$P & transferId, status, replyTo, connectionNonce. \\
+END & G$\to$N & transferId và checksum SHA-256 sau đủ fileSize byte. \\
+RESULT & N$\to$G & status, replyTo; FAIL có reason. \\
+BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}REQUEST & C$\to$S & communityId, fileName, fileSize, checksum. \\
+BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}RESPONSE & S$\to$C & status, replyTo; OK có fileId và uploadToken. \\
+BROADCAST\_\allowbreak{}OFFER & S$\to$C & fileId, sender, communityId, fileName, fileSize, checksum. \\
+BROADCAST\_\allowbreak{}DECISION & C$\to$S & fileId và decision=ACCEPT/REJECT. \\
+BROADCAST\_\allowbreak{}DOWNLOAD\_\allowbreak{}RESPONSE & S$\to$C & status, replyTo; OK có downloadToken. \\
+BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}START & C$\to$S & fileId và uploadToken trên TCP dữ liệu đã bảo mật. \\
+BROADCAST\_\allowbreak{}DOWNLOAD\_\allowbreak{}START & C$\to$S & fileId và downloadToken trên TCP dữ liệu đã bảo mật. \\
+\bottomrule
+\end{longtable}
+\end{small}
+
+File tối đa 500 MiB, đọc/ghi bằng buffer 64 KiB, không tạo JSON cho từng chunk.
+Receiver đọc đủ byte rồi FILE/END, so sánh checksum với cả metadata lẫn END.
+File rỗng bỏ qua phần byte dữ liệu. File hợp lệ mới được đổi từ file tạm sang đích;
+file trùng tên có hậu tố. Sender chỉ hoàn tất sau FILE/RESULT OK đúng replyTo.
+Token community dùng một lần, có thời hạn 5 phút.
+
+\subsection{Timeout, hủy và kết nối lại}
+Offer P2P chờ tối đa 2 phút; timeout được hiển thị là file hết hạn. Control request
+chờ phản hồi 10 giây. Control và chat P2P có PING/PONG riêng: chu kỳ 5 giây, chờ
+ACK 30 giây; lịch timer có thể làm thời điểm phát hiện lệch thêm một chu kỳ.
+EOF hoặc lỗi I/O có thể phát hiện sớm hơn. Server ngắt không làm đóng peer còn sống.
+
+Khi hủy, GUI đổi sang CANCELING, controller đánh dấu session CANCELED và đóng đúng
+data socket. Worker dọn file tạm rồi báo CANCELED; cleanup lỗi được báo FAILED.
+File gốc và file đã hoàn tất không bị xóa. Community hủy cục bộ bằng cách đóng data
+socket, không gửi FILE/CANCEL cho server và không đóng control socket.
+Tốc độ/ETA tính từ byte và thời gian đơn điệu, cập nhật khoảng 250 ms; đây là ước tính.
+
+Reconnect yêu cầu nhập lại mật khẩu, tạo control socket mới, giữ cổng listener và
+P2P còn sống. Không lưu mật khẩu, tự replay request hoặc resume theo offset.
+Đặc tả chi tiết và sơ đồ trạng thái bổ sung nằm trong \path{docs/protocol.md}.
+
+\endgroup

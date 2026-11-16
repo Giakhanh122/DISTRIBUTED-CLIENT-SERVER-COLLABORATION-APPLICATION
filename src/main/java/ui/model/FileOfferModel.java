@@ -17,6 +17,9 @@ public class FileOfferModel {
         REJECTED,
         TRANSFERRING,
         COMPLETED,
+        EXPIRED,
+        CANCELING,
+        CANCELED,
         FAILED
     }
 
@@ -30,6 +33,7 @@ public class FileOfferModel {
     private final StringProperty statusText = new SimpleStringProperty("Pending");
     private final BooleanProperty incoming = new SimpleBooleanProperty(true);
     private final DoubleProperty progress = new SimpleDoubleProperty(0.0);
+    private final StringProperty transferStats = new SimpleStringProperty("—/s • Còn lại: —");
     private final StringProperty localPath = new SimpleStringProperty("");
     private final BooleanProperty broadcast = new SimpleBooleanProperty(false);
     private final StringProperty communityId = new SimpleStringProperty("");
@@ -44,7 +48,7 @@ public class FileOfferModel {
         this.formattedSize.set(formatFileSize(fileSize));
         this.checksum.set(checksum);
         this.incoming.set(incoming);
-        this.statusText.set(incoming ? "Incoming offer: accept or reject" : "Waiting for peer to accept...");
+        this.statusText.set(incoming ? "Bấm nút tải xuống để lưu file" : "Đang chờ người nhận tải xuống...");
     }
 
     public static String formatFileSize(long bytes) {
@@ -79,11 +83,14 @@ public class FileOfferModel {
     public void setStatus(Status status) {
         this.status.set(status);
         switch (status) {
-            case PENDING -> this.statusText.set(isIncoming() ? "Pending your response" : "Waiting for recipient...");
-            case ACCEPTED -> this.statusText.set("Accepted! Connecting P2P...");
+            case PENDING -> this.statusText.set(isIncoming() ? "Bấm nút tải xuống để lưu file" : "Đang chờ người nhận tải xuống...");
+            case ACCEPTED -> this.statusText.set("Đang chuẩn bị tải xuống...");
             case REJECTED -> this.statusText.set("Rejected");
             case TRANSFERRING -> this.statusText.set("Transferring file...");
-            case COMPLETED -> this.statusText.set(isIncoming() ? "Saved to downloads/" : "Sent successfully!");
+            case COMPLETED -> this.statusText.set(isIncoming() ? "Đã lưu file" : "Sent successfully!");
+            case EXPIRED -> this.statusText.set("File đã hết hạn");
+            case CANCELING -> this.statusText.set("Đang hủy truyền file");
+            case CANCELED -> this.statusText.set("Đã hủy truyền file");
             case FAILED -> this.statusText.set("Transfer failed or cancelled");
         }
     }
@@ -98,6 +105,18 @@ public class FileOfferModel {
     public double getProgress() { return progress.get(); }
     public DoubleProperty progressProperty() { return progress; }
     public void setProgress(double value) { this.progress.set(value); }
+
+    public StringProperty transferStatsProperty() { return transferStats; }
+
+    public void updateTransferStats(double bytesPerSecond, long remainingSeconds) {
+        String speed = bytesPerSecond > 0 ? formatFileSize((long) bytesPerSecond) + "/s" : "—/s";
+        String remaining;
+        if (remainingSeconds < 0) remaining = "—";
+        else if (remainingSeconds < 60) remaining = remainingSeconds + " giây";
+        else if (remainingSeconds < 3600) remaining = remainingSeconds / 60 + " phút " + remainingSeconds % 60 + " giây";
+        else remaining = remainingSeconds / 3600 + " giờ " + (remainingSeconds % 3600) / 60 + " phút";
+        transferStats.set(speed + " • Còn lại: " + remaining);
+    }
 
     public String getLocalPath() { return localPath.get(); }
     public StringProperty localPathProperty() { return localPath; }

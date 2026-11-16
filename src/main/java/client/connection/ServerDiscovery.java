@@ -1,7 +1,7 @@
 package client.connection;
 
-import protocols.ConnectionType;
-import protocols.DiscoveryType;
+import protocols.type.ConnectionType;
+import protocols.type.DiscoveryType;
 
 import client.Client;
 

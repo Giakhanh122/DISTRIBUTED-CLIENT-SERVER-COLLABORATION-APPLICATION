@@ -16,9 +16,6 @@ final class ConsoleEvents implements ClientEvents {
     @Override public void onMessageDelivered(String peer, String messageId) {
         System.out.println("[DELIVERED] Message to " + peer + " was delivered.");
     }
-    @Override public void onTyping(String peer, boolean typing) {
-        System.out.println(typing ? peer + " is typing..." : peer + " stopped typing.");
-    }
     @Override public void onPresenceUpdate(String username, boolean online) {
         System.out.println("[PRESENCE] " + username + (online ? " is online." : " is offline."));
     }
@@ -37,7 +34,7 @@ final class ConsoleEvents implements ClientEvents {
     @Override public void onPeerDisconnected(String peer) { System.out.println("[P2P] Disconnected from " + peer); }
 
     @Override public void onServerClosed() {
-        System.out.println("Server disconnected. Existing P2P connections remain available; use /reconnect.");
+        System.out.println("Connection to server lost. P2P connections are monitored separately; use /reconnect.");
     }
 
     @Override public void onServerReconnected() {
@@ -57,7 +54,7 @@ final class ConsoleEvents implements ClientEvents {
     }
 
     @Override public void onFileState(String id, FileState state, String detail) {
-        FileOffer offer = state == FileState.TRANSFERRING ? offers.get(id) : offers.remove(id);
+        FileOffer offer = (state == FileState.TRANSFERRING || state == FileState.CANCELING) ? offers.get(id) : offers.remove(id);
         String name = offer == null ? id : offer.meta().fileName();
         String message = "[FILE " + state + "] " + name + (detail == null ? "" : " — " + detail);
         if (state == FileState.FAILED) System.err.println(message);

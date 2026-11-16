@@ -1,12 +1,12 @@
 package server.connection;
 
-import protocols.AuthType;
-import protocols.ChatType;
-import protocols.CommunityType;
-import protocols.ConnectionType;
-import protocols.FileType;
-import protocols.SystemType;
-import protocols.UserType;
+import protocols.type.AuthType;
+import protocols.type.ChatType;
+import protocols.type.CommunityType;
+import protocols.type.ConnectionType;
+import protocols.type.FileType;
+import protocols.type.SystemType;
+import protocols.type.UserType;
 
 import java.io.IOException;
 import java.net.Socket;
@@ -145,7 +145,7 @@ public class ClientHandler implements Runnable {
                     removed = userSessions.remove(session);
                     chatSessions.userDisconnected(session);
                 }
-                if (removed) publishPresence(session.username(), false, null);
+                if (removed && session.isReady()) publishPresence(session.username(), false, null);
             }
             System.out.println("Client " + address + " disconnected");
         }
@@ -273,7 +273,11 @@ public class ClientHandler implements Runnable {
         Packet response = Packet.status(AuthType.LOGIN_RESPONSE, request.sequence(), status);
         channel.send(response);
 
-        if (status.equals("OK")) publishPresence(username, true, session);
+        if (status.equals("OK")) {
+            // Reserve the username before ACK, but never push events ahead of LOGIN_RESPONSE.
+            session.activate();
+            publishPresence(username, true, session);
+        }
         return status.equals("OK");
     }
 

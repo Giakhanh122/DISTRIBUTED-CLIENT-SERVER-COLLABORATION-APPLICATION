@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 import java.io.IOException;
 

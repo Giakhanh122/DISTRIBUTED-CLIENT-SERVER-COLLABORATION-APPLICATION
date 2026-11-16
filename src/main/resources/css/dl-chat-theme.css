@@ -407,6 +407,18 @@
     -fx-fill: #A1A1AA;
 }
 
+.rail-unread-badge {
+    -fx-background-color: #EF4444;
+    -fx-text-fill: white;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 10px;
+    -fx-min-width: 18px;
+    -fx-min-height: 18px;
+    -fx-alignment: center;
+    -fx-padding: 1px 4px;
+}
+
 .unread-badge {
     -fx-background-color: #F59E0B;
     -fx-text-fill: #09090B;

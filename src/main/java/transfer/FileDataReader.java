@@ -1,6 +1,6 @@
 package transfer;
 
-import protocols.FileType;
+import protocols.type.FileType;
 
 import java.io.IOException;
 import java.io.OutputStream;

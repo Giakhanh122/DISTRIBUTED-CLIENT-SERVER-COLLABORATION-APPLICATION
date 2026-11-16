@@ -1,4 +1,6 @@
-package protocols;
+package protocols.type;
+
+import protocols.OpCode;
 
 /** Operations in the CHAT opcode group. */
 public enum ChatType implements MessageType {
@@ -6,7 +8,6 @@ public enum ChatType implements MessageType {
     BROADCAST,
     GLOBAL_BROADCAST,
     RECEIPT,
-    TYPING,
     SESSION_REPORT,
     SESSION_REPORT_RESPONSE(true),
     SESSION_LIST_REQUEST,

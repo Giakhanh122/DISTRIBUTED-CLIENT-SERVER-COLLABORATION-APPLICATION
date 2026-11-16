@@ -1,5 +1,8 @@
 package protocols;
 
+import protocols.type.FileType;
+import protocols.type.MessageType;
+import protocols.type.SystemType;
 import java.io.IOException;
 
 public final class PacketValidator {

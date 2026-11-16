@@ -60,9 +60,15 @@
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
 
-            <Button fx:id="railCommunitiesBtn" onAction="#handleSelectCommunitiesTab" styleClass="rail-btn-active"/>
+            <StackPane maxWidth="44.0" prefWidth="44.0">
+                <Button fx:id="railCommunitiesBtn" onAction="#handleSelectCommunitiesTab" styleClass="rail-btn-active"/>
+                <Label fx:id="communityUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
+            </StackPane>
             <Button fx:id="railExploreBtn" onAction="#handleSelectExploreTab" styleClass="rail-btn"/>
-            <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
+            <StackPane maxWidth="44.0" prefWidth="44.0">
+                <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
+                <Label fx:id="directUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
+            </StackPane>
             <Button fx:id="railGlobalBtn" onAction="#handleSelectGlobalTab" styleClass="rail-btn"/>
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
@@ -131,6 +137,15 @@
                 <HBox alignment="CENTER_RIGHT" spacing="8.0">
                     <Button fx:id="joinLeaveCommunityBtn" text="Join Community" onAction="#handleToggleJoinCommunity" styleClass="btn-primary" visible="false" managed="false"/>
                 </HBox>
+            </HBox>
+
+            <HBox fx:id="serverOfflineBanner" alignment="CENTER_LEFT" spacing="12.0"
+                  visible="false" managed="false"
+                  style="-fx-background-color: #FEF3C7; -fx-padding: 10px 16px;">
+                <Label fx:id="serverOfflineMessage" wrapText="true" maxWidth="Infinity"
+                       HBox.hgrow="ALWAYS" style="-fx-text-fill: #92400E; -fx-font-size: 12px;"/>
+                <Button fx:id="bannerReconnectBtn" text="Kết nối lại" onAction="#handleReconnect"
+                        styleClass="btn-secondary"/>
             </HBox>
 
             <StackPane VBox.vgrow="ALWAYS">

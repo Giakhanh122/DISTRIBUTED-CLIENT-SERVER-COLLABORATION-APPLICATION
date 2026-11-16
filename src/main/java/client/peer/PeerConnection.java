@@ -1,7 +1,12 @@
 package client.peer;
 
+import protocols.type.ChatType;
+import protocols.type.ConnectionType;
+import protocols.type.FileType;
+import protocols.type.SystemType;
 import client.security.ServerKeyPinning;
 import network.PacketChannel;
+import network.HeartbeatMonitor;
 
 import java.io.IOException;
 import java.net.Socket;
@@ -30,6 +35,7 @@ public class PeerConnection implements AutoCloseable {
     private final Socket socket;
     private final PacketChannel channel;
     private final KeyPair keyPair;
+    private final HeartbeatMonitor heartbeat;
     private static final int MAX_CHAT_BYTES = 64 * 1024;
     private UUID sessionId = UUID.randomUUID();
     private final AtomicBoolean disconnectReported = new AtomicBoolean();
@@ -40,6 +46,11 @@ public class PeerConnection implements AutoCloseable {
         this.channel = channel;
         this.socket = channel.socket();
         this.keyPair = createKeyPair();
+        this.heartbeat = new HeartbeatMonitor(channel, () -> {
+            try { close(); } catch (IOException e) {
+                System.err.println("Cannot close unresponsive peer: " + e.getMessage());
+            }
+        });
     }
 
     public PublicKey publicKey() {
@@ -153,9 +164,6 @@ public class PeerConnection implements AutoCloseable {
         sendPacket(Packet.json(ChatType.MESSAGE, Json.object("messageId", messageId, "content", message)));
     }
 
-    public void sendTyping(boolean typing) throws IOException {
-        sendPacket(Packet.json(ChatType.TYPING, Json.object("typing", typing)));
-    }
 
     public long sendPacket(Packet packet) throws IOException {
         return channel.send(packet);
@@ -186,38 +194,43 @@ public class PeerConnection implements AutoCloseable {
     }
 
     public void readMessages(String peerUsername, Consumer<String> onMessage, Consumer<Packet> onFilePacket) throws IOException {
-        readMessages(peerUsername, (id, content) -> onMessage.accept(content), onFilePacket, id -> {}, typing -> {});
+        readMessages(peerUsername, (id, content) -> onMessage.accept(content), onFilePacket, id -> {});
     }
 
     public void readMessages(String peerUsername, BiConsumer<String, String> onMessage,
-            Consumer<Packet> onFilePacket, Consumer<String> onReceipt, Consumer<Boolean> onTyping) throws IOException {
-        Packet packet;
-        while ((packet = channel.read()) != null) {
-            switch (packet.type()) {
-                case ChatType.MESSAGE -> {
-                    String messageId = packet.string("messageId");
-                    requireMessageId(messageId);
-                    String content = packet.string("content");
-                    if (content.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
-                        throw new IOException("Message exceeds chat limit");
+            Consumer<Packet> onFilePacket, Consumer<String> onReceipt) throws IOException {
+        heartbeat.start();
+        try {
+            Packet packet;
+            while ((packet = channel.read()) != null) {
+                if (heartbeat.handle(packet)) continue;
+                switch (packet.type()) {
+                    case ChatType.MESSAGE -> {
+                        String messageId = packet.string("messageId");
+                        requireMessageId(messageId);
+                        String content = packet.string("content");
+                        if (content.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
+                            throw new IOException("Message exceeds chat limit");
+                        }
+                        onMessage.accept(messageId, content);
+                        sendPacket(Packet.json(ChatType.RECEIPT,
+                                Json.object("messageId", messageId, "receipt", "DELIVERED")));
                     }
-                    onMessage.accept(messageId, content);
-                    sendPacket(Packet.json(ChatType.RECEIPT,
-                            Json.object("messageId", messageId, "receipt", "DELIVERED")));
-                }
-                case FileType.OFFER, FileType.DECISION -> onFilePacket.accept(packet);
-                case ChatType.RECEIPT -> {
-                    String messageId = packet.string("messageId");
-                    requireMessageId(messageId);
-                    if (!packet.string("receipt").equals("DELIVERED")) {
-                        throw new IOException("Unexpected receipt status");
+                    case FileType.OFFER, FileType.DECISION, FileType.CANCEL -> onFilePacket.accept(packet);
+                    case ChatType.RECEIPT -> {
+                        String messageId = packet.string("messageId");
+                        requireMessageId(messageId);
+                        if (!packet.string("receipt").equals("DELIVERED")) {
+                            throw new IOException("Unexpected receipt status");
+                        }
+                        onReceipt.accept(messageId);
                     }
-                    onReceipt.accept(messageId);
+                    case SystemType.ERROR -> throw new IOException("Peer protocol error: " + packet.string("reason"));
+                    default -> throw new IOException("Unexpected peer chat packet: " + packet.type());
                 }
-                case ChatType.TYPING -> onTyping.accept(packet.bool("typing"));
-                case SystemType.ERROR -> throw new IOException("Peer protocol error: " + packet.string("reason"));
-                default -> throw new IOException("Unexpected peer chat packet: " + packet.type());
             }
+        } finally {
+            close();
         }
     }
 
@@ -233,6 +246,7 @@ public class PeerConnection implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        socket.close();
+        heartbeat.close();
+        channel.close();
     }
 }

@@ -1,6 +1,6 @@
 package ui.model;
 
-import java.time.LocalTime;
+import java.time.LocalDateTime;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import java.time.format.DateTimeFormatter;
@@ -15,49 +15,84 @@ public class ChatMessageModel {
     }
 
     private final StringProperty sendStatus = new SimpleStringProperty("");
-    private boolean delivered;
+    private final StringProperty sendStatusDetail = new SimpleStringProperty("");
+    private enum SendState { NONE, SENDING, WAITING, UNCONFIRMED, SENT, DELIVERED, FAILED }
+    private SendState sendState = SendState.NONE;
+    private String messageId;
     public StringProperty sendStatusProperty() { return sendStatus; }
-    public void sending() { sendStatus.set("Sending..."); }
+    public StringProperty sendStatusDetailProperty() { return sendStatusDetail; }
+    public String getMessageId() { return messageId; }
+    public void setMessageId(String id) { messageId = id; }
+    public void sending() {
+        sendState = SendState.SENDING;
+        sendStatus.set("Đang gửi...");
+        sendStatusDetail.set("Đang gửi tin nhắn.");
+    }
     public void sent(String error) {
-        if (!delivered) sendStatus.set(error == null ? "Sent (unconfirmed)" : "Failed: " + error);
+        if (sendState == SendState.DELIVERED) return;
+        if (error != null) {
+            sendState = SendState.FAILED;
+            sendStatus.set("Gửi thất bại: " + error);
+            sendStatusDetail.set(error);
+        } else if (sendState != SendState.UNCONFIRMED) {
+            sendState = SendState.WAITING;
+            sendStatus.set("Đã gửi");
+            sendStatusDetail.set("Đã gửi qua kết nối, đang chờ phía nhận xác nhận.");
+        }
+    }
+    public void broadcastSent(String error) {
+        if (error != null) { sent(error); return; }
+        sendState = SendState.SENT;
+        sendStatus.set("Đã gửi");
+        sendStatusDetail.set("Đã gửi qua kết nối tới server. Chưa có xác nhận từng thành viên đã nhận hoặc đọc.");
+    }
+    public void unconfirmed() {
+        if (sendState == SendState.DELIVERED || sendState == SendState.FAILED) return;
+        sendState = SendState.UNCONFIRMED;
+        sendStatus.set("Chưa xác nhận được");
+        sendStatusDetail.set("Chưa nhận được xác nhận từ phía nhận; tin nhắn có thể đã đến nơi.");
     }
     public void delivered() {
-        delivered = true;
-        sendStatus.set("Delivered");
+        sendState = SendState.DELIVERED;
+        sendStatus.set("Đã gửi");
+        sendStatusDetail.set("Phía nhận đã xác nhận nhận được tin nhắn. Chưa có xác nhận đã đọc.");
     }
 
     private final Type type;
     private final String sender;
     private final String content;
     private final String timestamp;
+    private final LocalDateTime createdAt;
     private final boolean mine;
     private final FileOfferModel fileOffer;
 
     public ChatMessageModel(String sender, String content, boolean mine) {
-        this(Type.TEXT, sender, content, LocalTime.now().format(TIME_FORMATTER), mine, null);
+        this(Type.TEXT, sender, content, null, mine, null);
     }
 
     public ChatMessageModel(Type type, String sender, String content, String timestamp, boolean mine, FileOfferModel fileOffer) {
         this.type = type;
         this.sender = sender;
         this.content = content;
-        this.timestamp = timestamp != null ? timestamp : LocalTime.now().format(TIME_FORMATTER);
+        this.createdAt = LocalDateTime.now();
+        this.timestamp = timestamp != null ? timestamp : createdAt.format(TIME_FORMATTER);
         this.mine = mine;
         this.fileOffer = fileOffer;
     }
 
     public static ChatMessageModel system(String message) {
-        return new ChatMessageModel(Type.SYSTEM, "System", message, LocalTime.now().format(TIME_FORMATTER), false, null);
+        return new ChatMessageModel(Type.SYSTEM, "System", message, null, false, null);
     }
 
     public static ChatMessageModel file(String sender, FileOfferModel offer, boolean mine) {
-        return new ChatMessageModel(Type.FILE_OFFER, sender, offer.getFileName(), LocalTime.now().format(TIME_FORMATTER), mine, offer);
+        return new ChatMessageModel(Type.FILE_OFFER, sender, offer.getFileName(), null, mine, offer);
     }
 
     public Type getType() { return type; }
     public String getSender() { return sender; }
     public String getContent() { return content; }
     public String getTimestamp() { return timestamp; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
     public boolean isMine() { return mine; }
     public boolean isSystem() { return type == Type.SYSTEM; }
     public boolean isFileOffer() { return type == Type.FILE_OFFER; }

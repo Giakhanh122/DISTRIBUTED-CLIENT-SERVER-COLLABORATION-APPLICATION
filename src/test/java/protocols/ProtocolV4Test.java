@@ -6,6 +6,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import protocols.type.*;
 
 class ProtocolV4Test {
     private Packet read(String json) throws IOException {

@@ -41,6 +41,7 @@ public class CommunityModel {
     public void setJoined(boolean joined) { this.joined.set(joined); }
 
     public int getUnreadCount() { return unreadCount.get(); }
+    public void setUnreadCount(int count) { unreadCount.set(count); }
     public IntegerProperty unreadCountProperty() { return unreadCount; }
     public void incrementUnread() { this.unreadCount.set(this.unreadCount.get() + 1); }
     public void clearUnread() { this.unreadCount.set(0); }

@@ -26,7 +26,7 @@ public final class ConversationStore {
             String id = offer.getCommunityId();
             if (id == null || id.isBlank()) throw new IllegalArgumentException("Broadcast file is missing community ID");
             key = communityKey(id);
-            if (offer.isIncoming()) offer.setStatusText("Community file shared. Accept to download or reject.");
+            if (offer.isIncoming()) offer.setStatusText("File community. Bấm nút tải xuống để lưu file.");
         } else key = directKey(offer.isIncoming() ? offer.getSender() : offer.getReceiver());
         return new Entry(key, ChatMessageModel.file(offer.getSender(), offer, !offer.isIncoming()));
     }

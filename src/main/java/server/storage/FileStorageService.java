@@ -54,10 +54,8 @@ public class FileStorageService {
     }
 
     /** Delete a temp file (cleanup on failure). */
-    public void deleteTempIfExists(String fileId) {
-        try {
-            Files.deleteIfExists(tempPath(fileId));
-        } catch (IOException ignored) {}
+    public void deleteTempIfExists(String fileId) throws IOException {
+        Files.deleteIfExists(tempPath(fileId));
     }
 
     private static String sanitize(String rawName) {
