@@ -2,6 +2,12 @@
 
 Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP socket.
 
+- GVHD : Nguyễn Lê Duy Lai
+- Sinh viên thực hiện:
+  - Võ Văn Gia Khánh - 2411549
+  - Nguyễn Hồng Phúc - 2412732
+  - Nguyễn Tiến Đạt - 2410712
+
 ## Cài đặt và chạy
 
 Làm theo thứ tự các bước dưới đây. Cần cài JDK và Maven; Maven sẽ tự tải các
