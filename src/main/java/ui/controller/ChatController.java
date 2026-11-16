@@ -63,12 +63,14 @@ public class ChatController implements ClientEventListener {
     @FXML private Button railCommunitiesBtn;
     @FXML private Button railExploreBtn;
     @FXML private Button railDirectBtn;
+    @FXML private Button railGlobalBtn;
     @FXML private Button addCommunityBtn;
 
     @FXML private TextField searchField;
     @FXML private Label sidebarSectionTitle;
     @FXML private ListView<CommunityModel> communitiesListView;
     @FXML private ListView<UserModel> usersListView;
+    @FXML private Label globalAudienceView;
     @FXML private StackPane currentUserAvatar;
     @FXML private Label currentUserInitials;
     @FXML private Label currentUsernameLabel;
@@ -115,7 +117,7 @@ public class ChatController implements ClientEventListener {
 
     private final ConversationStore conversations = new ConversationStore();
 
-    private enum Mode { COMMUNITY, EXPLORE, DIRECT }
+    private enum Mode { COMMUNITY, EXPLORE, DIRECT, GLOBAL }
     private Mode currentMode = Mode.COMMUNITY;
 
     private ChatMessageView messageView;
@@ -174,6 +176,7 @@ public class ChatController implements ClientEventListener {
         railCommunitiesBtn.setTooltip(new Tooltip("My Communities (Joined)"));
         railExploreBtn.setTooltip(new Tooltip("Explore Communities (Find & Join)"));
         railDirectBtn.setTooltip(new Tooltip("Direct Messages (P2P)"));
+        railGlobalBtn.setTooltip(new Tooltip("Global Chat"));
         addCommunityBtn.setTooltip(new Tooltip("Create Community"));
 
         logoutBtn.setGraphic(IconUtils.createIconNode(IconUtils.LOGOUT, 14, "#71717A"));
@@ -216,7 +219,7 @@ public class ChatController implements ClientEventListener {
         communitiesListView.setCellFactory(list -> ConversationCells.community());
 
         communitiesListView.getSelectionModel().selectedItemProperty().addListener((obs, oldV, newV) -> {
-            if (newV != null && currentMode != Mode.DIRECT) {
+            if (newV != null && (currentMode == Mode.COMMUNITY || currentMode == Mode.EXPLORE)) {
                 selectCommunity(newV);
             }
         });
@@ -266,7 +269,7 @@ public class ChatController implements ClientEventListener {
         stopLocalTyping();
         clearRemoteTyping();
         if (currentMode == Mode.DIRECT) activePeer = null;
-        else activeCommunity = null;
+        else if (currentMode != Mode.GLOBAL) activeCommunity = null;
         emptyStateView.setVisible(true);
         emptyStateView.setManaged(true);
         messageScrollPane.setVisible(false);
@@ -279,6 +282,7 @@ public class ChatController implements ClientEventListener {
         targetStatusDot.setVisible(false);
         targetMetaLabel.setText("No active conversation");
         inputContainer.setDisable(true);
+        attachBtn.setDisable(false);
         messageInput.clear();
         messageInput.setPromptText("Select a community or user...");
     }
@@ -292,6 +296,9 @@ public class ChatController implements ClientEventListener {
     @FXML
     private void handleSelectDirectTab() { selectNavigationTab(Mode.DIRECT); }
 
+    @FXML
+    private void handleSelectGlobalTab() { selectNavigationTab(Mode.GLOBAL); }
+
     private void selectNavigationTab(Mode mode) {
         stopLocalTyping();
         clearRemoteTyping();
@@ -299,25 +306,35 @@ public class ChatController implements ClientEventListener {
         updateRailButton(railCommunitiesBtn, Mode.COMMUNITY, IconUtils.CHAT_BUBBLE);
         updateRailButton(railExploreBtn, Mode.EXPLORE, IconUtils.COMPASS);
         updateRailButton(railDirectBtn, Mode.DIRECT, IconUtils.USER);
+        updateRailButton(railGlobalBtn, Mode.GLOBAL, IconUtils.USERS);
         sidebarSectionTitle.setText(switch (mode) {
             case COMMUNITY -> "MY COMMUNITIES";
             case EXPLORE -> "EXPLORE COMMUNITIES";
             case DIRECT -> "ONLINE USERS";
+            case GLOBAL -> "GLOBAL CHAT";
         });
+        searchField.setVisible(mode != Mode.GLOBAL);
+        searchField.setManaged(mode != Mode.GLOBAL);
         searchField.setPromptText(switch (mode) {
             case COMMUNITY -> "Search my communities...";
             case EXPLORE -> "Search all communities...";
             case DIRECT -> "Search online users...";
+            case GLOBAL -> "Global chat";
         });
         boolean direct = mode == Mode.DIRECT;
+        boolean global = mode == Mode.GLOBAL;
         usersListView.setVisible(direct);
         usersListView.setManaged(direct);
-        communitiesListView.setVisible(!direct);
-        communitiesListView.setManaged(!direct);
+        communitiesListView.setVisible(!direct && !global);
+        communitiesListView.setManaged(!direct && !global);
+        globalAudienceView.setVisible(global);
+        globalAudienceView.setManaged(global);
+        attachBtn.setDisable(global);
         if (direct) adapter.requestUserList();
-        else adapter.requestCommunityList();
+        else if (!global) adapter.requestCommunityList();
         applyFilter(searchField.getText());
-        if (direct && activePeer != null) selectPeerUser(activePeer);
+        if (global) showGlobalConversation();
+        else if (direct && activePeer != null) selectPeerUser(activePeer);
         else if (!direct && activeCommunity != null && (mode == Mode.EXPLORE || activeCommunity.isJoined())) {
             selectCommunity(activeCommunity);
         } else showEmptyChatState();
@@ -365,6 +382,7 @@ public class ChatController implements ClientEventListener {
         stopLocalTyping();
         clearRemoteTyping();
         this.activeCommunity = comm;
+        attachBtn.setDisable(false);
         comm.clearUnread();
         communitiesListView.refresh();
 
@@ -396,6 +414,7 @@ public class ChatController implements ClientEventListener {
         stopLocalTyping();
         clearRemoteTyping();
         this.activePeer = user;
+        attachBtn.setDisable(false);
         user.clearUnread();
         usersListView.refresh();
 
@@ -423,6 +442,27 @@ public class ChatController implements ClientEventListener {
         messageInput.setPromptText("Message @" + user.getUsername() + "...");
 
         loadConversation(ConversationStore.directKey(user.getUsername()));
+        Platform.runLater(() -> messageInput.requestFocus());
+    }
+
+    private void showGlobalConversation() {
+        stopLocalTyping();
+        clearRemoteTyping();
+        targetNameLabel.setText("Global Chat");
+        targetInitials.setText("G");
+        targetAvatar.setStyle("-fx-background-color: #F59E0B;");
+        targetStatusDot.setVisible(false);
+        targetMetaLabel.setText("Broadcast to all online users");
+        joinLeaveCommunityBtn.setVisible(false);
+        joinLeaveCommunityBtn.setManaged(false);
+        emptyStateView.setVisible(false);
+        emptyStateView.setManaged(false);
+        messageScrollPane.setVisible(true);
+        messageScrollPane.setManaged(true);
+        inputContainer.setDisable(!adapter.isServerConnected() || adapter.isReconnecting());
+        attachBtn.setDisable(true);
+        messageInput.setPromptText("Message everyone online...");
+        loadConversation(ConversationStore.globalKey());
         Platform.runLater(() -> messageInput.requestFocus());
     }
 
@@ -466,24 +506,30 @@ public class ChatController implements ClientEventListener {
     @FXML
     private void handleSendMessage() {
         String text = messageInput.getText().trim();
-        if ((currentMode == Mode.DIRECT && activePeer == null)
-                || (currentMode != Mode.DIRECT && activeCommunity == null)) return;
-
         boolean direct = currentMode == Mode.DIRECT;
-        String target = direct ? activePeer.getUsername() : activeCommunity.getId();
-        String convKey = direct
-                ? ConversationStore.directKey(target)
-                : ConversationStore.communityKey(target);
+        boolean global = currentMode == Mode.GLOBAL;
+        if ((direct && activePeer == null)
+                || (!direct && !global && activeCommunity == null)) return;
+
+        String target = direct ? activePeer.getUsername()
+                : global ? null : activeCommunity.getId();
+        String convKey = direct ? ConversationStore.directKey(target)
+                : global ? ConversationStore.globalKey() : ConversationStore.communityKey(target);
         if (!pendingAttachments.isEmpty() && !convKey.equals(pendingTargetKey)) {
             JavaFxUtils.showErrorAlert("Attachments not sent",
                     "The selected files are staged for " + pendingTargetLabel
                             + ". Return to that conversation or clear the attachments first.");
             return;
         }
+        if (global && !pendingAttachments.isEmpty()) {
+            JavaFxUtils.showErrorAlert("Attachments not sent",
+                    "Global chat supports text messages only. Clear the staged files or return to their conversation.");
+            return;
+        }
         if (text.isEmpty() && pendingAttachments.isEmpty()) return;
 
         List<File> attachments = List.copyOf(pendingAttachments);
-        String communityName = direct ? null : activeCommunity.getName();
+        String communityName = direct || global ? null : activeCommunity.getName();
         stopLocalTyping();
         messageInput.clear();
         clearPendingAttachments();
@@ -500,13 +546,13 @@ public class ChatController implements ClientEventListener {
                     msg.sent(error);
                     if (error != null) clearPendingReceipt(messageId);
                 });
-            }
+            } else if (global) adapter.broadcastGlobalMessage(text, msg::sent);
             else adapter.broadcastMessage(target, text, msg::sent);
         }
 
         for (File file : attachments) {
             if (direct) adapter.sendFile(target, file);
-            else adapter.broadcastFile(target, communityName, file);
+            else if (!global) adapter.broadcastFile(target, communityName, file);
         }
         scrollToBottom();
     }
@@ -621,13 +667,14 @@ public class ChatController implements ClientEventListener {
         if (currentMode == Mode.DIRECT) {
             return activePeer == null ? null : ConversationStore.directKey(activePeer.getUsername());
         }
+        if (currentMode == Mode.GLOBAL) return ConversationStore.globalKey();
         return activeCommunity == null ? null : ConversationStore.communityKey(activeCommunity.getId());
     }
 
     private String currentConversationLabel() {
-        return currentMode == Mode.DIRECT
-                ? "@" + activePeer.getUsername()
-                : "#" + activeCommunity.getName();
+        if (currentMode == Mode.DIRECT) return "@" + activePeer.getUsername();
+        if (currentMode == Mode.GLOBAL) return "Global Chat";
+        return "#" + activeCommunity.getName();
     }
 
     private boolean containsAttachment(File candidate) {
@@ -759,7 +806,7 @@ public class ChatController implements ClientEventListener {
             }
             if (!found) {
                 activeCommunity = null;
-                if (currentMode != Mode.DIRECT) showEmptyChatState();
+                if (currentMode == Mode.COMMUNITY || currentMode == Mode.EXPLORE) showEmptyChatState();
             }
         }
         updateConnectionState();
@@ -774,7 +821,8 @@ public class ChatController implements ClientEventListener {
                 break;
             }
         }
-        if (currentMode != Mode.DIRECT && activeCommunity != null && activeCommunity.getId().equals(communityId)) {
+        if ((currentMode == Mode.COMMUNITY || currentMode == Mode.EXPLORE)
+                && activeCommunity != null && activeCommunity.getId().equals(communityId)) {
             activeCommunity.setJoined(true);
             updateJoinLeaveButton(true);
             inputContainer.setDisable(!adapter.isServerConnected());
@@ -792,11 +840,13 @@ public class ChatController implements ClientEventListener {
         }
         if (activeCommunity != null && activeCommunity.getId().equals(communityId)) {
             activeCommunity.setJoined(false);
-            updateJoinLeaveButton(false);
-            inputContainer.setDisable(true);
-            String q = searchField.getText();
-            if (q == null || q.trim().isEmpty()) {
-                showEmptyChatState();
+            if (currentMode == Mode.COMMUNITY || currentMode == Mode.EXPLORE) {
+                updateJoinLeaveButton(false);
+                inputContainer.setDisable(true);
+                String q = searchField.getText();
+                if (q == null || q.trim().isEmpty()) {
+                    showEmptyChatState();
+                }
             }
         }
         applyFilter(searchField.getText());
@@ -809,6 +859,12 @@ public class ChatController implements ClientEventListener {
             return;
         }
         appendMessage(ConversationStore.communityKey(communityId),
+                new ChatMessageModel(sender, message, sender.equals(adapter.getCurrentUsername())));
+    }
+
+    @Override
+    public void onGlobalBroadcastMessageReceived(String sender, String message) {
+        appendMessage(ConversationStore.globalKey(),
                 new ChatMessageModel(sender, message, sender.equals(adapter.getCurrentUsername())));
     }
 
@@ -919,6 +975,7 @@ public class ChatController implements ClientEventListener {
         conversations.add(key, message);
         String activeKey = currentMode == Mode.DIRECT
                 ? (activePeer == null ? null : ConversationStore.directKey(activePeer.getUsername()))
+                : currentMode == Mode.GLOBAL ? ConversationStore.globalKey()
                 : (activeCommunity == null ? null : ConversationStore.communityKey(activeCommunity.getId()));
         if (key.equals(activeKey)) {
             messageView.render(message);
@@ -966,7 +1023,13 @@ public class ChatController implements ClientEventListener {
         joinLeaveCommunityBtn.setDisable(!ready);
         if (currentMode == Mode.DIRECT) {
             inputContainer.setDisable(activePeer == null || !adapter.isPeerConnected(activePeer.getUsername()));
-        } else inputContainer.setDisable(!ready || activeCommunity == null || !activeCommunity.isJoined());
+        } else if (currentMode == Mode.GLOBAL) {
+            inputContainer.setDisable(!ready);
+            attachBtn.setDisable(true);
+        } else {
+            inputContainer.setDisable(!ready || activeCommunity == null || !activeCommunity.isJoined());
+            attachBtn.setDisable(false);
+        }
     }
 
     @Override public void onReconnecting() { updateConnectionState(); }

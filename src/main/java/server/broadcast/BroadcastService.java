@@ -76,6 +76,25 @@ public final class BroadcastService {
         }
     }
 
+    public void handleGlobalBroadcastMessage(Packet request, UserSession session) throws IOException {
+        PacketValidator.validateRequest(request, ChatType.GLOBAL_BROADCAST, 1, PacketCodec.MAX_JSON_LENGTH);
+        String message = request.string("content");
+        if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
+            throw new IOException("Message exceeds limit");
+        }
+
+        Packet broadcast = Packet.json(ChatType.GLOBAL_BROADCAST,
+                Json.object("sender", session.username(), "content", message));
+        for (UserSession recipient : userSessions.listOnlineUsers()) {
+            if (recipient.username().equals(session.username())) continue;
+            try {
+                recipient.channel().send(broadcast);
+            } catch (IOException e) {
+                System.err.println("Global broadcast to " + recipient.username() + " failed: " + e.getMessage());
+            }
+        }
+    }
+
     public void handleBroadcastFileUploadRequest(Packet request, UserSession session) throws IOException {
         PacketChannel channel = session.channel();
         PacketValidator.validateRequest(request, FileType.BROADCAST_UPLOAD_REQUEST, 1, MAX_COMMUNITY_BYTES * 2);

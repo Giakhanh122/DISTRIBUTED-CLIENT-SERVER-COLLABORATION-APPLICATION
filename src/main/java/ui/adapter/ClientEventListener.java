@@ -14,6 +14,7 @@ public interface ClientEventListener {
     default void onMessageDelivered(String peerUsername, String messageId) {}
     default void onTypingIndicator(String peerUsername, boolean typing) {}
     default void onBroadcastMessageReceived(String communityId, String sender, String message) {}
+    default void onGlobalBroadcastMessageReceived(String sender, String message) {}
     default void onCommunityListUpdated(List<CommunityModel> communities) {}
     default void onCommunityJoined(String communityId, String communityName) {}
     default void onCommunityLeft(String communityId) {}

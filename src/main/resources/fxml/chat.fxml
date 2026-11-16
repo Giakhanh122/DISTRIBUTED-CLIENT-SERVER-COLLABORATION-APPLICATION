@@ -63,6 +63,7 @@
             <Button fx:id="railCommunitiesBtn" onAction="#handleSelectCommunitiesTab" styleClass="rail-btn-active"/>
             <Button fx:id="railExploreBtn" onAction="#handleSelectExploreTab" styleClass="rail-btn"/>
             <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
+            <Button fx:id="railGlobalBtn" onAction="#handleSelectGlobalTab" styleClass="rail-btn"/>
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
 
@@ -80,6 +81,9 @@
             <StackPane VBox.vgrow="ALWAYS">
                 <ListView fx:id="communitiesListView" styleClass="list-view"/>
                 <ListView fx:id="usersListView" styleClass="list-view" visible="false" managed="false"/>
+                <Label fx:id="globalAudienceView" text="Messages go to all users currently online."
+                       wrapText="true" visible="false" managed="false"
+                       style="-fx-padding: 16px; -fx-text-fill: #71717A; -fx-font-size: 12px;"/>
             </StackPane>
 
             <!-- Current User Info -->

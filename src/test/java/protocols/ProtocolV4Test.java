@@ -7,7 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
-class ProtocolV3Test {
+class ProtocolV4Test {
     private Packet read(String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         return PacketCodec.read(new ByteArrayInputStream(ByteBuffer.allocate(4 + bytes.length)
@@ -28,6 +28,14 @@ class ProtocolV3Test {
         assertEquals("LOGIN_REQUEST", login.string("type"));
         assertEquals(3, login.sequence());
         assertEquals("alice", login.string("username"));
+    }
+
+    @Test void globalBroadcastUsesChatOpcodeAndType() throws Exception {
+        Packet broadcast = roundTrip(Packet.json(ChatType.GLOBAL_BROADCAST,
+                Json.object("content", "hello everyone")), 1);
+        assertEquals(OpCode.CHAT, broadcast.op());
+        assertEquals(ChatType.GLOBAL_BROADCAST, broadcast.type());
+        assertEquals("hello everyone", broadcast.string("content"));
     }
 
     @Test void rejectsUnknownMissingAndWrongGroupTypes() {

@@ -12,6 +12,7 @@ public interface ClientEvents {
     default void onMessageDelivered(String peer, String messageId) {}
     default void onTyping(String peer, boolean typing) {}
     default void onBroadcast(String communityId, String sender, String content) {}
+    default void onGlobalBroadcast(String sender, String content) {}
     default void onPresenceUpdate(String username, boolean online) {}
     default void onProtocolError(String code, String reason, boolean fatal) {}
     default void onPeerConnected(String peer) {}

@@ -300,6 +300,14 @@ public final class ClientSession implements AutoCloseable {
                 Json.object("communityId", communityId, "content", message)));
     }
 
+    public void broadcastGlobalMessage(String message) throws IOException {
+        if (message.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) {
+            throw new IOException("Message exceeds limit: 65536");
+        }
+        serverContext.server.send(Packet.json(ChatType.GLOBAL_BROADCAST,
+                Json.object("content", message)));
+    }
+
     public void broadcastFile(File file) throws IOException {
         broadcastFile(communities.requireSelection(), file);
     }
@@ -346,6 +354,8 @@ public final class ClientSession implements AutoCloseable {
             case ChatType.BROADCAST -> {
                 events.onBroadcast(packet.string("communityId"), packet.string("sender"), packet.string("content"));
             }
+            case ChatType.GLOBAL_BROADCAST ->
+                events.onGlobalBroadcast(packet.string("sender"), packet.string("content"));
             case UserType.PRESENCE_UPDATE ->
                 events.onPresenceUpdate(packet.string("username"), packet.bool("online"));
             case SystemType.ERROR -> {

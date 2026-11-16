@@ -4,6 +4,7 @@ package protocols;
 public enum ChatType implements MessageType {
     MESSAGE,
     BROADCAST,
+    GLOBAL_BROADCAST,
     RECEIPT,
     TYPING,
     SESSION_REPORT,

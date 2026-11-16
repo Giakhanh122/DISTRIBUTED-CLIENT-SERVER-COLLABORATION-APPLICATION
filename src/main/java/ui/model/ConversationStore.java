@@ -12,6 +12,7 @@ public final class ConversationStore {
 
     public static String directKey(String peer) { return "peer-" + peer; }
     public static String communityKey(String id) { return "comm-" + id; }
+    public static String globalKey() { return "global"; }
 
     public ObservableList<ChatMessageModel> history(String key) {
         return histories.computeIfAbsent(key, ignored -> FXCollections.observableArrayList());

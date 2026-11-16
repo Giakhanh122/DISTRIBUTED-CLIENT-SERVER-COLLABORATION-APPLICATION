@@ -289,6 +289,13 @@ public final class ChatClientAdapter {
             s.broadcastMessage(id, text);
         }, result);
     }
+    public void broadcastGlobalMessage(String text, Consumer<String> result) {
+        long revision = connectionRevision.get();
+        submitMessage(s -> {
+            if (!isServerConnected() || revision != connectionRevision.get()) throw new IOException("Server unavailable");
+            s.broadcastGlobalMessage(text);
+        }, result);
+    }
     private void submitMessage(SessionTask task, Consumer<String> result) {
         long token = generation.get();
         ClientSession current = session;
@@ -350,6 +357,9 @@ public final class ChatClientAdapter {
             }
             public void onBroadcast(String id, String sender, String content) {
                 dispatch(token, l -> l.onBroadcastMessageReceived(id, sender, content));
+            }
+            public void onGlobalBroadcast(String sender, String content) {
+                dispatch(token, l -> l.onGlobalBroadcastMessageReceived(sender, content));
             }
             public void onPeerConnected(String peer) { dispatch(token, l -> l.onPeerConnected(peer)); }
             public void onPeerDisconnected(String peer) { dispatch(token, l -> l.onPeerDisconnected(peer)); }

@@ -89,6 +89,8 @@ public final class ClientConsole {
                     case "/accept" -> session.accept(required(argument, "Usage: /accept <offer_number>"));
                     case "/reject" -> session.reject(required(argument, "Usage: /reject <offer_number>"));
                     case "/broadcast" -> broadcast(argument);
+                    case "/global" -> session.broadcastGlobalMessage(
+                            required(argument.trim(), "Usage: /global <message>"));
                     default -> {
                         if (!session.sendMessage(message)) System.out.println("Connect to a peer before sending messages.");
                     }
@@ -258,7 +260,7 @@ public final class ClientConsole {
             case "/users", "/chats", "/lookup", "/chat" -> "Server command: ";
             case "/sendfile", "/accept", "/reject" -> "File command: ";
             case "/community", "/communities" -> "Community command: ";
-            case "/broadcast" -> "Broadcast failed: ";
+            case "/broadcast", "/global" -> "Broadcast failed: ";
             default -> "Cannot send message: ";
         };
     }
@@ -281,6 +283,7 @@ public final class ClientConsole {
                   MESSAGING
                     /broadcast -m <message>         Broadcast text in active community
                     /broadcast -f <filepath>        Broadcast a file in active community
+                    /global <message>               Broadcast text to all online users
                     /lookup <username>              Connect to or select a user for P2P chat
                     /chat [username]                Show peers or switch the active P2P chat
                     /sendfile <username> <filepath>  Send a private file through P2P

@@ -8,6 +8,7 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
 - `UserSessionRegistry` quản lý user online; `ChatSessionRegistry` theo dõi
   các kết nối P2P bằng UUID. `/chats` xem các phiên và trạng thái trên server.
 - Chat trực tiếp giữa hai peer qua TCP; server dùng virtual thread cho mỗi client.
+- Chat broadcast toàn cục tới user đang online và broadcast trong community qua server.
 - Truyền file qua socket TCP riêng: chunk 64 KiB, kiểm tra kích thước và SHA-256,
   chỉ báo thành công sau khi receiver xác nhận đã lưu file.
 - Offer/decision đi trên kết nối chat P2P đã mở; socket dữ liệu dùng lại cổng
@@ -61,6 +62,8 @@ nếu đã kết nối, không mở thêm socket hoặc cần server lookup lạ
 chỉ gửi tới peer đang chọn; gửi nhóm dùng `/broadcast -m`.
 Nếu chọn/lookup một peer không khả dụng, lựa chọn hiện tại được bỏ để tin nhắn kế
 tiếp không đi nhầm sang người trước đó. Các kết nối peer khác vẫn được giữ.
+Trong CLI, dùng `/global <message>` để gửi tin tới tất cả user online; lệnh
+`/broadcast -m` vẫn chỉ gửi vào community đang chọn.
 
 Để gửi file từ Alice sang Bob, kết nối chat bằng `/lookup bob` trước, rồi:
 
@@ -142,9 +145,9 @@ Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len 
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
 Giao thức dùng 8 nhóm opcode và `body.type` bắt buộc. Handshake trao đổi
-`protocolVersion = 3`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
+`protocolVersion = 4`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
 `SYSTEM/KEY_CONFIRM_ACK` đã mã hóa. Server và client cần chạy cùng bản code;
-wire protocol phiên bản 3 không tương thích phiên bản 2.
+wire protocol phiên bản 4 không tương thích phiên bản 3.
 Không có magic bytes hoặc header JSON riêng.
 
 Socket file P2P mở bằng `FILE/TRANSFER_START` và `FILE/READY`, rồi xác nhận khóa

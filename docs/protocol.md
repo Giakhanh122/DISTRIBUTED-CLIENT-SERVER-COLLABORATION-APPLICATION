@@ -1,7 +1,7 @@
 # DLP Gateway & Events
 
 Giao thức thời gian thực của ứng dụng: đăng nhập và thao tác community qua server,
-chat và truyền file trực tiếp giữa các peer. Phiên bản hiện tại: **3**.
+chat P2P, broadcast toàn cục/community và truyền file. Phiên bản hiện tại: **4**.
 
 Tài liệu này mô tả các event ứng dụng gửi/nhận, cấu trúc payload và ví dụ JSON.
 Các ví dụ là payload trước khi mã hóa hoặc sau khi giải mã.
@@ -73,7 +73,7 @@ Type thiếu, không được định nghĩa hoặc không thuộc opcode tươn
 | 1 | CONNECTION | Handshake với server hoặc peer. |
 | 2 | AUTH | Đăng nhập và đăng xuất. |
 | 3 | USER | Danh sách online, địa chỉ peer và proof public key. |
-| 4 | CHAT | Tin nhắn trực tiếp, broadcast và metadata phiên P2P. |
+| 4 | CHAT | Tin nhắn trực tiếp, broadcast global/community và metadata phiên P2P. |
 | 5 | FILE | Offer, quyết định và điều khiển truyền file. |
 | 6 | COMMUNITY | Tạo, tham gia, chọn và xem community. |
 | 7 | DISCOVERY | Tìm server qua UDP trên LAN. |
@@ -89,7 +89,8 @@ Type thiếu, không được định nghĩa hoặc không thuộc opcode tươn
 4. Client gửi SYSTEM/KEY_CONFIRM, server trả SYSTEM/KEY_CONFIRM_ACK dưới mã hóa.
 5. Client gửi AUTH/LOGIN_REQUEST; LOGIN_RESPONSE với status OK mở phiên quản lý.
 6. Hai bên duy trì SYSTEM/PING/PONG. Client gửi request quản lý, đồng thời nhận
-   response và các event chủ động như CHAT/BROADCAST hoặc FILE/BROADCAST_OFFER.
+   response và các event chủ động như CHAT/BROADCAST, CHAT/GLOBAL_BROADCAST hoặc
+   FILE/BROADCAST_OFFER.
 
 Hello/Hello ACK chưa mã hóa. Key Confirm và mọi event tiếp theo đều đi trong
 AES-GCM. Kết nối chỉ xử lý đăng nhập sau khi xác nhận khóa thành công.
@@ -160,6 +161,7 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
 | [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/GLOBAL_BROADCAST](#chat-global-broadcast) | C → S → C | Gửi tin nhắn tới mọi user đang online qua server. |
 | [CHAT/SESSION_REPORT](#chat-session-report) | C → S | Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat. |
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
@@ -201,6 +203,7 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
 | [CHAT/TYPING](#chat-typing) | P → P | Thông báo bắt đầu/dừng nhập tin nhắn. |
 | [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/GLOBAL_BROADCAST](#chat-global-broadcast) | C → S → C | Server phát tin nhắn tới mọi user online, trừ người gửi. |
 | [CHAT/SESSION_REPORT_RESPONSE](#chat-session-report-response) | S → C | Trả kết quả tiếp nhận báo cáo phiên P2P. |
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
@@ -395,7 +398,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
 | `serverVerificationChallenge` | string | Challenge ngẫu nhiên 32 byte, Base64. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 
@@ -407,7 +410,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
   "sequence": 1,
   "body": {
     "type": "HELLO",
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "serverVerificationChallenge": "<32-byte-random-challenge-base64>",
     "publicKey": "<client-x25519-public-key-base64>"
   }
@@ -430,7 +433,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 | `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
@@ -444,7 +447,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
     "type": "HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "publicKey": "<server-x25519-public-key-base64>",
     "serverSignature": "<ed25519-signature-base64>"
   }
@@ -465,7 +468,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
 | `username` | string | Tên tài khoản. |
 | `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
@@ -480,7 +483,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
   "sequence": 1,
   "body": {
     "type": "PEER_HELLO",
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "username": "alice",
     "peerPort": 9001,
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
@@ -506,7 +509,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 3. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
 | `username` | string | Tên tài khoản. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
@@ -522,7 +525,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
     "type": "PEER_HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "username": "bob",
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "publicKey": "<bob-x25519-public-key-base64>",
@@ -883,7 +886,7 @@ Trả proof gắn danh tính người đăng nhập với sessionId và public k
 }
 ```
 
-Chữ ký bao phủ purpose=peer-public-key, protocolVersion=3, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
+Chữ ký bao phủ purpose=peer-public-key, protocolVersion=4, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
 
 ### CHAT Events
 
@@ -968,9 +971,53 @@ không gửi từng phím; UI tự hết hạn chỉ báo nếu sự kiện dừ
 }
 ```
 
+#### Global Broadcast
+
+<a id="chat-global-broadcast"></a>
+
+**Event:** `CHAT/GLOBAL_BROADCAST` · **Opcode:** `4` · **Direction:** C → S → C
+
+Gửi tin nhắn qua server tới tất cả user đang đăng nhập, không phụ thuộc membership
+community. Server lấy danh tính sender từ session đã xác thực, phát tới các client
+online khác và không echo lại cho người gửi. Event không có response riêng.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `content` | string | Nội dung tin nhắn, tối đa 64 KiB theo byte UTF-8. |
+
+Client gửi:
+
+```json
+{
+  "opcode": 4,
+  "sequence": 10,
+  "body": {
+    "type": "GLOBAL_BROADCAST",
+    "content": "Xin chào mọi người!"
+  }
+}
+```
+
+Server phát:
+
+```json
+{
+  "opcode": 4,
+  "sequence": 17,
+  "body": {
+    "type": "GLOBAL_BROADCAST",
+    "sender": "alice",
+    "content": "Xin chào mọi người!"
+  }
+}
+```
+
+Đây là broadcast ở tầng ứng dụng trên các TCP control socket đã mã hóa, không phải
+UDP broadcast. Người gửi không nhận echo; tin nhắn không được lưu cho user offline.
+
 <a id="chat-broadcast"></a>
 
-#### Broadcast
+#### Community Broadcast
 
 **Event:** `CHAT/BROADCAST` · **Opcode:** `4` · **Direction:** C → S → C trong community
 
@@ -2150,7 +2197,8 @@ Không tự retry tin nhắn hoặc file để tránh tạo bản trùng.
 
 ## Event Status
 
-ERROR, PRESENCE_UPDATE, RECEIPT và TYPING hiện có luồng gửi/nhận trong core và UI.
+ERROR, PRESENCE_UPDATE, RECEIPT, TYPING và GLOBAL_BROADCAST hiện có luồng gửi/nhận
+trong core và UI.
 Receipt chỉ xác nhận DELIVERED, không xác nhận đã đọc. Không có event FILE/CHUNK:
 dữ liệu file được truyền trực tiếp trên socket dữ liệu giữa Ready/Key Confirm và End.
 Luồng download community bắt đầu bằng FILE/BROADCAST_DECISION, sau đó dùng
@@ -2163,7 +2211,7 @@ App dùng TCP cho kênh server và P2P, UDP cho Discovery. Payload trong tài li
 JSON ở lớp event; PacketCodec và PacketChannel xử lý đóng khung và mã hóa khi
 truyền. Đây là cách trình bày tài liệu theo event, không đổi app sang WebSocket.
 
-Phiên bản 3 không tương thích phiên bản 2; client và server phải cập nhật đồng thời.
+Phiên bản 4 không tương thích phiên bản 3; client và server phải cập nhật đồng thời.
 Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từng nhóm.
 
 ## Documentation References

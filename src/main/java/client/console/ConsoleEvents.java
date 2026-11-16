@@ -29,6 +29,9 @@ final class ConsoleEvents implements ClientEvents {
     @Override public void onBroadcast(String communityId, String sender, String content) {
         System.out.println("(" + communityId + ":broadcast) " + sender + " : " + content);
     }
+    @Override public void onGlobalBroadcast(String sender, String content) {
+        System.out.println("[GLOBAL] " + sender + ": " + content);
+    }
 
     @Override public void onPeerConnected(String peer) { System.out.println("[P2P] Connected to " + peer); }
     @Override public void onPeerDisconnected(String peer) { System.out.println("[P2P] Disconnected from " + peer); }

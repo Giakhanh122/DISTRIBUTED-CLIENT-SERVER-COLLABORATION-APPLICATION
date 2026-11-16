@@ -166,6 +166,9 @@ public class ClientHandler implements Runnable {
 
                 case ChatType.BROADCAST -> requireBroadcasts().handleBroadcastMessage(packet, session);
 
+                case ChatType.GLOBAL_BROADCAST ->
+                    requireBroadcasts().handleGlobalBroadcastMessage(packet, session);
+
                 case UserType.LIST_REQUEST -> handleUserList(packet);
 
                 case UserType.PEER_LOOKUP_REQUEST -> handlePeerLookup(packet);
