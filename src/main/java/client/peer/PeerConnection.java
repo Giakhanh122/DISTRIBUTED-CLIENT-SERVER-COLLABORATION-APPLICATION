@@ -216,7 +216,7 @@ public class PeerConnection implements AutoCloseable {
                         sendPacket(Packet.json(ChatType.RECEIPT,
                                 Json.object("messageId", messageId, "receipt", "DELIVERED")));
                     }
-                    case FileType.OFFER, FileType.DECISION, FileType.CANCEL -> onFilePacket.accept(packet);
+                    case FileType.OFFER, FileType.DECISION, FileType.CANCEL, FileType.CANCEL_ACK -> onFilePacket.accept(packet);
                     case ChatType.RECEIPT -> {
                         String messageId = packet.string("messageId");
                         requireMessageId(messageId);

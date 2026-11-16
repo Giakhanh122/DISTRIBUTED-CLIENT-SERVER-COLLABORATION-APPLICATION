@@ -80,8 +80,15 @@ public final class CommunityClient {
     }
 
     public JsonArray members() throws IOException {
+        return members(requireSelection().id());
+    }
+
+    public JsonArray members(String communityId) throws IOException {
+        if (communityId == null || communityId.isBlank() || communityId.length() > 256) {
+            throw new IOException("Invalid community ID");
+        }
         Packet response = request(Packet.json(CommunityType.MEMBERS_REQUEST,
-                Json.object("communityId", requireSelection().id())), CommunityType.MEMBERS_RESPONSE);
+                Json.object("communityId", communityId)), CommunityType.MEMBERS_RESPONSE);
         return Json.array(response.jsonBody(), "members");
     }
 
@@ -94,6 +101,14 @@ public final class CommunityClient {
     private Selection selectFrom(Packet request, MessageType responseType) throws IOException {
         ServerConnection source = server.get();
         Packet response = source.request(request, responseType);
+        if (responseType == CommunityType.CREATE_RESPONSE) {
+            switch (response.status()) {
+                case "NAME_TAKEN" -> throw new IOException("This community name is already taken. Please enter a different name.");
+                case "INVALID_NAME" -> throw new IOException("Please enter a valid community name.");
+                case "NAME_TOO_LONG" -> throw new IOException("Community names can contain up to 100 characters. Please enter a different name.");
+                default -> { }
+            }
+        }
         PacketValidator.requireSuccess(response);
         synchronized (this) {
             if (source != server.get()) throw new IOException("Server connection changed; select the community again");

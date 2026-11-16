@@ -18,7 +18,7 @@ import network.PacketChannel;
 public class FileReceiver {
     public static final class CleanupException extends IOException {
         public CleanupException(Path path, IOException cause) {
-            super("Không thể xóa file tải dở: " + path, cause);
+            super("Unable to remove partial file: " + path, cause);
         }
     }
 

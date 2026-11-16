@@ -17,17 +17,17 @@ public final class LocalFileOpener {
         Thread.startVirtualThread(() -> {
             String location = path == null ? "" : path;
             try {
-                if (location.isBlank()) throw new IOException("Chưa có đường dẫn file.");
+                if (location.isBlank()) throw new IOException("No file path is available.");
                 Path file = Path.of(location).toAbsolutePath().normalize();
                 Path target = folder && !Files.isDirectory(file) ? file.getParent() : file;
                 location = target == null ? file.toString() : target.toString();
                 if (target == null || !Files.exists(target)) {
-                    throw new IOException("File hoặc thư mục không còn tồn tại.");
+                    throw new IOException("The file or folder no longer exists.");
                 }
                 launch(target);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                showError(owner, location, "Thao tác mở bị gián đoạn.");
+                showError(owner, location, "Opening the file or folder was interrupted.");
             } catch (IOException | RuntimeException e) {
                 showError(owner, location, e.getMessage());
             }
@@ -35,7 +35,7 @@ public final class LocalFileOpener {
     }
 
     private static void showError(Window owner, String path, String reason) {
-        JavaFxUtils.showPathError(owner, "Không thể mở file hoặc thư mục", reason, path);
+        JavaFxUtils.showPathError(owner, "Unable to open file or folder", reason, path);
     }
 
     private static void launch(Path target) throws IOException, InterruptedException {
@@ -45,7 +45,7 @@ public final class LocalFileOpener {
             commands.add(List.of("xdg-open", target.toString()));
             commands.add(List.of("gio", "open", target.toUri().toASCIIString()));
         }
-        IOException failure = new IOException("Không tìm được ứng dụng để mở đường dẫn này.");
+        IOException failure = new IOException("No application was found to open this path.");
         if (!os.contains("linux") && desktopOpen(target, failure)) return;
         if (os.contains("win")) commands.add(List.of("explorer.exe", target.toString()));
         else if (os.contains("mac")) commands.add(List.of("/usr/bin/open", target.toString()));

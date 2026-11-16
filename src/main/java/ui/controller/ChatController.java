@@ -65,6 +65,7 @@ public class ChatController implements ClientEventListener {
     @FXML private Button railDirectBtn;
     @FXML private Label directUnreadBadge;
     @FXML private Label communityUnreadBadge;
+    @FXML private Label globalUnreadBadge;
     @FXML private Button railGlobalBtn;
     @FXML private Button addCommunityBtn;
 
@@ -72,7 +73,6 @@ public class ChatController implements ClientEventListener {
     @FXML private Label sidebarSectionTitle;
     @FXML private ListView<CommunityModel> communitiesListView;
     @FXML private ListView<UserModel> usersListView;
-    @FXML private Label globalAudienceView;
     @FXML private StackPane currentUserAvatar;
     @FXML private Label currentUserInitials;
     @FXML private Label currentUsernameLabel;
@@ -97,6 +97,7 @@ public class ChatController implements ClientEventListener {
     @FXML private ScrollPane messageScrollPane;
     @FXML private VBox messagesContainer;
 
+    @FXML private HBox currentUserFooter;
     @FXML private HBox inputContainer;
     @FXML private Button attachBtn;
     @FXML private VBox attachmentTray;
@@ -141,6 +142,13 @@ public class ChatController implements ClientEventListener {
 
     @FXML
     public void initialize() {
+        // Keep both footer borders aligned, including attachments and reconnect controls.
+        inputContainer.minHeightProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> Math.max(64, currentUserFooter.minHeight(currentUserFooter.getWidth())),
+                currentUserFooter.widthProperty(), reconnectBtn.managedProperty(), connectionStatusLabel.textProperty()));
+        currentUserFooter.prefHeightProperty().bind(inputContainer.heightProperty());
+        targetMetaLabel.visibleProperty().bind(targetMetaLabel.textProperty().isNotEmpty());
+        targetMetaLabel.managedProperty().bind(targetMetaLabel.visibleProperty());
         connectionView = new ConnectionStatusView(connectionStatusLabel, connectionStatusDot, reconnectBtn,
                 serverOfflineBanner, serverOfflineMessage, bannerReconnectBtn);
         messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::cancelFileTransfer);
@@ -281,7 +289,7 @@ public class ChatController implements ClientEventListener {
         inputContainer.setDisable(true);
         attachBtn.setDisable(false);
         messageInput.clear();
-        messageInput.setPromptText("Select a community or user...");
+        messageInput.setPromptText("Select a community or user");
     }
 
     @FXML
@@ -311,9 +319,9 @@ public class ChatController implements ClientEventListener {
         searchField.setVisible(mode != Mode.GLOBAL);
         searchField.setManaged(mode != Mode.GLOBAL);
         searchField.setPromptText(switch (mode) {
-            case COMMUNITY -> "Search my communities...";
-            case EXPLORE -> "Search communities to join...";
-            case DIRECT -> "Search online users...";
+            case COMMUNITY -> "Search my communities";
+            case EXPLORE -> "Search communities to join";
+            case DIRECT -> "Search online users";
             case GLOBAL -> "Global chat";
         });
         boolean direct = mode == Mode.DIRECT;
@@ -322,8 +330,6 @@ public class ChatController implements ClientEventListener {
         usersListView.setManaged(direct);
         communitiesListView.setVisible(!direct && !global);
         communitiesListView.setManaged(!direct && !global);
-        globalAudienceView.setVisible(global);
-        globalAudienceView.setManaged(global);
         attachBtn.setDisable(global);
         if (direct) adapter.requestUserList();
         else if (!global) adapter.requestCommunityList();
@@ -352,12 +358,16 @@ public class ChatController implements ClientEventListener {
 
     @FXML
     private void handleOpenCreateCommunityDialog() {
+        showCreateCommunityDialog("");
+    }
+
+    private void showCreateCommunityDialog(String initialName) {
         if (!adapter.isServerConnected() || adapter.isReconnecting()) return;
         if (isCreatingCommunity) return;
         isCreatingCommunity = true;
         try {
             Window window = titleBar != null && titleBar.getScene() != null ? titleBar.getScene().getWindow() : null;
-            Optional<String> result = JavaFxUtils.showInputDialog(window, "Create Community", "Community Name:", "");
+            Optional<String> result = JavaFxUtils.showInputDialog(window, "Create Community", "Community Name:", initialName);
             result.ifPresent(name -> {
                 String trimmed = name.trim();
                 if (!trimmed.isEmpty()) {
@@ -367,6 +377,13 @@ public class ChatController implements ClientEventListener {
         } finally {
             isCreatingCommunity = false;
         }
+    }
+
+    @Override
+    public void onCommunityCreateFailed(String name, String reason) {
+        Window owner = titleBar != null && titleBar.getScene() != null ? titleBar.getScene().getWindow() : null;
+        JavaFxUtils.showErrorAlert(owner, "Unable to create community", reason);
+        showCreateCommunityDialog(name);
     }
 
     @FXML
@@ -401,7 +418,7 @@ public class ChatController implements ClientEventListener {
         messageScrollPane.setManaged(true);
 
         inputContainer.setDisable(!comm.isJoined() || !adapter.isServerConnected());
-        messageInput.setPromptText(comm.isJoined() ? "Broadcast to #" + comm.getName() + "..." : "Join community to participate...");
+        messageInput.setPromptText(comm.isJoined() ? "Type to chat" : "Join community to participate");
 
         loadConversation(ConversationStore.communityKey(comm.getId()));
         Platform.runLater(() -> messageInput.requestFocus());
@@ -436,18 +453,20 @@ public class ChatController implements ClientEventListener {
         messageScrollPane.setManaged(true);
 
         inputContainer.setDisable(!connectedPeer);
-        messageInput.setPromptText("Message @" + user.getUsername() + "...");
+        messageInput.setPromptText("Type to chat");
 
         loadConversation(ConversationStore.directKey(user.getUsername()));
         Platform.runLater(() -> messageInput.requestFocus());
     }
 
     private void showGlobalConversation() {
+        unreadCounts.remove(ConversationStore.globalKey());
+        updateUnreadBadges();
         targetNameLabel.setText("Global Chat");
         targetInitials.setText("G");
         targetAvatar.setStyle("-fx-background-color: #F59E0B;");
         targetStatusDot.setVisible(false);
-        targetMetaLabel.setText("Broadcast to all online users");
+        targetMetaLabel.setText("");
         joinLeaveCommunityBtn.setVisible(false);
         joinLeaveCommunityBtn.setManaged(false);
         emptyStateView.setVisible(false);
@@ -456,7 +475,7 @@ public class ChatController implements ClientEventListener {
         messageScrollPane.setManaged(true);
         inputContainer.setDisable(!adapter.isServerConnected() || adapter.isReconnecting());
         attachBtn.setDisable(true);
-        messageInput.setPromptText("Message everyone online...");
+        messageInput.setPromptText("Type to chat to everyone online");
         loadConversation(ConversationStore.globalKey());
         Platform.runLater(() -> messageInput.requestFocus());
     }
@@ -546,7 +565,7 @@ public class ChatController implements ClientEventListener {
                     }
                 });
             } else if (global) {
-                adapter.broadcastGlobalMessage(text, msg::broadcastSent);
+                adapter.broadcastGlobalMessage(text, msg::globalSent);
             } else {
                 adapter.broadcastMessage(target, text, msg::broadcastSent);
             }
@@ -884,7 +903,7 @@ public class ChatController implements ClientEventListener {
             if ((peerConnected || existing.getUnreadCount() > 0)
                     && updated.stream().noneMatch(user -> user.getUsername().equals(existing.getUsername()))) {
                 existing.setOnline(peerConnected);
-                if (peerConnected) existing.setStatusMessage("P2P còn kết nối");
+                if (peerConnected) existing.setStatusMessage("Peer connected");
                 updated.add(existing);
             }
         }
@@ -990,12 +1009,15 @@ public class ChatController implements ClientEventListener {
     private void updateUnreadBadges() {
         int direct = 0;
         int community = 0;
+        int global = 0;
         for (Map.Entry<String, Integer> entry : unreadCounts.entrySet()) {
             if (entry.getKey().startsWith("peer-")) direct += entry.getValue();
-            else community += entry.getValue();
+            else if (entry.getKey().startsWith("comm-")) community += entry.getValue();
+            else if (entry.getKey().equals(ConversationStore.globalKey())) global += entry.getValue();
         }
         updateUnreadBadge(directUnreadBadge, direct, "Direct Messages");
         updateUnreadBadge(communityUnreadBadge, community, "My Communities");
+        updateUnreadBadge(globalUnreadBadge, global, "Global Chat");
     }
 
     private void updateUnreadBadge(Label badge, int count, String title) {
@@ -1023,8 +1045,8 @@ public class ChatController implements ClientEventListener {
     @FXML
     private void handleReconnect() {
         if (adapter.isServerConnected() || adapter.isReconnecting()) return;
-        JavaFxUtils.showPasswordDialog(titleBar.getScene().getWindow(), "Kết nối lại",
-                "Mật khẩu của " + adapter.getCurrentUsername()).ifPresent(adapter::reconnect);
+        JavaFxUtils.showPasswordDialog(titleBar.getScene().getWindow(), "Reconnect",
+                "Password for " + adapter.getCurrentUsername()).ifPresent(adapter::reconnect);
     }
 
     private void updateConnectionState() {

@@ -10,7 +10,7 @@ import protocols.type.MessageType;
 
 /** One JSON envelope: opcode, sequence, body. */
 public final class Packet {
-    public static final int PROTOCOL_VERSION = 4;
+    public static final int PROTOCOL_VERSION = 5;
     private final MessageType type;
     private final long sequence;
     private final JsonObject body;

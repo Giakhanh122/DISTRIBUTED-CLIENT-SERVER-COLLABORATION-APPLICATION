@@ -254,7 +254,14 @@ public final class ChatClientAdapter {
         requestCommunityList();
     }
 
-    public void createCommunity(String name) { submitServer(s -> selected(s.communities().create(name.trim()))); }
+    public void createCommunity(String name) {
+        submitServer(s -> {
+            try { selected(s.communities().create(name.trim())); }
+            catch (IOException e) {
+                dispatchServer(listener -> listener.onCommunityCreateFailed(name, e.getMessage()));
+            }
+        });
+    }
     public void joinCommunity(String id) { submitServer(s -> selected(s.communities().join(id))); }
     public void selectCommunity(String id) { submitServer(s -> selected(s.communities().select(id))); }
     public void leaveCommunity(String id) {
@@ -434,7 +441,7 @@ public final class ChatClientAdapter {
                     if (state == FileState.COMPLETED) {
                         model.setLocalPath(detail);
                         model.setProgress(1);
-                    } else if (state != FileState.EXPIRED && detail != null) model.setStatusText(detail);
+                    } else if (state == FileState.FAILED && detail != null) model.setStatusText(detail);
                 });
             }
         };

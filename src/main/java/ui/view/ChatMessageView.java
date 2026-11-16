@@ -159,7 +159,7 @@ public final class ChatMessageView {
         card.cursorProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
                 .then(Cursor.HAND).otherwise(Cursor.DEFAULT));
         card.focusTraversableProperty().bind(offer.localPathProperty().isNotEmpty());
-        card.setAccessibleText("Mở thư mục chứa " + offer.getFileName());
+        card.setAccessibleText("Open folder containing " + offer.getFileName());
         card.setOnMouseClicked(event -> {
             if (event.getButton() == MouseButton.PRIMARY && !isButtonTarget(event.getTarget())
                     && !offer.getLocalPath().isBlank()) {
@@ -174,9 +174,9 @@ public final class ChatMessageView {
                 event.consume();
             }
         });
-        MenuItem openFile = new MenuItem("Mở file");
+        MenuItem openFile = new MenuItem("Open file");
         openFile.setOnAction(event -> openDownloadedFile(offer.getLocalPath()));
-        MenuItem openFolder = new MenuItem("Mở thư mục chứa file");
+        MenuItem openFolder = new MenuItem("Open containing folder");
         openFolder.setOnAction(event -> openDownloadedFolder(offer.getLocalPath()));
         ContextMenu fileMenu = new ContextMenu(openFile, openFolder);
         card.setOnContextMenuRequested(event -> {
@@ -199,13 +199,17 @@ public final class ChatMessageView {
         nameLbl.setMaxWidth(Double.MAX_VALUE);
         Tooltip fileTooltip = new Tooltip();
         fileTooltip.textProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
-                .then(offer.getFileName() + "\nBấm để mở thư mục chứa file; chuột phải để mở file").otherwise(offer.getFileName()));
+                .then(offer.getFileName() + "\nClick to open the containing folder; right-click to open the file").otherwise(offer.getFileName()));
         nameLbl.setTooltip(fileTooltip);
         nameLbl.cursorProperty().bind(Bindings.when(offer.localPathProperty().isNotEmpty())
                 .then(Cursor.HAND).otherwise(Cursor.DEFAULT));
         Label metaLbl = new Label(offer.getFormattedSize());
         metaLbl.getStyleClass().add("file-card-meta");
-        fileInfo.getChildren().addAll(nameLbl, metaLbl);
+        Label fileStatus = new Label();
+        fileStatus.textProperty().bind(offer.statusTextProperty());
+        fileStatus.getStyleClass().add("file-card-meta");
+        fileStatus.setWrapText(true);
+        fileInfo.getChildren().addAll(nameLbl, metaLbl, fileStatus);
         topRow.getChildren().addAll(fileIcon, fileInfo);
 
         Label statusIcon = new Label();
@@ -225,15 +229,15 @@ public final class ChatMessageView {
         }, offer.statusProperty()));
         Tooltip statusTooltip = new Tooltip();
         statusTooltip.textProperty().bind(Bindings.createStringBinding(() -> switch (offer.getStatus()) {
-            case PENDING -> "Đang chờ người nhận tải xuống";
-            case ACCEPTED -> "Đang chuẩn bị tải xuống";
-            case TRANSFERRING -> "Đang truyền file";
-            case COMPLETED -> offer.isIncoming() ? "Đã tải xuống" : "Đã gửi file";
-            case EXPIRED -> "File đã hết hạn";
-            case REJECTED -> "File không được nhận";
-            case CANCELING -> "Đang hủy và xóa file tải dở";
-            case CANCELED -> "Đã hủy truyền file";
-            case FAILED -> "Không thể truyền file: " + offer.getStatusText();
+            case PENDING -> offer.isIncoming() ? "Waiting to download" : "File offer sent. Waiting for the recipient to download.";
+            case ACCEPTED -> "Preparing download";
+            case TRANSFERRING -> "Transferring file";
+            case COMPLETED -> offer.isIncoming() ? "Downloaded" : "Sent";
+            case EXPIRED -> "File offer expired";
+            case REJECTED -> "File declined";
+            case CANCELING -> "Canceling and removing the partial file";
+            case CANCELED -> "File transfer canceled";
+            case FAILED -> "Unable to transfer file: " + offer.getStatusText();
         }, offer.statusProperty(), offer.statusTextProperty()));
         statusIcon.setTooltip(statusTooltip);
         statusIcon.accessibleTextProperty().bind(statusTooltip.textProperty());
@@ -259,8 +263,8 @@ public final class ChatMessageView {
 
         Button cancelButton = fileButton("", "btn-secondary");
         cancelButton.setGraphic(IconUtils.createIconNode(IconUtils.X, 18, "#71717A"));
-        cancelButton.setTooltip(new Tooltip("Hủy truyền file"));
-        cancelButton.setAccessibleText("Hủy truyền " + offer.getFileName());
+        cancelButton.setTooltip(new Tooltip("Cancel file transfer"));
+        cancelButton.setAccessibleText("Cancel transfer of " + offer.getFileName());
         cancelButton.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.ACCEPTED)
                 .or(offer.statusProperty().isEqualTo(FileOfferModel.Status.TRANSFERRING)));
         cancelButton.setOnAction(event -> {
@@ -272,8 +276,8 @@ public final class ChatMessageView {
         if (offer.isIncoming()) {
             Button downloadButton = fileButton("", "btn-secondary");
             downloadButton.setGraphic(IconUtils.createIconNode(IconUtils.DOWNLOAD, 18, "#18181B"));
-            downloadButton.setTooltip(new Tooltip("Tải xuống"));
-            downloadButton.setAccessibleText("Tải xuống " + offer.getFileName());
+            downloadButton.setTooltip(new Tooltip("Download"));
+            downloadButton.setAccessibleText("Download " + offer.getFileName());
             downloadButton.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.PENDING));
             downloadButton.setOnAction(event -> {
                 if (offer.getStatus() != FileOfferModel.Status.PENDING) return;
@@ -284,8 +288,8 @@ public final class ChatMessageView {
         }
         Button folderButton = fileButton("", "btn-secondary");
         folderButton.setGraphic(IconUtils.createIconNode(IconUtils.FOLDER, 18, "#18181B"));
-        folderButton.setTooltip(new Tooltip("Mở thư mục chứa file"));
-        folderButton.setAccessibleText("Mở thư mục chứa " + offer.getFileName());
+        folderButton.setTooltip(new Tooltip("Open containing folder"));
+        folderButton.setAccessibleText("Open folder containing " + offer.getFileName());
         folderButton.visibleProperty().bind(offer.localPathProperty().isNotEmpty());
         folderButton.setOnAction(event -> openDownloadedFolder(offer.getLocalPath()));
         topRow.getChildren().add(folderButton);

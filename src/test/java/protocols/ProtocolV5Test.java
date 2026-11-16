@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import protocols.type.*;
 
-class ProtocolV4Test {
+class ProtocolV5Test {
     private Packet read(String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         return PacketCodec.read(new ByteArrayInputStream(ByteBuffer.allocate(4 + bytes.length)
@@ -33,7 +33,7 @@ class ProtocolV4Test {
 
     @Test void globalBroadcastUsesChatOpcodeAndType() throws Exception {
         Packet broadcast = roundTrip(Packet.json(ChatType.GLOBAL_BROADCAST,
-                Json.object("content", "hello everyone")), 1);
+                Json.object("messageId", "1e09a4c8-b353-49ef-b49f-148fbd217c90", "content", "hello everyone")), 1);
         assertEquals(OpCode.CHAT, broadcast.op());
         assertEquals(ChatType.GLOBAL_BROADCAST, broadcast.type());
         assertEquals("hello everyone", broadcast.string("content"));

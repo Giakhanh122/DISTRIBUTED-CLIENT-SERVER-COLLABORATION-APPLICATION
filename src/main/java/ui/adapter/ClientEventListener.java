@@ -15,6 +15,7 @@ public interface ClientEventListener {
     default void onBroadcastMessageReceived(String communityId, String sender, String message) {}
     default void onGlobalBroadcastMessageReceived(String sender, String message) {}
     default void onCommunityListUpdated(List<CommunityModel> communities) {}
+    default void onCommunityCreateFailed(String name, String reason) {}
     default void onCommunityJoined(String communityId, String communityName) {}
     default void onCommunityLeft(String communityId) {}
     default void onFileOfferReceived(FileOfferModel offer) {}

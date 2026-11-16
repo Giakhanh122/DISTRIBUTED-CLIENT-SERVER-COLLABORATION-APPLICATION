@@ -1,7 +1,7 @@
 # DLP Gateway & Events
 
 Giao thức thời gian thực của ứng dụng: đăng nhập và thao tác community qua server,
-chat P2P, broadcast toàn cục/community và truyền file. Phiên bản hiện tại: **4**.
+chat P2P, broadcast toàn cục/community và truyền file. Phiên bản hiện tại: **5**.
 
 Tài liệu này mô tả các event ứng dụng gửi/nhận, cấu trúc payload và ví dụ JSON.
 Các ví dụ là payload trước khi mã hóa hoặc sau khi giải mã.
@@ -166,7 +166,8 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
 | [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
-| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Hủy transfer theo ID, đóng socket dữ liệu và dọn file tải dở. |
+| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
+| [FILE/CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
 | [FILE/TRANSFER_START](#file-transfer-start) | P sender → P receiver, socket file | Chọn transfer đã được chấp nhận trên socket dữ liệu mới. |
 | [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
 | [FILE/BROADCAST_UPLOAD_REQUEST](#file-broadcast-upload-request) | C → S, kênh quản lý | Xin upload file vào community mà người gửi là thành viên. |
@@ -208,7 +209,8 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
 | [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
 | [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
-| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Hủy transfer theo ID, đóng socket dữ liệu và dọn file tải dở. |
+| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
+| [FILE/CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
 | [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
 | [FILE/END](#file-end) | Bên gửi file → bên nhận file | Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng. |
 | [FILE/RESULT](#file-result) | Bên nhận file → bên gửi file | Trả kết quả sau khi kiểm tra checksum và lưu file. |
@@ -324,7 +326,7 @@ Body chỉ có `type`.
 }
 ```
 
-Gửi mỗi 5 giây khi không còn Ping pending; sau 30 giây chưa có Pong tương ứng thì đóng kết nối. Không áp dụng cho socket chat/file P2P hoặc socket dữ liệu broadcast.
+Gửi mỗi 5 giây khi không còn Ping pending; sau 30 giây chưa có Pong tương ứng thì đóng kết nối. Socket chat P2P cũng dùng heartbeat riêng; socket file có timeout riêng.
 
 <a id="system-pong"></a>
 
@@ -399,7 +401,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
 | `serverVerificationChallenge` | string | Challenge ngẫu nhiên 32 byte, Base64. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 
@@ -411,7 +413,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
   "sequence": 1,
   "body": {
     "type": "HELLO",
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "serverVerificationChallenge": "<32-byte-random-challenge-base64>",
     "publicKey": "<client-x25519-public-key-base64>"
   }
@@ -434,7 +436,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 | `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
@@ -448,7 +450,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
     "type": "HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "publicKey": "<server-x25519-public-key-base64>",
     "serverSignature": "<ed25519-signature-base64>"
   }
@@ -469,7 +471,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
 | `username` | string | Tên tài khoản. |
 | `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
@@ -484,7 +486,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
   "sequence": 1,
   "body": {
     "type": "PEER_HELLO",
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "username": "alice",
     "peerPort": 9001,
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
@@ -510,7 +512,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 4. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
 | `username` | string | Tên tài khoản. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
@@ -526,7 +528,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
     "type": "PEER_HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 4,
+    "protocolVersion": 5,
     "username": "bob",
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "publicKey": "<bob-x25519-public-key-base64>",
@@ -887,7 +889,7 @@ Trả proof gắn danh tính người đăng nhập với sessionId và public k
 }
 ```
 
-Chữ ký bao phủ purpose=peer-public-key, protocolVersion=4, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
+Chữ ký bao phủ purpose=peer-public-key, protocolVersion=5, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
 
 ### CHAT Events
 
@@ -1740,7 +1742,7 @@ Trả community vừa tạo và chọn community đó trên client.
 }
 ```
 
-Tên không hợp lệ trả INVALID_NAME hoặc NAME_TOO_LONG. Khi mới tạo, memberCount là 1. Nếu cùng owner đã có community cùng tên không phân biệt hoa/thường, server trả community hiện có.
+Tên không hợp lệ trả INVALID_NAME hoặc NAME_TOO_LONG. Tên trùng với bất kỳ community nào sau khi trim, không phân biệt hoa/thường, trả NAME_TAKEN. UI thông báo bằng tiếng Anh và mở lại ô nhập để đổi tên, giữ nguyên nhóm đang chọn. Khi mới tạo, memberCount là 1.
 
 <a id="community-join-request"></a>
 
@@ -2174,7 +2176,7 @@ Không tự retry tin nhắn hoặc file để tránh tạo bản trùng.
 
 ## Event Status
 
-ERROR, PRESENCE_UPDATE, RECEIPT, TYPING và GLOBAL_BROADCAST hiện có luồng gửi/nhận
+ERROR, PRESENCE_UPDATE, RECEIPT và GLOBAL_BROADCAST hiện có luồng gửi/nhận
 trong core và UI.
 Receipt chỉ xác nhận DELIVERED, không xác nhận đã đọc. Không có event FILE/CHUNK:
 dữ liệu file được truyền trực tiếp trên socket dữ liệu giữa Ready/Key Confirm và End.
@@ -2188,7 +2190,7 @@ App dùng TCP cho kênh server và P2P, UDP cho Discovery. Payload trong tài li
 JSON ở lớp event; PacketCodec và PacketChannel xử lý đóng khung và mã hóa khi
 truyền. Đây là cách trình bày tài liệu theo event, không đổi app sang WebSocket.
 
-Phiên bản 4 không tương thích phiên bản 3; client và server phải cập nhật đồng thời.
+Phiên bản 5 không tương thích các phiên bản cũ; client và server phải cập nhật đồng thời.
 Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từng nhóm.
 
 ## Documentation References
@@ -2224,6 +2226,16 @@ Tiến trình tính bằng `transferred / total`. Tốc độ lấy từ chênh 
 `System.nanoTime`, làm mượt và cập nhật tối đa khoảng 4 lần/giây (ngoài mẫu đầu/cuối).
 ETA = byte còn lại / tốc độ ước tính. 100% byte chưa đồng nghĩa hoàn tất: vẫn cần
 checksum và FILE/RESULT hợp lệ. Các số đo là event nội bộ, không thêm frame progress.
+
+<a id="file-cancel-ack"></a>
+
+### FILE/CANCEL_ACK
+
+Response trên chính kết nối P2P, gồm `replyTo` trỏ tới sequence của CANCEL,
+`status: "OK"` và `transferId`. Bên nhận CANCEL đánh dấu hủy và đóng socket file
+trước khi trả ACK. Bên yêu cầu chờ ACK tối đa 2 giây, rồi dọn tài nguyên cục bộ.
+Xác nhận này tránh việc EOF trên socket file đến trước thông báo hủy trên kênh chat,
+khiến phía còn lại báo nhầm FAILED. Không áp dụng cho file community qua server.
 
 ### Trạng thái phiên server
 
@@ -2267,5 +2279,5 @@ bằng FAILED, nhưng event client và GUI dùng EXPIRED (“File đã hết h�
 có CANCELING trong thời gian worker đang dọn; chỉ CANCELED khi tác vụ đã dừng.
 Không phát lại dữ liệu cũ, không resume và không giới hạn số file đồng thời.
 
-Phạm vi hiện tại giữ P2P + community; không triển khai global chat/server relay
-cho tin riêng trong đợt hoàn thiện này. Tham khảo README cho lệnh kiểm thử và giới hạn xác minh.
+Tin riêng/file riêng dùng P2P; global/community dùng broadcast qua server.
+Không chuyển tiếp tin riêng qua server. Tham khảo README cho lệnh kiểm thử và giới hạn xác minh.

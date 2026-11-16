@@ -26,8 +26,8 @@ public class CommunityService {
         if (name.length() > 100) return status("NAME_TOO_LONG");
         String trimmed = name.trim();
         for (Community existing : registry.listAll()) {
-            if (existing.name().equalsIgnoreCase(trimmed) && existing.ownerUsername().equalsIgnoreCase(ownerUsername)) {
-                return selected(existing);
+            if (existing.name().equalsIgnoreCase(trimmed)) {
+                return status("NAME_TAKEN");
             }
         }
         Community community = new Community(trimmed, ownerUsername);
@@ -57,7 +57,7 @@ public class CommunityService {
         return status("OK");
     }
 
-    public JsonObject listMembers(String communityId, String username) {
+    public synchronized JsonObject listMembers(String communityId, String username) {
         Optional<Community> found = registry.find(communityId);
         if (found.isEmpty()) return status("NOT_FOUND");
         Community community = found.get();

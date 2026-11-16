@@ -40,24 +40,24 @@ public final class ConnectionStatusView {
         bannerReconnect.setDisable(busy || state == ConnectionState.CLOSED);
         bannerLabel.setTooltip(null);
         bannerLabel.setText(state == ConnectionState.RECONNECTING
-                ? "Đang kết nối lại tới server..."
-                : "Mất kết nối tới server. Kết nối lại để dùng community và tìm peer mới.");
+                ? "Reconnecting to the server..."
+                : "Disconnected from the server. Reconnect to use communities and find new peers.");
         label.setText(switch (state) {
             case ONLINE -> "Online";
-            case CONNECTING -> "Đang đăng nhập...";
-            case RECONNECTING -> "Đang kết nối lại...";
-            case SERVER_OFFLINE -> "Mất kết nối tới server";
-            case CLOSED -> "Đã đăng xuất";
+            case CONNECTING -> "Signing in...";
+            case RECONNECTING -> "Reconnecting...";
+            case SERVER_OFFLINE -> "Disconnected from server";
+            case CLOSED -> "Signed out";
         });
         label.setStyle("-fx-font-size: 10px; -fx-text-fill: " + (online ? "#10B981;" : "#D97706;"));
         dot.getStyleClass().setAll(online ? "status-dot-online" : "status-dot-offline");
-        label.setTooltip(new Tooltip(online ? "Đã đăng nhập server"
-                : "Trạng thái kết nối tới server được theo dõi riêng với từng kết nối P2P."));
+        label.setTooltip(new Tooltip(online ? "Connected to server"
+                : "The server connection and each peer connection are monitored separately."));
     }
 
     public void showReconnectError(String reason) {
-        label.setText("Chưa thể kết nối tới server");
-        bannerLabel.setText("Chưa thể kết nối tới server. Vui lòng thử lại.");
+        label.setText("Unable to connect to server");
+        bannerLabel.setText("Unable to connect to the server. Please try again.");
         bannerLabel.setTooltip(new Tooltip(reason));
         label.setTooltip(new Tooltip(reason));
     }

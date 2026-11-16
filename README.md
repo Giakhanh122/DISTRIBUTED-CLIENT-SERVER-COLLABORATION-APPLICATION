@@ -175,9 +175,9 @@ Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len 
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
 Giao thức dùng 8 nhóm opcode và `body.type` bắt buộc. Handshake trao đổi
-`protocolVersion = 4`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
+`protocolVersion = 5`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
 `SYSTEM/KEY_CONFIRM_ACK` đã mã hóa. Server và client cần chạy cùng bản code;
-wire protocol phiên bản 4 không tương thích phiên bản 3.
+wire protocol phiên bản 5 không tương thích các phiên bản cũ.
 Không có magic bytes hoặc header JSON riêng.
 
 Socket file P2P mở bằng `FILE/TRANSFER_START` và `FILE/READY`, rồi xác nhận khóa
@@ -264,18 +264,18 @@ mvn test
 mvn -DskipTests package
 ```
 
-Bộ kiểm thử gồm **12 bài**, chạy trên localhost Linux/JDK 25 (target Java 21):
+Bộ kiểm thử hiện tại xác minh trên localhost:
 
-- 20 tài khoản đăng nhập đồng thời; server tiếp tục phục vụ sau client ngắt,
-  sai mật khẩu và frame có độ dài sai.
-- File P2P 200 MiB, file rỗng và tên/nội dung Unicode, nhiều file cùng lúc;
-  so sánh byte bằng `Files.mismatch` và xác nhận hai phía.
-- Community upload/download 200 MiB; hủy download xóa file tải dở; hủy upload
-  không để lại file tạm hoặc file đã công bố trên server.
-- Hủy P2P giữ file đã tồn tại cùng tên, dọn file tạm, truyền file tiếp và chat bình thường.
-- Server khởi động lại, sai mật khẩu reconnect rồi thử lại; P2P và cổng listener được giữ.
-- Từ chối khóa server không tin cậy, bản ghi AES-GCM bị sửa hoặc cắt ngắn;
-  heartbeat mất ACK; frame TCP phân mảnh/gộp; sai checksum và đứt giữa luồng file.
+- Server broadcast global tới mọi user online, community chỉ tới thành viên online;
+  danh tính người gửi lấy từ phiên đăng nhập, không mở kết nối peer cho broadcast.
+- File community upload một lần lên server, phía gửi hiển thị một thẻ file. Các thành
+  viên tải độc lập từ server ngay cả khi người gửi đã thoát.
+- Hủy một lượt download dọn file tạm, không ảnh hưởng người nhận khác; kiểm tra lại
+  membership trước khi cấp quyền download và cho phép từ chối offer.
+- Chat/file riêng vẫn truyền trực tiếp qua P2P, tiếp tục hoạt động khi mất server;
+  FILE/CANCEL_ACK xác nhận hủy trước khi đóng socket dữ liệu.
+- Tên community trùng (không phân biệt hoa/thường, bỏ khoảng trắng hai đầu) báo lỗi,
+  giữ nguyên nhóm đang chọn và cho phép nhập tên khác.
 
 Test socket cần được môi trường cho phép mở localhost. Đây là kiểm tra chức năng,
 không phải benchmark băng thông hay bằng chứng 20 GUI chạy trên 20 máy khác nhau.
@@ -283,9 +283,14 @@ Chưa xác minh NAT/firewall, đóng gói Windows/macOS hoặc tải liên tục
 
 ## Phạm vi và giới hạn
 
-Theo phạm vi hoàn thiện đã chốt, không bổ sung server relay tin nhắn riêng
-(bước 5) hoặc global chat. Kiến trúc hiện tại vẫn là P2P cho tin riêng và server
-phân phối theo community. Không khẳng định đáp ứng đầy đủ bước 5 của rubric.
+Chat riêng và file riêng dùng P2P. Global chat và community dùng client–server:
+client gửi tin lên server, server phân phối tới mọi user online hoặc thành viên
+online của community, không echo cho người gửi. File community upload một lần,
+server lưu và gửi offer; người nhận tải file qua socket riêng tới server.
+Server cần hoạt động để dùng global/community và tải file community. Chưa có
+xác nhận nhận/đọc riêng cho tin global/community. UI giữ badge riêng cho global,
+community và tin riêng, dùng tiếng Anh và hiển thị một thẻ cho mỗi lần gửi file.
+Không khẳng định đáp ứng đầy đủ bước 5 của rubric.
 
 Tài khoản là demo trong bộ nhớ; community, phiên và metadata không bền vững khi
 server restart. File ngắt phải tải/gửi lại, chưa resume theo offset. Tắt server

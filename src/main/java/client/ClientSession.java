@@ -416,6 +416,7 @@ public final class ClientSession implements AutoCloseable {
                 try {
                     if (packet.type() == FileType.OFFER) files.handleIncomingOffer(name, connection, packet);
                     else if (packet.type() == FileType.CANCEL) files.handleIncomingCancel(connection, packet);
+                    else if (packet.type() == FileType.CANCEL_ACK) files.handleIncomingCancelAck(connection, packet);
                     else files.handleIncomingDecision(connection, packet);
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());

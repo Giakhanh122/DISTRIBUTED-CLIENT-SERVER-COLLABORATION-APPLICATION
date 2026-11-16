@@ -104,7 +104,7 @@ public final class BroadcastFileController implements AutoCloseable {
             if (!activeIds.contains(id)) {
                 if (offers.remove(id) == null) return false;
                 offerIds.values().removeIf(id::equals);
-                events.onFileState(id, ClientEvents.FileState.CANCELED, "Đã hủy truyền file");
+                events.onFileState(id, ClientEvents.FileState.CANCELED, "File transfer canceled");
                 return true;
             }
             FileTransferSession session = sessions.get(id);
@@ -115,7 +115,7 @@ public final class BroadcastFileController implements AutoCloseable {
                 }
             }
             if (!canceledIds.add(id)) return true;
-            events.onFileState(id, ClientEvents.FileState.CANCELING, "Đang hủy truyền file");
+            events.onFileState(id, ClientEvents.FileState.CANCELING, "Canceling file transfer");
             Socket socket = transferSockets.get(id);
             if (socket != null) {
                 try { socket.close(); }
@@ -256,7 +256,7 @@ public final class BroadcastFileController implements AutoCloseable {
                         if (e instanceof FileReceiver.CleanupException) canceledIds.remove(id);
                         boolean canceled = canceledIds.contains(id);
                         finish(id, canceled ? ClientEvents.FileState.CANCELED : ClientEvents.FileState.FAILED,
-                                canceled ? "Đã hủy truyền file" : e.getMessage());
+                                canceled ? "File transfer canceled" : e.getMessage());
                         if (!closed && !canceled) System.err.println(errorPrefix + e.getMessage());
                     }
                 } finally {
@@ -279,7 +279,7 @@ public final class BroadcastFileController implements AutoCloseable {
             if (activeIds.remove(id)) {
                 if (canceledIds.contains(id) && state != ClientEvents.FileState.FAILED) {
                     state = ClientEvents.FileState.CANCELED;
-                    detail = "Đã hủy truyền file";
+                    detail = "File transfer canceled";
                 }
                 events.onFileState(id, state, detail);
             }

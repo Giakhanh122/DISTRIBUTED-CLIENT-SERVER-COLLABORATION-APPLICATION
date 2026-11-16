@@ -64,7 +64,7 @@
 
                 <VBox spacing="6.0">
                     <Label text="USERNAME" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #71717A;"/>
-                    <TextField fx:id="usernameField" promptText="alice, bob, admin1..." styleClass="text-input" onAction="#handleLogin"/>
+                    <TextField fx:id="usernameField" promptText="alice, bob, admin1" styleClass="text-input" onAction="#handleLogin"/>
                 </VBox>
 
                 <VBox spacing="6.0">

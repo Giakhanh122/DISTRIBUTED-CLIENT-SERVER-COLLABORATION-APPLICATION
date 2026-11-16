@@ -69,7 +69,10 @@
                 <Button fx:id="railDirectBtn" onAction="#handleSelectDirectTab" styleClass="rail-btn"/>
                 <Label fx:id="directUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
             </StackPane>
-            <Button fx:id="railGlobalBtn" onAction="#handleSelectGlobalTab" styleClass="rail-btn"/>
+            <StackPane maxWidth="44.0" prefWidth="44.0">
+                <Button fx:id="railGlobalBtn" onAction="#handleSelectGlobalTab" styleClass="rail-btn"/>
+                <Label fx:id="globalUnreadBadge" styleClass="rail-unread-badge" StackPane.alignment="TOP_RIGHT" mouseTransparent="true" visible="false" managed="false"/>
+            </StackPane>
 
             <Region prefHeight="1.0" maxWidth="26.0" style="-fx-background-color: #27272A;"/>
 
@@ -80,20 +83,17 @@
         <VBox prefWidth="260.0" minWidth="240.0" maxWidth="300.0" styleClass="channel-sidebar">
 
             <VBox spacing="10.0" style="-fx-padding: 14px 12px 10px 12px;">
-                <TextField fx:id="searchField" promptText="Search communities..." styleClass="search-input"/>
+                <TextField fx:id="searchField" promptText="Search communities" styleClass="search-input"/>
                 <Label fx:id="sidebarSectionTitle" text="COMMUNITIES" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #71717A; -fx-padding: 2px 2px 0 2px;"/>
             </VBox>
 
             <StackPane VBox.vgrow="ALWAYS">
                 <ListView fx:id="communitiesListView" styleClass="list-view"/>
                 <ListView fx:id="usersListView" styleClass="list-view" visible="false" managed="false"/>
-                <Label fx:id="globalAudienceView" text="Messages go to all users currently online."
-                       wrapText="true" visible="false" managed="false"
-                       style="-fx-padding: 16px; -fx-text-fill: #71717A; -fx-font-size: 12px;"/>
             </StackPane>
 
             <!-- Current User Info -->
-            <HBox alignment="CENTER_LEFT" spacing="10.0"
+            <HBox fx:id="currentUserFooter" alignment="CENTER_LEFT" spacing="10.0"
                   style="-fx-background-color: #FFFFFF; -fx-padding: 10px 14px; -fx-border-color: #E4E4E7; -fx-border-width: 1 0 0 0;">
                 <StackPane fx:id="currentUserAvatar" prefWidth="32.0" prefHeight="32.0" styleClass="avatar-circle">
                     <Label fx:id="currentUserInitials" text="ME" styleClass="avatar-text"/>
@@ -104,7 +104,7 @@
                         <Circle fx:id="connectionStatusDot" radius="3.5" styleClass="status-dot-online"/>
                         <Label fx:id="connectionStatusLabel" text="Online" wrapText="true" maxWidth="170.0" style="-fx-font-size: 10px; -fx-text-fill: #10B981;"/>
                     </HBox>
-                    <Button fx:id="reconnectBtn" text="Kết nối lại" onAction="#handleReconnect"
+                    <Button fx:id="reconnectBtn" text="Reconnect" onAction="#handleReconnect"
                             styleClass="btn-secondary" visible="false" managed="false"/>
                 </VBox>
                 <Button fx:id="logoutBtn" onAction="#handleLogout" styleClass="btn-icon"/>
@@ -144,7 +144,7 @@
                   style="-fx-background-color: #FEF3C7; -fx-padding: 10px 16px;">
                 <Label fx:id="serverOfflineMessage" wrapText="true" maxWidth="Infinity"
                        HBox.hgrow="ALWAYS" style="-fx-text-fill: #92400E; -fx-font-size: 12px;"/>
-                <Button fx:id="bannerReconnectBtn" text="Kết nối lại" onAction="#handleReconnect"
+                <Button fx:id="bannerReconnectBtn" text="Reconnect" onAction="#handleReconnect"
                         styleClass="btn-secondary"/>
             </HBox>
 
@@ -182,7 +182,7 @@
                         <FlowPane fx:id="attachmentsFlow" hgap="8.0" vgap="8.0"/>
                     </VBox>
                     <HBox alignment="CENTER_LEFT" spacing="8.0">
-                        <TextField fx:id="messageInput" promptText="Write a message or caption..."
+                        <TextField fx:id="messageInput" promptText="Type to chat"
                                    HBox.hgrow="ALWAYS" styleClass="text-input" onAction="#handleSendMessage"/>
                         <Button fx:id="sendBtn" onAction="#handleSendMessage" styleClass="btn-primary"
                                 style="-fx-padding: 8px 12px;"/>

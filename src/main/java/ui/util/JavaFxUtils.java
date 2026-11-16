@@ -160,7 +160,7 @@ public final class JavaFxUtils {
             location.setEditable(false);
             location.setPrefWidth(420);
             VBox content = new VBox(10, message, location);
-            Button copy = new Button("Sao chép đường dẫn");
+            Button copy = new Button("Copy path");
             copy.getStyleClass().add("btn-secondary");
             copy.setDisable(path == null || path.isBlank());
             copy.setOnAction(event -> {
@@ -168,7 +168,7 @@ public final class JavaFxUtils {
                 clipboard.putString(path);
                 javafx.scene.input.Clipboard.getSystemClipboard().setContent(clipboard);
             });
-            Button close = new Button("Đóng");
+            Button close = new Button("Close");
             close.getStyleClass().add("btn-primary");
             close.setDefaultButton(true);
             close.setOnAction(event -> stage.close());

@@ -25,37 +25,43 @@ public class ChatMessageModel {
     public void setMessageId(String id) { messageId = id; }
     public void sending() {
         sendState = SendState.SENDING;
-        sendStatus.set("Đang gửi...");
-        sendStatusDetail.set("Đang gửi tin nhắn.");
+        sendStatus.set("Sending...");
+        sendStatusDetail.set("Sending message.");
     }
     public void sent(String error) {
         if (sendState == SendState.DELIVERED) return;
         if (error != null) {
             sendState = SendState.FAILED;
-            sendStatus.set("Gửi thất bại: " + error);
+            sendStatus.set("Send failed: " + error);
             sendStatusDetail.set(error);
         } else if (sendState != SendState.UNCONFIRMED) {
             sendState = SendState.WAITING;
-            sendStatus.set("Đã gửi");
-            sendStatusDetail.set("Đã gửi qua kết nối, đang chờ phía nhận xác nhận.");
+            sendStatus.set("Sent");
+            sendStatusDetail.set("Sent over the connection. Waiting for confirmation from the recipient.");
         }
     }
     public void broadcastSent(String error) {
         if (error != null) { sent(error); return; }
         sendState = SendState.SENT;
-        sendStatus.set("Đã gửi");
-        sendStatusDetail.set("Đã gửi qua kết nối tới server. Chưa có xác nhận từng thành viên đã nhận hoặc đọc.");
+        sendStatus.set("Sent");
+        sendStatusDetail.set("Sent to the server for delivery to online community members. Delivery and reading have not been confirmed.");
+    }
+    public void globalSent(String error) {
+        if (error != null) { sent(error); return; }
+        sendState = SendState.SENT;
+        sendStatus.set("Sent");
+        sendStatusDetail.set("Sent to the server for delivery to online users. Delivery and reading have not been confirmed.");
     }
     public void unconfirmed() {
         if (sendState == SendState.DELIVERED || sendState == SendState.FAILED) return;
         sendState = SendState.UNCONFIRMED;
-        sendStatus.set("Chưa xác nhận được");
-        sendStatusDetail.set("Chưa nhận được xác nhận từ phía nhận; tin nhắn có thể đã đến nơi.");
+        sendStatus.set("Unconfirmed");
+        sendStatusDetail.set("No delivery confirmation received. The message may have arrived.");
     }
     public void delivered() {
         sendState = SendState.DELIVERED;
-        sendStatus.set("Đã gửi");
-        sendStatusDetail.set("Phía nhận đã xác nhận nhận được tin nhắn. Chưa có xác nhận đã đọc.");
+        sendStatus.set("Sent");
+        sendStatusDetail.set("The recipient confirmed delivery. Reading has not been confirmed.");
     }
 
     private final Type type;

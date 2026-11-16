@@ -7,6 +7,7 @@ public enum FileType implements MessageType {
     OFFER,
     DECISION,
     CANCEL,
+    CANCEL_ACK(true),
     TRANSFER_START,
     READY(true),
     END,
