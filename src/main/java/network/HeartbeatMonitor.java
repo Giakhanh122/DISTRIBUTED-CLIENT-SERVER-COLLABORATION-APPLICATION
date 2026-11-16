@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 /** Liveness of one authenticated control socket, independent of management requests. */
 public final class HeartbeatMonitor implements AutoCloseable {
     public static final Duration INTERVAL = Duration.ofSeconds(5);
-    public static final Duration TIMEOUT = Duration.ofSeconds(30);
+    public static final Duration TIMEOUT = Duration.ofSeconds(15);
     private static final ScheduledThreadPoolExecutor TIMER = new ScheduledThreadPoolExecutor(2,
             Thread.ofPlatform().daemon().name("heartbeat-timer-", 0).factory());
     static { TIMER.setRemoveOnCancelPolicy(true); }
