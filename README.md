@@ -2,6 +2,166 @@
 
 Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP socket.
 
+## Cài đặt và chạy
+
+Làm theo thứ tự các bước dưới đây. Cần cài JDK và Maven; Maven sẽ tự tải các
+thư viện Java của dự án trong lần build đầu tiên.
+
+### 1. Cài công cụ
+
+- Cài JDK 21 trở lên, gồm cả `java` và `javac`. Có thể tải Temurin từ
+  <https://adoptium.net/temurin/releases/>.
+- Cài Apache Maven 3.9 trở lên từ
+  <https://maven.apache.org/download.cgi> và thêm thư mục `bin` của Maven vào
+  `PATH`.
+- Mở terminal mới và xác nhận các lệnh sau chạy được:
+
+```text
+java -version
+javac -version
+mvn -version
+```
+
+### 2. Lấy mã nguồn
+
+Clone repository, sau đó chuyển vào thư mục gốc:
+
+```bash
+git clone https://github.com/Giakhanh122/DISTRIBUTED-CLIENT-SERVER-COLLABORATION-APPLICATION.git
+cd DISTRIBUTED-CLIENT-SERVER-COLLABORATION-APPLICATION
+```
+
+Nếu đã có mã nguồn, mở terminal tại thư mục chứa `pom.xml`.
+
+### 3. Tải dependencies và build
+
+Chạy tại thư mục gốc. Lần đầu cần Internet để Maven tải Gson, JavaFX, JUnit và
+các plugin build:
+
+```bash
+mvn -DskipTests package
+```
+
+Không cần tải hoặc chép thư viện Java thủ công. Các script chạy ứng dụng cũng
+tự build lại dự án.
+
+### 4. Khởi động server trên máy A
+
+Trên máy A, mở terminal tại thư mục gốc và chạy một lệnh phù hợp với hệ điều hành:
+
+```bash
+# Linux/macOS
+./app.sh server
+```
+
+```powershell
+# Windows PowerShell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\app.ps1 -Mode server
+```
+
+Giữ terminal này mở. Server mặc định lắng nghe TCP cổng `8080` và UDP cổng
+`41234`; ghi lại địa chỉ IP LAN được in ra khi server khởi động. Lần chạy đầu
+tiên, server tạo identity trong `server_identity/`.
+
+### 5. Chuyển public key từ máy A sang máy B
+
+Client xác thực server bằng public key đã pin. Chỉ chuyển file
+`server_identity/server-public.key`; **không chép hoặc gửi
+`server_identity/server-private.key` cho máy client vào thư mục config/ (tạo thư mục config nếu chưa có).**
+
+Nếu server và client chạy trong cùng một bản checkout, mở terminal thứ hai tại
+thư mục gốc rồi chép public key:
+
+```bash
+# Linux/macOS
+mkdir -p config
+cp server_identity/server-public.key config/server-public.key
+```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force config
+Copy-Item server_identity\server-public.key config\server-public.key
+```
+
+Với hai máy khác nhau, làm lần lượt:
+
+1. Trên máy A, gửi file `server_identity/server-public.key` sang máy B qua USB
+   hoặc một kênh tin cậy khác.
+2. Trên máy B, clone repository và mở terminal tại thư mục gốc. Đặt file vừa
+   nhận vào `config/server-public.key`. Ví dụ, nếu file nằm trong Downloads:
+
+```bash
+# Linux/macOS
+mkdir -p config
+cp "$HOME/Downloads/server-public.key" config/server-public.key
+```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force config
+Copy-Item "$HOME\Downloads\server-public.key" config\server-public.key
+```
+
+Nếu file được lưu ở vị trí khác, thay đường dẫn nguồn trong lệnh. Lặp lại bước
+này trên mỗi máy client; public key phải thuộc đúng server mà client kết nối.
+
+### 6. Kết nối client trên máy B tới server trên máy A
+
+Mở terminal mới tại thư mục gốc trên máy client:
+
+```bash
+# Linux/macOS
+./app.sh cli
+```
+
+```powershell
+# Windows PowerShell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\app.ps1 -Mode cli
+```
+
+Khi được hỏi `Run server(s) or client(c):`, nhập `c`. Nếu hai máy cùng mạng LAN,
+client có thể tìm server bằng UDP discovery. Nếu discovery không hoạt động, hãy
+nhập trực tiếp IP LAN của máy A:
+
+```bash
+# Linux/macOS
+./run.sh 192.168.1.10
+```
+
+```powershell
+# Windows
+.\run.bat 192.168.1.10
+```
+
+Thay `192.168.1.10` bằng IP mà server đã in ra. Khi được hỏi, nhập `c` để chạy
+client.
+
+### 7. Đăng nhập và kết nối thêm client
+
+| Username              | Password    |
+| --------------------- | ----------- |
+| `alice`               | `alice123`  |
+| `bob`                 | `bob123`    |
+| `admin1`              | `password1` |
+| `user01` đến `user17` | `demo123`   |
+
+Mỗi username chỉ đăng nhập được một lần tại một thời điểm. Để kết nối thêm
+client trên máy khác, cài JDK/Maven và build ở bước 1--3, sau đó lặp lại bước
+5--6 bằng một username khác. Để bắt đầu chat P2P với Bob trong CLI, nhập
+`/lookup bob`.
+
+### Cổng mạng cần cho phép
+
+- TCP `8080` trên server: kết nối quản lý và truyền file community.
+- UDP `41234` trên cùng mạng LAN: tự tìm server. Nếu discovery không qua router
+  hoặc VPN, dùng IP server trực tiếp như bước 6.
+- TCP listener P2P của mỗi client: cổng được cấp động; firewall trên máy client
+  cần cho phép ứng dụng Java nhận kết nối trong mạng sử dụng.
+
+P2P cần có đường TCP trực tiếp giữa hai client; kết nối qua NAT/firewall hoặc
+Internet không được bảo đảm. Để dừng server, nhấn `Ctrl+C` tại terminal server.
+
 ## Hiện trạng
 
 - Handshake, đăng nhập và tra cứu người dùng qua server TCP.
@@ -15,65 +175,19 @@ Bài tập môn Computer Networking: ứng dụng client–server dùng Java TCP
   `PeerListener`. Không cần server tham gia vào truyền file sau khi đã kết nối peer.
 - UDP broadcast discovery; yêu cầu JDK 21 trở lên.
 
-## Chạy chương trình
+## Dùng CLI sau khi đăng nhập
 
-Yêu cầu JDK 21 trở lên và Maven. Từ thư mục gốc repository, biên dịch và chạy bằng một lệnh:
+- `/users`: xem người dùng đang online.
+- `/lookup bob`: tìm Bob và kết nối P2P.
+- `/chat`: xem các peer đã kết nối; `/chat bob` chọn một peer đang kết nối.
+- `/chats`: xem metadata phiên P2P trên server.
+- `/broadcast -m`: gửi tin vào community đang chọn.
+- `/global <message>`: gửi tin tới mọi người đang online.
+- `/logout`: đăng xuất.
 
-```bash
-./run.sh
-```
-
-Chọn `s` ở terminal thứ nhất để chạy server. Mở terminal khác, chạy lại script và
-chọn `c` để chạy client. Khi không truyền địa chỉ, client dùng UDP discovery để tìm server.
-
-Trước lần chạy client đầu tiên, đặt public key của server tại
-`config/server-public.key`. Nếu server và client chạy trong cùng repository:
-
-```bash
-mkdir -p config
-cp server_identity/server-public.key config/server-public.key
-```
-
-Server tạo public key khi khởi động lần đầu. Nếu client ở máy khác, lấy
-`server_identity/server-public.key` từ đúng máy server qua kênh tin cậy rồi đặt
-vào thư mục `config` trên máy client. Chỉ sao chép public key; private key giữ
-trên server. Khóa pin phải khớp server mà client kết nối.
-
-Để chỉ định server và bỏ qua discovery:
-
-```bash
-./run.sh localhost
-./run.sh 192.168.1.10
-```
-
-Thay IP ví dụ bằng IP thật của máy server. Sau khi chọn `c`, đăng nhập bằng tài khoản
-trong `AuthService`. Dùng `/users` để xem danh sách online, `/lookup bob` để tìm và
-kết nối peer Bob, `/logout` để thoát. Dùng Ctrl+C tại terminal server để dừng.
-`/chats` hiển thị danh sách phiên P2P chung, gồm người tham gia, UUID và trạng thái.
-Cả hai registry lưu RAM; mất kết nối server chuyển metadata phiên
-chưa đóng sang `UNKNOWN`, không đóng đường P2P đang hoạt động.
-
-Có **20 tài khoản demo**:
-
-| Username | Password |
-| --- | --- |
-| `alice` | `alice123` |
-| `bob` | `bob123` |
-| `admin1` | `password1` |
-| `user01` đến `user17` | `demo123` |
-
-Mỗi tài khoản chỉ đăng nhập một phiên server cùng lúc. Mở nhiều cửa sổ client
-với các tài khoản khác nhau để trình diễn xử lý đồng thời.
-Sau `/lookup bob`, nhập nội dung để chat với Bob; Bob có thể trả lời trực tiếp.
-
-Khi đã kết nối nhiều peer, dùng `/chat` để xem danh sách và người đang chọn;
-`/chat bob` chuyển sang Bob trên kết nối có sẵn. `/lookup bob` cũng chọn lại Bob
-nếu đã kết nối, không mở thêm socket hoặc cần server lookup lại. Tin nhắn thường
-chỉ gửi tới peer đang chọn; gửi nhóm dùng `/broadcast -m`.
-Nếu chọn/lookup một peer không khả dụng, lựa chọn hiện tại được bỏ để tin nhắn kế
-tiếp không đi nhầm sang người trước đó. Các kết nối peer khác vẫn được giữ.
-Trong CLI, dùng `/global <message>` để gửi tin tới tất cả user online; lệnh
-`/broadcast -m` vẫn chỉ gửi vào community đang chọn.
+`/lookup` cũng chọn lại peer nếu đã kết nối, không mở thêm socket. Nếu peer
+không khả dụng, lựa chọn hiện tại được bỏ để tin nhắn tiếp theo không gửi nhầm
+sang peer trước đó; các kết nối peer khác vẫn được giữ.
 
 Để gửi file từ Alice sang Bob, kết nối chat bằng `/lookup bob` trước, rồi:
 
@@ -104,28 +218,15 @@ Offer được accept chờ socket dữ liệu tối đa 30 giây; socket dữ l
 30 giây. Logout hoặc đóng chat peer dọn các transfer liên quan. Mất kết nối server
 không đóng chat/file P2P đã thiết lập.
 
-Script dùng Maven để biên dịch vào `target/classes/` và chép thư viện vào
-`target/deps/`, dừng nếu build lỗi rồi chuyển tham số cho entry point đã chọn.
-Maven cần tải dependency trong lần đầu. Script chạy được khi gọi từ thư mục khác.
-`target/` và file `.class` được Git bỏ qua.
-
-Các script mở app dùng `-DskipTests` để không chạy bộ kiểm thử trước mỗi lần mở.
-Chạy bộ kiểm thử riêng bằng `mvn test`; test dùng cổng TCP/UDP ngẫu nhiên và
-thư mục tạm riêng, không tải file thử vào Downloads thật.
-
-| Lệnh | Chế độ |
-| --- | --- |
-| `./run.sh` hoặc `./app.sh cli` | Chạy `app.Main`, chọn server/client trong terminal |
-| `./app.sh server` | Chạy server trực tiếp |
-| `./app.sh` hoặc `./app.sh ui` hoặc `./run_ui.sh` | Mở JavaFX |
-
 ## Khởi động giao diện UI
 
 Chạy `./app.sh server` ở một terminal, sau đó chạy `./app.sh` ở terminal khác
-để mở JavaFX. Trên Windows dùng `app.ps1 server` và `app.ps1 ui` tương ứng.
+để mở JavaFX. Trên Windows, chạy server bằng
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\app.ps1 -Mode server`
+và mở giao diện bằng
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\app.ps1 -Mode ui`.
 
-Ở file nhận, bấm icon tải xuống để bắt đầu; không có nút Accept/Reject trên GUI.
-File nhận có nút tải về (đồng ý) và nút từ chối đặt cạnh nhau.
+Ở file nhận, chọn nút tải về để chấp nhận hoặc nút từ chối trên thẻ offer.
 File P2P chưa tải sẽ hết hạn sau 5 phút. Trong khi truyền có thanh tiến trình,
 tốc độ, thời gian còn lại ước tính và nút × để hủy từng file. Hủy đóng socket dữ
 liệu riêng, xóa file tải dở rồi kết thúc; lỗi xóa được báo thay vì coi là đã dọn.
@@ -234,29 +335,6 @@ nhắn nhóm, upload và download. Trên GUI, `ConversationStore` giữ lịch s
 peer/community ID, `ConnectionStatusView` render trạng thái; `ChatController`
 điều phối thao tác màn hình. Adapter giữ token phiên và revision control connection
 để chặn callback cũ; đây là hàng rào bất đồng bộ, không phải trạng thái kết nối thứ hai.
-
-## Cài đặt và kiểm tra môi trường
-
-Cài JDK **21 trở lên** và Maven, đặt `java`, `javac`, `mvn` trên PATH. Kiểm tra:
-
-```text
-java -version
-javac -version
-mvn -version
-```
-
-Lần build đầu cần truy cập kho Maven để tải Gson, JavaFX và JUnit. Mở terminal
-trong repository rồi dùng các lệnh ở trên; trên Windows có thể dùng
-`powershell -ExecutionPolicy Bypass -File .\app.ps1 -Mode server` và
-`powershell -ExecutionPolicy Bypass -File .\app.ps1 -Mode ui`.
-Sau khi server tạo identity, sao chép **chỉ public key** vào `config/server-public.key`
-trên từng máy client. Trên PowerShell: `New-Item -ItemType Directory -Force config`,
-rồi `Copy-Item server_identity/server-public.key config/server-public.key` nếu chạy cùng máy.
-
-Với hai máy LAN, dùng IP LAN thật của server. Cổng TCP 8080 phục vụ quản lý và
-file community; UDP 41234 phục vụ discovery. P2P cần cho phép cổng TCP listener
-của client (cấp động). Nếu discovery không đi qua router/VPN, nhập IP server
-trực tiếp. Client cần môi trường desktop để chạy JavaFX; có thể dùng CLI nếu không có.
 
 ## Kiểm tra và bằng chứng hiện tại
 
