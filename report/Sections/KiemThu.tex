@@ -1,0 +1,77 @@
+\section{Kiểm thử và kết quả}
+\begingroup
+\setlength{\emergencystretch}{2em}
+
+\subsection{Bộ kiểm thử tự động}
+
+Hệ thống sử dụng JUnit~5 để kiểm thử. Bộ test được chạy bằng lệnh \texttt{mvn test} và sử dụng cổng TCP/UDP ngẫu nhiên cùng thư mục tạm riêng, không ảnh hưởng đến dữ liệu thật. Tổng cộng có 12~bài kiểm thử trên localhost, bao gồm:
+
+\begin{itemize}
+\item \textbf{Đa kết nối đồng thời}: 20~client kết nối, đăng nhập và gửi tin nhắn cùng lúc. Kiểm tra rằng tất cả đăng nhập thành công, không có race condition trong UserSessionRegistry.
+
+\item \textbf{Framing và ranh giới}: Chia frame thành từng byte đơn, gộp hai frame liền, cắt ngắn luồng TCP. Xác nhận PacketCodec không nhầm ranh giới message.
+
+\item \textbf{File P2P}: Truyền file 200~MiB qua socket dữ liệu riêng, kiểm tra kích thước, SHA-256 checksum và FILE/RESULT OK.
+
+\item \textbf{File community (broadcast)}: Upload file lên server, phát offer, download bởi thành viên khác. Kiểm tra token, membership và checksum.
+
+\item \textbf{File rỗng và Unicode}: File 0~byte có END/RESULT nhưng bỏ qua phần dữ liệu. File với tên Unicode được xử lý đúng.
+
+\item \textbf{Hủy file}: Hủy giữa lúc truyền, kiểm tra file tạm được xóa, file gốc và file đã hoàn tất không bị xóa.
+
+\item \textbf{Sai checksum}: Gửi dữ liệu sai, kiểm tra FILE/RESULT trả FAIL với lý do.
+
+\item \textbf{Xác thực và mã hóa}: Sai mật khẩu trả INVALID\_CREDENTIALS. Sai chữ ký server làm thất bại handshake. Kiểm tra mã hóa AES-GCM hai chiều.
+
+\item \textbf{Vòng đời phiên}: Đăng nhập, thao tác, mất kết nối, kết nối lại. Kiểm tra P2P và cổng listener được giữ sau reconnect.
+\end{itemize}
+
+\subsection{Kiểm thử thủ công}
+
+Ngoài bộ kiểm thử tự động, hệ thống đã được kiểm tra thủ công trên localhost với nhiều cửa sổ terminal và GUI:
+
+\begin{itemize}
+\item Mở 3--5 client GUI đồng thời với các tài khoản khác nhau.
+\item Chat P2P giữa hai client, gửi và nhận file ảnh, PDF, file lớn.
+\item Tạo community, mời thành viên, gửi broadcast message và file.
+\item Tắt server, xác nhận client hiển thị trạng thái offline, chat P2P vẫn hoạt động.
+\item Kết nối lại server, xác nhận community và user list được tải lại.
+\item Hủy file giữa chừng, xác nhận chat và các file khác không bị ảnh hưởng.
+\end{itemize}
+
+\subsection{Kết quả đạt được}
+
+Bảng~\ref{tab:rubric} tóm tắt mức độ hoàn thành theo 10~bước của đề bài.
+
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{c >{\raggedright\arraybackslash}X c}
+\toprule
+Bước & Nội dung & Hoàn thành \\
+\midrule
+1 & Setup \& Protocol Design: Custom packet (opcode, sequence, body), 8 nhóm message type, state diagram & \checkmark \\
+2 & Basic Client-Server Handshake: TCP socket, HELLO/HELLO\_ACK, xác nhận phiên bản & \checkmark \\
+3 & Concurrency: Virtual thread cho mỗi kết nối, heartbeat riêng, write lock & \checkmark \\
+4 & Authentication \& State Management: Login, UserSessionRegistry, IP/port tracking & \checkmark \\
+5 & Real-Time Text Routing: Broadcast global/community, chat P2P trực tiếp & \checkmark \\
+6 & Reliable File Transfer: Chunking 64~KiB, SHA-256, socket dữ liệu riêng, file tối đa 500~MiB & \checkmark \\
+7 & Network Resilience: Heartbeat, timeout, graceful disconnect, reconnect & \checkmark \\
+8 & Security Layer: X25519 + HKDF + AES-256-GCM, Ed25519 server signature, peer key proof & \checkmark \\
+9 & UI Integration: JavaFX GUI với progress bar, ETA, tốc độ, icon hủy; CLI đầy đủ & \checkmark \\
+10 & Testing \& Code Quality: 12 JUnit test, Maven build, code có comment & \checkmark \\
+\bottomrule
+\end{tabularx}
+\caption{Mức độ hoàn thành theo rubric đề bài.}
+\label{tab:rubric}
+\end{table}
+
+\subsection{Giới hạn hiện tại}
+
+\begin{itemize}
+\item Tài khoản là demo trong bộ nhớ, không có hệ thống đăng ký.
+\item Community, phiên và metadata không được lưu bền vững -- restart server làm mất dữ liệu RAM.
+\item File bị ngắt phải gửi lại từ đầu, chưa hỗ trợ resume theo offset.
+\item Chưa kiểm thử trên nhiều máy thật qua NAT/firewall.
+\item Discovery UDP có thể không hoạt động qua router/VPN; cần nhập IP server trực tiếp.
+\end{itemize}
+
+\endgroup

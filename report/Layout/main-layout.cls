@@ -49,21 +49,21 @@
     \fi
 }
 
-\newcommand{\@upperuniname}{Vietnam National University Ho Chi Minh City}
-\newcommand{\@uniname}{Ho Chi Minh City University of Technology}
+\newcommand{\@upperuniname}{Đại học Quốc gia Thành phố Hồ Chí Minh}
+\newcommand{\@uniname}{Trường Đại học Bách khoa}
 
-\newcommand{\@deptname}{Faculty of Computer Science and Engineering}
+\newcommand{\@deptname}{Khoa Khoa học và Kỹ thuật Máy tính}
 \newcommand{\deptname}[1]{\renewcommand{\@deptname}{#1}}
 
 \newcommand{\@coursename}{Course name}
 \newcommand{\coursename}[1]{\renewcommand{\@coursename}{#1}}
 
-\newcommand{\@reporttype}{Assignment Report}
+\newcommand{\@reporttype}{Bài tập lớn 1}
 \newcommand{\reporttype}[1]{\renewcommand{\@reporttype}{#1}}
 
 \renewcommand{\@title}{Report title}
 
-\newcommand{\@advisor}{Advisor}
+\newcommand{\@advisor}{GVHD}
 \newcommand{\advisor}[1]{\renewcommand{\@advisor}{#1}}
 
 \newcommand{\@stuname}{STUDENT:\ H (xxxxxxx)}

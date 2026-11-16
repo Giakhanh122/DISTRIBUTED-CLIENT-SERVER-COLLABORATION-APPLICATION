@@ -1,0 +1,85 @@
+\section{Triển khai hệ thống}
+\begingroup
+\setlength{\emergencystretch}{2em}
+
+\subsection{Công nghệ và môi trường}
+
+Hệ thống được viết bằng Java, yêu cầu JDK 21 trở lên. Bảng~\ref{tab:tech-stack} liệt kê các thành phần công nghệ chính.
+
+\begin{table}[H]\centering\small
+\begin{tabularx}{\linewidth}{l >{\raggedright\arraybackslash}X}
+\toprule
+Thành phần & Mô tả \\
+\midrule
+Ngôn ngữ & Java 21 (Virtual Threads, Pattern Matching) \\
+Giao diện & JavaFX 21 (FXML, CSS) và CLI (stdin/stdout) \\
+Giao thức & TCP socket (java.net.Socket, ServerSocket) cho control, chat P2P và file; UDP socket (DatagramSocket) cho discovery \\
+Bảo mật & X25519 (trao đổi khóa), Ed25519 (chữ ký server), HKDF (dẫn xuất khóa), AES-256-GCM (mã hóa dữ liệu) \\
+Thư viện & Gson 2.15 (JSON), JUnit 5 (testing), Maven (build) \\
+\bottomrule
+\end{tabularx}
+\caption{Bảng công nghệ sử dụng.}
+\label{tab:tech-stack}
+\end{table}
+
+\subsection{Cấu trúc mã nguồn}
+
+Mã nguồn nằm trong \path{src/main/java/} và được chia thành các package theo chức năng:
+
+\begin{description}[leftmargin=0cm,style=nextline]
+\item[\texttt{app/}] Entry point cho chế độ CLI, chọn chạy server hoặc client.
+\item[\texttt{protocols/}] Định nghĩa OpCode, Packet, PacketCodec, PacketValidator và các enum MessageType cho 8 nhóm opcode (SYSTEM, CONNECTION, AUTH, USER, CHAT, FILE, COMMUNITY, DISCOVERY).
+\item[\texttt{network/}] PacketChannel xử lý đọc/ghi packet trên TCP với khóa ghi và mã hóa; HeartbeatMonitor thực hiện PING/PONG; EncryptedRecordStream đọc/ghi bản ghi AES-GCM.
+\item[\texttt{security/}] X25519 (tạo và dẫn xuất khóa Diffie--Hellman), Hkdf (dẫn xuất khóa theo RFC~5869), AesGcm (mã hóa/giải mã), SessionKeys (cặp khóa hai chiều), PeerKeyProof (xác thực danh tính peer).
+\item[\texttt{server/}] Server (TCP listener, UDP discovery, virtual thread), ClientHandler (handshake, auth, dispatch), AuthService (20 tài khoản demo), UserSessionRegistry, ChatSessionRegistry, CommunityService, BroadcastService, FileStorageService.
+\item[\texttt{client/}] Client (discovery, handshake, đăng nhập), ClientSession (vòng đời, ConnectionState, peer), PeerConnection, PeerListener, CommunityClient, FileTransferClient, BroadcastClient, ServerConnector, ServerDiscovery.
+\item[\texttt{transfer/}] FileSender, FileReceiver, FileTransferSession, FileTransferRegistry, FileDataReader. Dùng chung cho cả client và server.
+\item[\texttt{ui/}] MainApp, Launcher, ChatController, LoginController, ChatClientAdapter, các model (ChatMessageModel, CommunityModel, FileOfferModel, UserModel), view (ChatMessageView, ConnectionStatusView, ConversationCellSelector) và tiện ích (IconUtils, JavaFxUtils, WindowDragHelper).
+\end{description}
+
+Tổng cộng hệ thống có hơn 60 file Java, được tổ chức rõ ràng theo mô hình \textbf{tách biệt network logic, data processing và user interface} đúng theo yêu cầu đề bài.
+
+\subsection{Xử lý đồng thời}
+
+Server sử dụng \textbf{virtual thread} (JEP~444, JDK~21) để xử lý mỗi kết nối TCP trên một thread riêng. Virtual thread cho phép mở hàng nghìn kết nối đồng thời mà không tốn tài nguyên như platform thread truyền thống. Mỗi khi server nhận một kết nối mới từ \texttt{ServerSocket.accept()}, một virtual thread được tạo để chạy \texttt{ClientHandler}.
+
+\begin{lstlisting}[language=Java,caption={Tạo virtual thread cho mỗi client kết nối.}]
+Thread worker = Thread.ofVirtual().unstarted(() -> {
+    try (socket) {
+        new ClientHandler(socket, ...).run();
+    } catch (IOException | RuntimeException e) {
+        System.err.println("Client handler failed: " + e.getMessage());
+    } finally {
+        connections.remove(socket);
+        workers.remove(Thread.currentThread());
+    }
+});
+\end{lstlisting}
+
+Trên client, mỗi kết nối P2P cũng có reader và heartbeat monitor riêng. Heartbeat được gửi mỗi 5~giây, chờ ACK tối đa 30~giây. UDP discovery chạy trên thread riêng không ảnh hưởng đến các kết nối TCP.
+
+\texttt{PacketChannel} dùng một \textbf{write lock} để tuần tự hóa việc ghi frame lên socket. Điều này đảm bảo rằng khi response, heartbeat và broadcast cùng ghi vào một socket, các byte không bị xen kẽ. Sequence number được cấp dưới cùng khóa ghi.
+
+\subsection{Xác thực và quản lý phiên}
+
+AuthService cung cấp 20 tài khoản demo (alice, bob, admin1, user01--user17) với mật khẩu được lưu trong bộ nhớ. Mỗi tài khoản chỉ cho phép một phiên đăng nhập cùng lúc. UserSessionRegistry theo dõi user đang online cùng IP và cổng P2P listener.
+
+Quy trình đăng nhập:
+\begin{enumerate}
+\item Client gửi \texttt{CONNECTION/HELLO} với \texttt{protocolVersion}, challenge và public key X25519.
+\item Server trả \texttt{HELLO\_ACK} kèm public key và chữ ký Ed25519.
+\item Client kiểm tra chữ ký bằng public key server đã pin. Hai bên dẫn xuất khóa AES-256-GCM.
+\item Trao đổi \texttt{SYSTEM/KEY\_CONFIRM} và \texttt{KEY\_CONFIRM\_ACK} dưới mã hóa.
+\item Client gửi \texttt{AUTH/LOGIN\_REQUEST} (username, password, peerPort).
+\item Server xác thực, tạo UserSession và trả \texttt{LOGIN\_RESPONSE}.
+\end{enumerate}
+
+Password chỉ được gửi sau khi đã bật mã hóa AES-GCM. Server giữ chỗ username trước khi gửi LOGIN\_RESPONSE để ngăn đăng nhập trùng, nhưng chỉ kích hoạt session và phát PRESENCE\_UPDATE sau khi gửi xong ACK đăng nhập.
+
+\subsection{Community và Broadcast}
+
+Hệ thống hỗ trợ tạo, tham gia, rời và quản lý các community. CommunityService trên server xử lý các thao tác này. Tin nhắn broadcast được phân phối tới các thành viên online của community tương ứng. Global broadcast gửi tới tất cả user online trừ người gửi.
+
+File community được upload lên server (qua socket TCP riêng với token một lần), server lưu xuống đĩa và phát offer tới thành viên online. Người nhận tải file qua socket TCP riêng với download token cũng chỉ dùng một lần. Token có thời hạn 5~phút.
+
+\endgroup
