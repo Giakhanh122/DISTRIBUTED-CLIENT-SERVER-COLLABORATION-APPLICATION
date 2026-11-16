@@ -114,11 +114,11 @@ public class ClientHandler implements Runnable {
 
             Packet request = channel.read();
             if (request == null) return;
-            if (request.type() == FileType.BROADCAST_UPLOAD_START) {
+            if (request.type() == FileType.FILE_BROADCAST_UPLOAD_START) {
                 requireBroadcasts().handleBroadcastUploadConnection(request, channel);
                 return;
             }
-            if (request.type() == FileType.BROADCAST_DOWNLOAD_START) {
+            if (request.type() == FileType.FILE_BROADCAST_DOWNLOAD_START) {
                 requireBroadcasts().handleBroadcastDownloadConnection(request, channel);
                 return;
             }
@@ -164,7 +164,7 @@ public class ClientHandler implements Runnable {
                     System.out.println(session.username() + ": " + message);
                 }
 
-                case ChatType.BROADCAST -> requireBroadcasts().handleBroadcastMessage(packet, session);
+                case ChatType.COMMUNITY_BROADCAST -> requireBroadcasts().handleBroadcastMessage(packet, session);
 
                 case ChatType.GLOBAL_BROADCAST ->
                     requireBroadcasts().handleGlobalBroadcastMessage(packet, session);
@@ -185,8 +185,8 @@ public class ClientHandler implements Runnable {
                      CommunityType.INFO_REQUEST -> requireCommunityRequests().handle(packet, session);
 
                 // Broadcast file operations
-                case FileType.BROADCAST_UPLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileUploadRequest(packet, session);
-                case FileType.BROADCAST_DECISION -> requireBroadcasts().handleBroadcastFileDecision(packet, session);
+                case FileType.FILE_BROADCAST_UPLOAD_REQUEST -> requireBroadcasts().handleBroadcastFileUploadRequest(packet, session);
+                case FileType.FILE_BROADCAST_DECISION -> requireBroadcasts().handleBroadcastFileDecision(packet, session);
 
                 case AuthType.LOGOUT_REQUEST -> {
                     PacketValidator.validateRequest(packet, AuthType.LOGOUT_REQUEST, 0, 0);

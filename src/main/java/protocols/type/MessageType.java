@@ -12,7 +12,7 @@ public sealed interface MessageType permits SystemType, ConnectionType, AuthType
     boolean requiresStatus();
 
     default boolean requiresReplyTo() {
-        return requiresStatus() || this == FileType.DECISION;
+        return requiresStatus() || this == FileType.FILE_DECISION;
     }
 
     static MessageType fromWire(OpCode opcode, String type) throws IOException {

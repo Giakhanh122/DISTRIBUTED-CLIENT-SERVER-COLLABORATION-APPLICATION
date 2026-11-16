@@ -1,148 +1,166 @@
 \section{Đặc tả giao thức}
 \begingroup
-\setstretch{1.1}
-\setlength{\emergencystretch}{2em}
+\setstretch{1.12}
 
-\subsection{Framing và envelope}
-Giao thức hiện tại có \texttt{protocolVersion = 3}. Trước khi bật mã hóa,
-\texttt{PacketCodec} mã hóa thông điệp theo cấu trúc:
+\subsection{Cách đóng gói và đọc thông điệp}
+
+Ứng dụng sử dụng giao thức riêng ở tầng ứng dụng, hiện tại là phiên bản 6.
+Các lệnh như đăng nhập, gửi tin nhắn hay chấp nhận file được biểu diễn bằng JSON.
+Trước phần JSON là một số nguyên 4 byte cho biết có bao nhiêu byte dữ liệu cần đọc:
+
 \begin{center}
-\fbox{\texttt{[JSON length: 4 byte big-endian][JSON UTF-8: length byte]}}
+\fbox{\texttt{[Độ dài JSON: 4 byte][Nội dung JSON: N byte]}}
 \end{center}
-Length đếm byte UTF-8 của JSON.
-Receiver đọc đủ 4 byte độ dài rồi đọc đủ payload; các frame có thể bị TCP chia nhỏ
-hoặc gộp lại. JSON tối đa 1 MiB. JSON sai kiểu, trùng trường hoặc quá giới hạn bị từ chối.
 
-\begin{table}[H]\centering\small
-\begin{tabularx}{\linewidth}{l l >{\raggedright\arraybackslash}X}
+Độ dài được tính theo byte UTF-8, không tính theo số ký tự. Bốn byte độ dài được
+lưu theo thứ tự byte lớn trước (big-endian). Bên nhận đọc đủ bốn byte này, lấy
+ra N rồi tiếp tục đọc đủ N byte của JSON. Cách làm này cần thiết vì TCP chỉ cung
+cấp một dòng byte: một thông điệp có thể đến qua nhiều lần đọc, hoặc nhiều
+thông điệp có thể đến trong cùng một lần đọc. Mỗi JSON được giới hạn ở 1 MiB.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{p{3.1cm} p{2cm} >{\raggedright\arraybackslash}X}
 \toprule
-Trường & Kiểu & Ý nghĩa \\
+Trường & Kiểu dữ liệu & Ý nghĩa \\
 \midrule
-\texttt{opcode} & integer & Nhóm chức năng, từ 0 đến 7. \\
-\texttt{sequence} & integer & Số thứ tự tăng dần riêng từng chiều TCP, bắt đầu 1. \\
-\texttt{body} & object & Payload có kiểu; luôn chứa \texttt{type}. \\
-\texttt{body.type} & string & Tên thao tác, ví dụ MESSAGE hoặc LOGIN\_\allowbreak{}REQUEST. \\
-\texttt{body.replyTo} & integer & Sequence của request được phản hồi; có ở response và FILE/DECISION. \\
-\texttt{body.status} & string & Kết quả response: OK hoặc mã lỗi. FILE/DECISION dùng decision thay status. \\
+\texttt{opcode} & Số nguyên & Xác định nhóm chức năng, ví dụ đăng nhập, chat hoặc file. \\
+\texttt{sequence} & Số nguyên & Số thứ tự gửi, tăng dần riêng ở mỗi chiều của kết nối TCP. \\
+\texttt{body} & Đối tượng & Chứa loại thao tác và dữ liệu của thông điệp. \\
+\texttt{body.type} & Chuỗi & Tên thao tác cụ thể trong nhóm chức năng. \\
+\texttt{body.replyTo} & Số nguyên & Cho biết phản hồi đang trả lời thông điệp có số thứ tự nào. \\
+\texttt{body.status} & Chuỗi & Kết quả xử lý, chẳng hạn \texttt{OK} hoặc mã lỗi. \\
 \bottomrule
 \end{tabularx}
-\caption{Envelope JSON và các trường điều khiển.}
+\caption{Cấu trúc một thông điệp điều khiển. Hai trường cuối chỉ xuất hiện ở những loại thông điệp cần phản hồi tương ứng.}
 \end{table}
 
-Ví dụ tin nhắn P2P trước lớp mã hóa:
-\begin{verbatim}
-{"opcode":4,"sequence":3,"body":{
-  "type":"MESSAGE",
-  "messageId":"8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
-  "content":"Hello Bob"}}
-\end{verbatim}
-Phản hồi phải khớp opcode, type và replyTo, không chỉ dựa vào sequence của chính
-response. FILE/RESULT lỗi sớm có thể dùng replyTo bằng 0 khi chưa có request tương ứng.
+Ví dụ dưới đây là yêu cầu gửi tin nhắn trong community, trước khi được mã hóa:
+\noindent\begin{minipage}{\linewidth}
+\begin{lstlisting}[upquote=true,columns=fullflexible,keepspaces=true]
+{
+  "opcode": 4,
+  "sequence": 10,
+  "body": {
+    "type": "COMMUNITY_BROADCAST",
+    "communityId": "<community-id>",
+    "content": "Hello everyone"
+  }
+}
+\end{lstlisting}
+\end{minipage}
 
-\subsection{Nhóm opcode và payload chính}
-\begin{table}[H]\centering\small
+Server kiểm tra người gửi có thuộc community đó hay không. Nếu hợp lệ, server
+thêm trường \texttt{sender} từ tài khoản đã đăng nhập rồi chuyển tin đến các
+thành viên online khác. Server không tin tên người gửi do client tự ghi trong
+nội dung yêu cầu. Với global chat, loại thông điệp là \texttt{GLOBAL\_BROADCAST};
+client chỉ cần gửi \texttt{content}, vì phạm vi nhận là mọi người đang online.
+
+\subsection{Các nhóm thông điệp}
+
+Một \texttt{opcode} xác định nhóm chức năng, còn \texttt{type} xác định thao tác
+trong nhóm đó. Ví dụ, nhóm AUTH có thao tác đăng nhập và đăng xuất.
+Bảng sau tóm tắt tám nhóm được dùng trong chương trình.
+
+\begin{table}[H]
+\centering\small
 \begin{tabularx}{\linewidth}{c l >{\raggedright\arraybackslash}X}
 \toprule
-Mã & Nhóm & Thao tác tiêu biểu \\
+Mã & Nhóm & Chức năng và ví dụ \\
 \midrule
-0 & SYSTEM & KEY\_\allowbreak{}CONFIRM/ACK, PING/PONG, ERROR. \\
-1 & CONNECTION & HELLO/ACK; PEER\_\allowbreak{}HELLO/ACK. \\
-2 & AUTH & LOGIN\_\allowbreak{}REQUEST/RESPONSE; LOGOUT\_\allowbreak{}REQUEST/RESPONSE. \\
-3 & USER & LIST, PRESENCE\_\allowbreak{}UPDATE, PEER\_\allowbreak{}LOOKUP, PEER\_\allowbreak{}KEY. \\
-4 & CHAT & MESSAGE, RECEIPT, BROADCAST, SESSION\_\allowbreak{}REPORT, SESSION\_\allowbreak{}LIST. \\
-5 & FILE & Offer/decision, mở data socket, END/RESULT, CANCEL và community file. \\
-6 & COMMUNITY & CREATE, JOIN, LEAVE, LIST, SELECT, MEMBERS, INFO. \\
-7 & DISCOVERY & UDP REQUEST/RESPONSE. \\
+0 & SYSTEM & Xác nhận mã hóa, kiểm tra kết nối bằng PING/PONG và báo lỗi. \\
+1 & CONNECTION & Chào kết nối bằng HELLO/HELLO\_ACK; thiết lập kết nối P2P. \\
+2 & AUTH & Đăng nhập và đăng xuất bằng yêu cầu cùng phản hồi tương ứng. \\
+3 & USER & Lấy danh sách online, thông báo online/offline và tìm địa chỉ peer. \\
+4 & CHAT & Tin riêng MESSAGE, tin community COMMUNITY\_BROADCAST, tin chung GLOBAL\_BROADCAST và xác nhận nhận tin riêng RECEIPT. \\
+5 & FILE & Đề nghị gửi, chấp nhận, truyền, kết thúc và hủy file; gồm cả file riêng và file community. \\
+6 & COMMUNITY & Tạo, tham gia, rời nhóm; lấy thông tin và danh sách thành viên. \\
+7 & DISCOVERY & Tìm server qua UDP bằng DISCOVERY\_REQUEST và DISCOVERY\_RESPONSE. \\
 \bottomrule
 \end{tabularx}
-\caption{Các nhóm chức năng; enum tương ứng nằm trong protocols/type.}
+\caption{Các nhóm chức năng trong giao thức.}
 \end{table}
 
-\begin{table}[H]\centering\small
-\begin{tabularx}{\linewidth}{l >{\raggedright\arraybackslash}X}
+Với tin nhắn riêng, \texttt{MESSAGE} chứa \texttt{messageId} để nhận diện tin và
+\texttt{content} là nội dung. Khi nhận được tin, client gửi \texttt{RECEIPT}
+kèm cùng mã tin và giá trị \texttt{DELIVERED}. Xác nhận này cho biết ứng dụng
+phía nhận đã nhận tin, không có nghĩa người dùng đã đọc. Tin global và community
+hiện chưa có xác nhận nhận hoặc đọc riêng cho từng người.
+
+Các phản hồi được ghép với yêu cầu bằng \texttt{replyTo} và loại thông điệp,
+giúp client không nhầm phản hồi đăng nhập với phản hồi lấy danh sách người dùng.
+Những lỗi như sai mật khẩu hoặc tên community đã tồn tại được trả bằng
+\texttt{status}. Riêng tên nhóm trùng sử dụng mã \texttt{NAME\_TAKEN}, để giao diện
+thông báo và cho người dùng nhập tên khác.
+
+\subsection{Thông điệp và dữ liệu truyền tập tin}
+
+Trước khi truyền file, bên gửi thông báo các thông tin cơ bản của file.
+Nhờ đó, bên nhận biết tên, kích thước và có thể lựa chọn tải về hoặc từ chối.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{p{3.8cm} >{\raggedright\arraybackslash}X}
 \toprule
-Thông điệp & Payload ngoài type \\
+Trường & Ý nghĩa \\
 \midrule
-HELLO & protocolVersion, serverVerificationChallenge, publicKey X25519. \\
-HELLO\_\allowbreak{}ACK & status, replyTo, protocolVersion, publicKey X25519, serverSignature. \\
-LOGIN\_\allowbreak{}REQUEST & username, password, peerPort. \\
-LOGIN\_\allowbreak{}RESPONSE & status, replyTo; ví dụ INVALID\_\allowbreak{}CREDENTIALS hoặc ALREADY\_\allowbreak{}LOGGED\_\allowbreak{}IN. \\
-PEER\_\allowbreak{}HELLO/ACK & username, peerPort trong request, sessionId, publicKey và serverSignature; ACK thêm status/replyTo. \\
-CHAT/MESSAGE & messageId dạng UUID và content, tối đa 64 KiB UTF-8. \\
-CHAT/RECEIPT & messageId, receipt=DELIVERED; không phải xác nhận đã đọc. \\
-CHAT/BROADCAST & Client gửi communityId, content; server bổ sung sender khi phân phối. \\
-PRESENCE\_\allowbreak{}UPDATE & username, online; chỉ gửi tới các session đã hoàn tất login ACK. \\
-DISCOVERY/RESPONSE & status, replyTo, tcpPort; client lấy IP từ địa chỉ nguồn UDP. \\
+\texttt{transferId}/\texttt{fileId} & Mã để phân biệt các lượt truyền hoặc file được lưu trên server. \\
+\texttt{sender}, \texttt{receiver} & Danh tính hai phía của file riêng. Offer community dùng người gửi và mã nhóm để xác định phạm vi nhận. \\
+\texttt{fileName} & Tên file được hiển thị cho người nhận. \\
+\texttt{fileSize} & Tổng số byte dữ liệu cần truyền. \\
+\texttt{checksum} & Mã kiểm tra SHA-256, dùng để phát hiện file bị thay đổi hoặc nhận thiếu. \\
 \bottomrule
 \end{tabularx}
-\caption{Payload đại diện cho đăng nhập, discovery và nhắn tin.}
+\caption{Các thông tin chính đi kèm một file.}
 \end{table}
 
-\subsection{Lớp bảo mật}
-Client pin public key Ed25519 của server tại \path{config/server-public.key}. HELLO/ACK trao đổi public key X25519;
-server ký transcript chứa HELLO và public key phiên. Client kiểm tra chữ ký trước
-khi tạo shared secret. X25519 và HKDF dẫn xuất hai khóa AES-256-GCM theo chiều.
-Hai bên trao đổi SYSTEM/KEY\_\allowbreak{}CONFIRM và KEY\_\allowbreak{}CONFIRM\_\allowbreak{}ACK đã mã hóa trước login.
-Discovery không mã hóa và không tự thiết lập khóa tin cậy.
+File riêng bắt đầu bằng \texttt{FILE\_OFFER}. Người nhận trả lời
+\texttt{FILE\_DECISION} với lựa chọn \texttt{ACCEPT} hoặc \texttt{REJECT}.
+Sau khi được chấp nhận, bên gửi mở socket dữ liệu riêng, gửi
+\texttt{FILE\_TRANSFER\_START} và chờ \texttt{FILE\_READY} trước khi truyền.
 
-Sau khi bật mã hóa, PacketChannel đóng các frame JSON hoặc khối byte file trong
-bản ghi có cấu trúc \texttt{[ciphertext length:4][ciphertext + GCM tag:16 byte]}.
-Counter theo chiều được dùng để tạo nonce 12 byte; khóa hai chiều khác nhau.
-Receiver từ chối bản ghi bị sửa hoặc cắt ngắn. Giới hạn counter buộc mở phiên mới
-trước khi dùng lại nonce. Không gửi password hay nội dung file dưới dạng rõ sau handshake.
+File community sử dụng các thông điệp bắt đầu bằng \texttt{FILE\_BROADCAST\_}.
+Client xin phép upload, nhận mã file cùng một mã cấp quyền tạm thời (token),
+rồi mở socket riêng để tải file lên server. Khi file được lưu thành công, server
+gửi \texttt{FILE\_BROADCAST\_OFFER} cho các thành viên online. Người muốn tải file gửi
+\texttt{FILE\_BROADCAST\_DECISION}; server kiểm tra quyền thành viên và cấp token tải về.
+Token chỉ dùng một lần và hết hạn sau 5 phút, nên không cần gửi lại mật khẩu
+trên từng kết nối file.
 
-Peer chat mang proof do server ký, ràng buộc username, sessionId và public key.
-File P2P dùng cặp khóa transfer riêng; READY cung cấp nonce mới để dẫn xuất khóa
-cho từng socket dữ liệu. File community xác thực server bằng khóa tin cậy của phiên.
+Dữ liệu file được đọc và ghi theo khối 64 KiB, không chuyển từng khối thành JSON.
+Bên nhận dựa vào \texttt{fileSize} để đọc đúng số byte, sau đó nhận
+\texttt{FILE\_END} và kiểm tra SHA-256. Nếu file hợp lệ, bên nhận lưu file hoàn
+chỉnh rồi gửi \texttt{FILE\_RESULT} với kết quả \texttt{OK}. Khi dữ liệu sai hoặc
+thiếu, file tạm được xóa và kết quả là lỗi. File rỗng vẫn có bước kết thúc và
+xác nhận; giới hạn kích thước cho mỗi file là 500 MiB.
 
-\subsection{Toàn bộ loại thông điệp FILE}
-Ký hiệu P là peer, C là client, S là server; G/N là phía gửi/nhận file. Socket chat/control mang lệnh;
-socket dữ liệu riêng mang file. Cùng một enum FILE phục vụ P2P và community.
+\subsection{Mã hóa và xử lý kết nối bị gián đoạn}
 
-\begin{small}
-\begin{longtable}{>{\raggedright\arraybackslash}p{0.41\linewidth}>{\raggedright\arraybackslash}p{0.14\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}}
-\toprule Loại & Chiều & Vai trò và payload chính \\ \midrule
-\endfirsthead
-\toprule Loại & Chiều & Vai trò và payload chính \\ \midrule
-\endhead
-OFFER & P$\to$P & transferId, sender, receiver, fileName, fileSize, checksum, publicKey. \\
-DECISION & P$\to$P & transferId, replyTo, decision=ACCEPT/REJECT; ACCEPT thêm publicKey. \\
-CANCEL & P$\leftrightarrow$P & transferId trên chat mã hóa; không có replyTo. \\
-TRANSFER\_\allowbreak{}START & P$\to$P & transferId, chọn transfer trên TCP dữ liệu mới. \\
-READY & P$\to$P & transferId, status, replyTo, connectionNonce. \\
-END & G$\to$N & transferId và checksum SHA-256 sau đủ fileSize byte. \\
-RESULT & N$\to$G & status, replyTo; FAIL có reason. \\
-BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}REQUEST & C$\to$S & communityId, fileName, fileSize, checksum. \\
-BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}RESPONSE & S$\to$C & status, replyTo; OK có fileId và uploadToken. \\
-BROADCAST\_\allowbreak{}OFFER & S$\to$C & fileId, sender, communityId, fileName, fileSize, checksum. \\
-BROADCAST\_\allowbreak{}DECISION & C$\to$S & fileId và decision=ACCEPT/REJECT. \\
-BROADCAST\_\allowbreak{}DOWNLOAD\_\allowbreak{}RESPONSE & S$\to$C & status, replyTo; OK có downloadToken. \\
-BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}START & C$\to$S & fileId và uploadToken trên TCP dữ liệu đã bảo mật. \\
-BROADCAST\_\allowbreak{}DOWNLOAD\_\allowbreak{}START & C$\to$S & fileId và downloadToken trên TCP dữ liệu đã bảo mật. \\
-\bottomrule
-\end{longtable}
-\end{small}
+Khi bắt đầu kết nối, hai phía trao đổi thông điệp HELLO để thống nhất phiên bản
+và thiết lập khóa mã hóa. Client có sẵn khóa công khai tin cậy của server để
+kiểm tra đúng server cần kết nối. Chương trình dùng X25519 để trao đổi khóa,
+Ed25519 để kiểm tra chữ ký xác nhận danh tính và AES-256-GCM để mã hóa dữ liệu.
+Các thao tác mật mã sử dụng thư viện chuẩn của Java, không tự xây dựng thuật toán.
+Sau bước thiết lập ban đầu, hai bên trao đổi thông điệp xác nhận khóa trước khi
+đăng nhập hoặc gửi nội dung.
 
-File tối đa 500 MiB, đọc/ghi bằng buffer 64 KiB, không tạo JSON cho từng chunk.
-Receiver đọc đủ byte rồi FILE/END, so sánh checksum với cả metadata lẫn END.
-File rỗng bỏ qua phần byte dữ liệu. File hợp lệ mới được đổi từ file tạm sang đích;
-file trùng tên có hậu tố. Sender chỉ hoàn tất sau FILE/RESULT OK đúng replyTo.
-Token community dùng một lần, có thời hạn 5 phút.
+Phần JSON và dữ liệu file sau đó được đặt trong các khối dữ liệu đã mã hóa.
+Vì vậy, cấu trúc JSON ở trên là nội dung trước khi mã hóa, không phải văn bản
+có thể đọc trực tiếp trên đường truyền. Với P2P, server ký xác nhận danh tính
+và khóa công khai của peer, giúp hai client kiểm tra người đang kết nối.
+UDP tìm server không được mã hóa và không thay thế bước xác thực TCP này.
 
-\subsection{Timeout, hủy và kết nối lại}
-Offer P2P chờ tối đa 2 phút; timeout được hiển thị là file hết hạn. Control request
-chờ phản hồi 10 giây. Control và chat P2P có PING/PONG riêng: chu kỳ 5 giây, chờ
-ACK 30 giây; lịch timer có thể làm thời điểm phát hiện lệch thêm một chu kỳ.
-EOF hoặc lỗi I/O có thể phát hiện sớm hơn. Server ngắt không làm đóng peer còn sống.
+Client gửi PING định kỳ 5 giây và chờ PONG tối đa 30 giây để kiểm tra kết nối.
+Yêu cầu quản lý chờ phản hồi tối đa 10 giây; đề nghị nhận file P2P chờ tối đa
+5 phút. Nếu hủy file riêng, bên hủy gửi \texttt{FILE\_CANCEL} và chờ
+\texttt{FILE\_CANCEL\_ACK} tối đa 2 giây trước khi dọn kết nối dữ liệu.
+Với file community, ứng dụng hủy bằng cách đóng socket upload hoặc download
+đang dùng, không đóng kết nối quản lý.
 
-Khi hủy, GUI đổi sang CANCELING, controller đánh dấu session CANCELED và đóng đúng
-data socket. Worker dọn file tạm rồi báo CANCELED; cleanup lỗi được báo FAILED.
-File gốc và file đã hoàn tất không bị xóa. Community hủy cục bộ bằng cách đóng data
-socket, không gửi FILE/CANCEL cho server và không đóng control socket.
-Tốc độ/ETA tính từ byte và thời gian đơn điệu, cập nhật khoảng 250 ms; đây là ước tính.
-
-Reconnect yêu cầu nhập lại mật khẩu, tạo control socket mới, giữ cổng listener và
-P2P còn sống. Không lưu mật khẩu, tự replay request hoặc resume theo offset.
-Đặc tả chi tiết và sơ đồ trạng thái bổ sung nằm trong \path{docs/protocol.md}.
+Khi mất server, global và community không tiếp tục hoạt động, nhưng các kết nối
+P2P còn sống vẫn có thể chat và truyền file riêng. Người dùng phải nhập lại mật
+khẩu để kết nối lại server. Ứng dụng chưa tự gửi lại yêu cầu cũ hoặc tiếp tục
+file từ vị trí đang dở. Đặc tả đầy đủ các loại thông điệp nằm trong
+\path{docs/protocol.md} của mã nguồn.
 
 \endgroup

@@ -69,7 +69,7 @@ App                                  Discord
  |--- mở WebSocket -------------------->|
  |<-- op 10 Hello ----------------------|
  |--- op 2 Identify ------------------->|
- |<-- op 0, t=READY --------------------|
+ |<-- op 0, t=FILE_READY --------------------|
  |--- op 1 Heartbeat ------------------>|
  |<-- op 11 Heartbeat ACK --------------|
  |<-- op 0, t=MESSAGE_CREATE -----------|
@@ -77,7 +77,7 @@ App                                  Discord
 
 Heartbeat đầu dùng độ trễ ngẫu nhiên từ 0 đến heartbeat_interval; sau đó gửi theo
 chu kỳ. Nếu thiếu ACK trước lần heartbeat kế tiếp, nối lại. Lưu sequence gần
-nhất, session_id và resume_gateway_url từ READY để gửi op 6 khi có thể resume.
+nhất, session_id và resume_gateway_url từ FILE_READY để gửi op 6 khi có thể resume.
 [Connection lifecycle](https://docs.discord.com/developers/events/gateway#connection-lifecycle).
 
 Ví dụ Identify tối giản; intents phải phù hợp quyền/cấu hình app:

@@ -5,7 +5,7 @@ import protocols.OpCode;
 /** Operations in the CHAT opcode group. */
 public enum ChatType implements MessageType {
     MESSAGE,
-    BROADCAST,
+    COMMUNITY_BROADCAST,
     GLOBAL_BROADCAST,
     RECEIPT,
     SESSION_REPORT,

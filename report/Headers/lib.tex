@@ -3,5 +3,12 @@
 \usepackage{array,longtable,tabularx}
 \usepackage{enumitem}
 \usepackage{float}
+\usepackage{textcomp}
 \usepackage{listings}
 \lstset{basicstyle=\small\ttfamily,breaklines=true,showstringspaces=false}
+
+\AtBeginDocument{%
+  \renewcommand{\contentsname}{Mục lục}%
+  \renewcommand{\figurename}{Hình}%
+  \renewcommand{\tablename}{Bảng}%
+}

@@ -46,7 +46,7 @@ public final class ServerDiscovery {
     public Client.ServerInfo discover() throws IOException {
         int requestId = 1;
         ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-        PacketCodec.write(encoded, Packet.empty(DiscoveryType.REQUEST), requestId);
+        PacketCodec.write(encoded, Packet.empty(DiscoveryType.DISCOVERY_REQUEST), requestId);
         byte[] request = encoded.toByteArray();
         List<Endpoint> endpoints = new ArrayList<>();
         List<Future<Client.ServerInfo>> workers = new ArrayList<>();
@@ -145,7 +145,7 @@ public final class ServerDiscovery {
         try {
             var input = new ByteArrayInputStream(incoming.getData(), incoming.getOffset(), incoming.getLength());
             Packet response = PacketValidator.validateResponse(PacketCodec.read(input),
-                    DiscoveryType.RESPONSE, requestId);
+                    DiscoveryType.DISCOVERY_RESPONSE, requestId);
             if (input.available() != 0) return null;
             PacketValidator.requireSuccess(response);
             int port = response.integer("tcpPort");

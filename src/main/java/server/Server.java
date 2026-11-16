@@ -192,7 +192,7 @@ public class Server implements AutoCloseable {
                 );
 
                 request = PacketCodec.read(input);
-                PacketValidator.validateRequest(request, DiscoveryType.REQUEST, 0, 0);
+                PacketValidator.validateRequest(request, DiscoveryType.DISCOVERY_REQUEST, 0, 0);
                 if (request.sequence() != 1 || input.available() != 0) {
                     continue;
                 }
@@ -201,7 +201,7 @@ public class Server implements AutoCloseable {
             }
 
             try {
-                Packet response = Packet.reply(DiscoveryType.RESPONSE, request.sequence(), Json.object("status", "OK", "tcpPort", tcpPort));
+                Packet response = Packet.reply(DiscoveryType.DISCOVERY_RESPONSE, request.sequence(), Json.object("status", "OK", "tcpPort", tcpPort));
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 PacketCodec.write(output, response, 1);
                 byte[] bytes = output.toByteArray();

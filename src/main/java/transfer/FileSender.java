@@ -108,7 +108,7 @@ public class FileSender {
             throw new IOException("Source file changed since the offer was created");
         }
 
-        Packet endPacket = Packet.json(FileType.END, Json.object("transferId", transferId, "checksum", checksumHex));
+        Packet endPacket = Packet.json(FileType.FILE_END, Json.object("transferId", transferId, "checksum", checksumHex));
         endSequence = channel.send(endPacket);
 
         return checksumHex;
@@ -116,12 +116,12 @@ public class FileSender {
 
     public void awaitResult() throws IOException {
         try {
-            Packet result = PacketValidator.validateResponse(channel.read(), FileType.RESULT);
+            Packet result = PacketValidator.validateResponse(channel.read(), FileType.FILE_RESULT);
             String status = result.status();
             if (!status.equals("OK")) {
                 throw new IOException("Receiver rejected file: " + status + " " + result.jsonBody());
             }
-            PacketValidator.validateResponse(result, FileType.RESULT, endSequence);
+            PacketValidator.validateResponse(result, FileType.FILE_RESULT, endSequence);
             if (session != null) {
                 session.complete();
             }

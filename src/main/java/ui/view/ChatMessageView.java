@@ -29,6 +29,7 @@ import ui.util.JavaFxUtils;
 public final class ChatMessageView {
     private final VBox container;
     private final Consumer<String> accept;
+    private final Consumer<String> reject;
     private final Consumer<String> cancel;
     private ChatMessageModel previousMessage;
     private VBox activeGroup;
@@ -49,9 +50,10 @@ public final class ChatMessageView {
         return !gap.isNegative() && gap.compareTo(Duration.ofMinutes(5)) < 0;
     }
 
-    public ChatMessageView(VBox container, Consumer<String> accept, Consumer<String> cancel) {
+    public ChatMessageView(VBox container, Consumer<String> accept, Consumer<String> reject, Consumer<String> cancel) {
         this.container = container;
         this.accept = accept;
+        this.reject = reject;
         this.cancel = cancel;
     }
 
@@ -276,7 +278,7 @@ public final class ChatMessageView {
         if (offer.isIncoming()) {
             Button downloadButton = fileButton("", "btn-secondary");
             downloadButton.setGraphic(IconUtils.createIconNode(IconUtils.DOWNLOAD, 18, "#18181B"));
-            downloadButton.setTooltip(new Tooltip("Download"));
+            downloadButton.setTooltip(new Tooltip("Accept and download"));
             downloadButton.setAccessibleText("Download " + offer.getFileName());
             downloadButton.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.PENDING));
             downloadButton.setOnAction(event -> {
@@ -284,7 +286,19 @@ public final class ChatMessageView {
                 offer.setStatus(FileOfferModel.Status.ACCEPTED);
                 accept.accept(offer.getOfferNumber());
             });
-            topRow.getChildren().add(downloadButton);
+            Button rejectButton = fileButton("", "btn-secondary");
+            rejectButton.setGraphic(IconUtils.createIconNode(IconUtils.X, 18, "#DC2626"));
+            rejectButton.setTooltip(new Tooltip("Decline file"));
+            rejectButton.setAccessibleText("Decline " + offer.getFileName());
+            rejectButton.visibleProperty().bind(offer.statusProperty().isEqualTo(FileOfferModel.Status.PENDING));
+            rejectButton.setOnAction(event -> {
+                if (offer.getStatus() != FileOfferModel.Status.PENDING || rejectButton.isDisabled()) return;
+                // Wait for the network result before marking the offer declined.
+                downloadButton.setDisable(true);
+                rejectButton.setDisable(true);
+                reject.accept(offer.getOfferNumber());
+            });
+            topRow.getChildren().addAll(rejectButton, downloadButton);
         }
         Button folderButton = fileButton("", "btn-secondary");
         folderButton.setGraphic(IconUtils.createIconNode(IconUtils.FOLDER, 18, "#18181B"));

@@ -42,7 +42,7 @@ public final class BroadcastService {
     }
 
     public void handleBroadcastMessage(Packet request, UserSession session) throws IOException {
-        PacketValidator.validateRequest(request, ChatType.BROADCAST, 1, PacketCodec.MAX_JSON_LENGTH);
+        PacketValidator.validateRequest(request, ChatType.COMMUNITY_BROADCAST, 1, PacketCodec.MAX_JSON_LENGTH);
         String communityId = request.string("communityId");
         String message = request.string("content");
         if (message.getBytes(StandardCharsets.UTF_8).length > MAX_CHAT_BYTES) {
@@ -56,7 +56,7 @@ public final class BroadcastService {
         }
 
         // Include sender and community context in the broadcast event.
-        Packet broadcastPkt = Packet.json(ChatType.BROADCAST,
+        Packet broadcastPkt = Packet.json(ChatType.COMMUNITY_BROADCAST,
                 Json.object("communityId", communityId, "sender", session.username(), "content", message));
 
         Set<String> members = community.members();
@@ -97,7 +97,7 @@ public final class BroadcastService {
 
     public void handleBroadcastFileUploadRequest(Packet request, UserSession session) throws IOException {
         PacketChannel channel = session.channel();
-        PacketValidator.validateRequest(request, FileType.BROADCAST_UPLOAD_REQUEST, 1, MAX_COMMUNITY_BYTES * 2);
+        PacketValidator.validateRequest(request, FileType.FILE_BROADCAST_UPLOAD_REQUEST, 1, MAX_COMMUNITY_BYTES * 2);
         String communityId;
         String fileName;
         String checksum;
@@ -108,21 +108,21 @@ public final class BroadcastService {
             checksum = request.string("checksum");
             fileSize = request.longValue("fileSize");
         } catch (IOException e) {
-            channel.send(Packet.status(FileType.BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
             return;
         }
         if (fileSize < 0 || fileSize > FileTransferMeta.MAX_FILE_SIZE) {
-            channel.send(Packet.status(FileType.BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_SIZE"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_SIZE"));
             return;
         }
         if (fileName.isBlank() || !checksum.matches("[0-9a-f]{64}")) {
-            channel.send(Packet.status(FileType.BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "INVALID_REQUEST"));
             return;
         }
 
         Community community = communityService.validateMembership(communityId, session.username());
         if (community == null) {
-            channel.send(Packet.status(FileType.BROADCAST_UPLOAD_RESPONSE, request.sequence(), "NOT_MEMBER"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(), "NOT_MEMBER"));
             return;
         }
 
@@ -132,7 +132,7 @@ public final class BroadcastService {
         broadcastFileRegistry.register(meta);
         String uploadToken = broadcastFileRegistry.createUploadToken(fileId);
 
-        channel.send(Packet.reply(FileType.BROADCAST_UPLOAD_RESPONSE, request.sequence(),
+        channel.send(Packet.reply(FileType.FILE_BROADCAST_UPLOAD_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "fileId", fileId, "uploadToken", uploadToken)));
     }
 
@@ -162,7 +162,7 @@ public final class BroadcastService {
 
             // Commit file
             committed = fileStorageService.commit(fileId, meta.fileName());
-            channel.send(Packet.status(FileType.RESULT, channel.lastReceivedSequence(), "OK"));
+            channel.send(Packet.status(FileType.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
 
         } catch (IOException | RuntimeException e) {
             try {
@@ -184,7 +184,7 @@ public final class BroadcastService {
         // Broadcast offer to community members (excluding sender)
         Community community = communityService.validateMembership(meta.communityId(), meta.sender());
         if (community != null) {
-            Packet offerPacket = Packet.json(FileType.BROADCAST_OFFER,
+            Packet offerPacket = Packet.json(FileType.FILE_BROADCAST_OFFER,
                     Json.object("fileId", meta.fileId(), "sender", meta.sender(),
                             "communityId", meta.communityId(), "fileName", meta.fileName(),
                             "fileSize", meta.fileSize(), "checksum", meta.checksum()));
@@ -209,36 +209,36 @@ public final class BroadcastService {
 
     public void handleBroadcastFileDecision(Packet request, UserSession session) throws IOException {
         PacketChannel channel = session.channel();
-        PacketValidator.validateRequest(request, FileType.BROADCAST_DECISION, 1, MAX_COMMUNITY_BYTES);
+        PacketValidator.validateRequest(request, FileType.FILE_BROADCAST_DECISION, 1, MAX_COMMUNITY_BYTES);
         String fileId = request.string("fileId");
         String decision = request.string("decision");
 
         BroadcastFileMeta meta = broadcastFileRegistry.find(fileId).orElse(null);
         if (meta == null) {
-            channel.send(Packet.status(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_FOUND"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_FOUND"));
             return;
         }
 
         if (!mayDownload(meta, session.username())) {
-            channel.send(Packet.status(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_AUTHORIZED"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "NOT_AUTHORIZED"));
             return;
         }
 
         if (decision.equals("REJECT")) {
             meta.setRecipientState(session.username(), BroadcastFileMeta.RecipientState.REJECTED);
-            channel.send(Packet.status(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "REJECTED"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "REJECTED"));
             return;
         }
 
         if (!decision.equals("ACCEPT")) {
-            channel.send(Packet.status(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "INVALID_DECISION"));
+            channel.send(Packet.status(FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(), "INVALID_DECISION"));
             return;
         }
 
         // ACCEPT
         meta.setRecipientState(session.username(), BroadcastFileMeta.RecipientState.ACCEPTED);
         String downloadToken = broadcastFileRegistry.createDownloadToken(fileId, session.username());
-        channel.send(Packet.reply(FileType.BROADCAST_DOWNLOAD_RESPONSE, request.sequence(),
+        channel.send(Packet.reply(FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE, request.sequence(),
                 Json.object("status", "OK", "downloadToken", downloadToken)));
     }
 

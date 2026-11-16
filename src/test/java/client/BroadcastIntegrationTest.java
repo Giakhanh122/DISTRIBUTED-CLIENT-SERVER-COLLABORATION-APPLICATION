@@ -147,6 +147,11 @@ class BroadcastIntegrationTest {
             assertEquals(ClientEvents.FileState.COMPLETED, saved.state());
             assertEquals(-1, Files.mismatch(source, Path.of(saved.detail())));
             assertEquals(ClientEvents.FileState.COMPLETED, a.result(offer.id()).state());
+            alice.sendFile("bob", source.toFile());
+            FileOffer declined = b.offer();
+            bob.reject(declined.id());
+            assertEquals(ClientEvents.FileState.REJECTED, b.result(declined.id()).state());
+            assertEquals(ClientEvents.FileState.REJECTED, a.result(declined.id()).state());
             Path large = root.resolve("cancel.bin");
             try (var file = new java.io.RandomAccessFile(large.toFile(), "rw")) { file.setLength(8 * 1024 * 1024); }
             alice.sendFile("bob", large.toFile());

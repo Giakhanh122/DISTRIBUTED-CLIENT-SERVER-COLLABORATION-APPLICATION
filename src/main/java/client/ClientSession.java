@@ -302,7 +302,7 @@ public final class ClientSession implements AutoCloseable {
         if (message.getBytes(StandardCharsets.UTF_8).length > 64 * 1024) {
             throw new IOException("Message exceeds limit: 65536");
         }
-        serverContext.server.send(Packet.json(ChatType.BROADCAST,
+        serverContext.server.send(Packet.json(ChatType.COMMUNITY_BROADCAST,
                 Json.object("communityId", communityId, "content", message)));
     }
 
@@ -352,7 +352,7 @@ public final class ClientSession implements AutoCloseable {
     private void receiveEvent(ServerContext source, Packet packet) throws IOException {
         switch (packet.type()) {
             case ChatType.MESSAGE -> events.onSystemMessage(packet.string("content"));
-            case ChatType.BROADCAST -> {
+            case ChatType.COMMUNITY_BROADCAST -> {
                 events.onBroadcast(packet.string("communityId"), packet.string("sender"), packet.string("content"));
             }
             case ChatType.GLOBAL_BROADCAST ->
@@ -366,7 +366,7 @@ public final class ClientSession implements AutoCloseable {
                 events.onProtocolError(code, reason, fatal);
                 if (fatal) throw new IOException("Server protocol error " + code + ": " + reason);
             }
-            case FileType.BROADCAST_OFFER -> source.broadcasts.onOffer(packet);
+            case FileType.FILE_BROADCAST_OFFER -> source.broadcasts.onOffer(packet);
             default -> throw new IOException("Unexpected server event: " + packet.type());
         }
     }
@@ -414,9 +414,9 @@ public final class ClientSession implements AutoCloseable {
         try {
             connection.readMessages(name, (messageId, content) -> events.onMessage(name, content), packet -> {
                 try {
-                    if (packet.type() == FileType.OFFER) files.handleIncomingOffer(name, connection, packet);
-                    else if (packet.type() == FileType.CANCEL) files.handleIncomingCancel(connection, packet);
-                    else if (packet.type() == FileType.CANCEL_ACK) files.handleIncomingCancelAck(connection, packet);
+                    if (packet.type() == FileType.FILE_OFFER) files.handleIncomingOffer(name, connection, packet);
+                    else if (packet.type() == FileType.FILE_CANCEL) files.handleIncomingCancel(connection, packet);
+                    else if (packet.type() == FileType.FILE_CANCEL_ACK) files.handleIncomingCancelAck(connection, packet);
                     else files.handleIncomingDecision(connection, packet);
                 } catch (IOException | RuntimeException e) {
                     System.err.println("Invalid peer file packet: " + e.getMessage());

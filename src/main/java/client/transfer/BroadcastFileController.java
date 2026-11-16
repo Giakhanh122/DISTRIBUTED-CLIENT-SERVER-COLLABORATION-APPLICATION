@@ -129,9 +129,9 @@ public final class BroadcastFileController implements AutoCloseable {
         Offer offer = claim(number);
         if (offer == null) return false;
         startWorker(offer.fileId(), "[BROADCAST] Reject failed: ", () -> {
-            Packet response = server.request(Packet.json(FileType.BROADCAST_DECISION,
+            Packet response = server.request(Packet.json(FileType.FILE_BROADCAST_DECISION,
                     Json.object("fileId", offer.fileId(), "decision", "REJECT")),
-                    FileType.BROADCAST_DOWNLOAD_RESPONSE);
+                    FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE);
             requireOpen();
             if (!response.status().equals("REJECTED")) throw new IOException(response.status());
             finish(offer.fileId(), ClientEvents.FileState.REJECTED, "Rejected");
@@ -158,14 +158,14 @@ public final class BroadcastFileController implements AutoCloseable {
                     new FileTransferMeta(id, username, community.name(), file.getName(), size, checksum), community.id(), false, file.getAbsolutePath()));
             events.onFileState(id, ClientEvents.FileState.TRANSFERRING, "Uploading to community storage");
         }
-        Packet response = request(Packet.json(FileType.BROADCAST_UPLOAD_REQUEST,
+        Packet response = request(Packet.json(FileType.FILE_BROADCAST_UPLOAD_REQUEST,
                 Json.object("communityId", community.id(), "fileName", file.getName(),
-                        "fileSize", size, "checksum", checksum)), FileType.BROADCAST_UPLOAD_RESPONSE);
+                        "fileSize", size, "checksum", checksum)), FileType.FILE_BROADCAST_UPLOAD_RESPONSE);
         String fileId = response.string("fileId");
         Socket socket = openDataSocket(id);
         try (socket) {
             PacketChannel channel = dataClient.secureChannel(socket);
-            channel.send(Packet.json(FileType.BROADCAST_UPLOAD_START,
+            channel.send(Packet.json(FileType.FILE_BROADCAST_UPLOAD_START,
                     Json.object("fileId", fileId, "uploadToken", response.string("uploadToken"))));
             FileTransferSession upload = trackSession(new FileTransferMeta(fileId, username, community.name(),
                     file.getName(), size, checksum), id);
@@ -179,12 +179,12 @@ public final class BroadcastFileController implements AutoCloseable {
     }
 
     private void downloadFile(Offer offer) throws IOException {
-        Packet response = request(Packet.json(FileType.BROADCAST_DECISION,
-                Json.object("fileId", offer.fileId(), "decision", "ACCEPT")), FileType.BROADCAST_DOWNLOAD_RESPONSE);
+        Packet response = request(Packet.json(FileType.FILE_BROADCAST_DECISION,
+                Json.object("fileId", offer.fileId(), "decision", "ACCEPT")), FileType.FILE_BROADCAST_DOWNLOAD_RESPONSE);
         Socket socket = openDataSocket(offer.fileId());
         try (socket) {
             PacketChannel channel = dataClient.secureChannel(socket);
-            channel.send(Packet.json(FileType.BROADCAST_DOWNLOAD_START,
+            channel.send(Packet.json(FileType.FILE_BROADCAST_DOWNLOAD_START,
                     Json.object("fileId", offer.fileId(), "downloadToken", response.string("downloadToken"))));
             FileTransferMeta meta = new FileTransferMeta(offer.fileId(), offer.sender(), username,
                     offer.fileName(), offer.fileSize(), offer.checksum());

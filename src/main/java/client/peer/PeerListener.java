@@ -68,7 +68,7 @@ public class PeerListener implements Runnable, AutoCloseable {
                 PeerConnection connection = new PeerConnection(channel);
                 String peerUsername = connection.acceptHandshake(first, serverKeyPinning, keyProofProvider);
                 onConnected.accept(peerUsername, connection);
-            } else if (first != null && first.type() == FileType.TRANSFER_START) {
+            } else if (first != null && first.type() == FileType.FILE_TRANSFER_START) {
                 try (socket) {
                     onFileConnection.accept(channel, first);
                 }

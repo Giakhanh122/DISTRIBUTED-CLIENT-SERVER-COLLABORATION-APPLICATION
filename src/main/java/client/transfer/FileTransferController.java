@@ -35,7 +35,7 @@ import java.util.function.LongSupplier;
 
 public final class FileTransferController implements AutoCloseable {
     private static final int TRANSFER_TIMEOUT_MS = 30000;
-    private static final int OFFER_TIMEOUT_MS = 120000;
+    private static final int OFFER_TIMEOUT_MS = (int) TimeUnit.MINUTES.toMillis(5);
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /** Mutable fields belong to this controller's lock; the session has its own state lock. */
@@ -134,7 +134,7 @@ public final class FileTransferController implements AutoCloseable {
     }
 
     public void handleIncomingCancel(PeerConnection peer, Packet packet) throws IOException {
-        PacketValidator.validateRequest(packet, FileType.CANCEL, 1, 1024);
+        PacketValidator.validateRequest(packet, FileType.FILE_CANCEL, 1, 1024);
         String id = packet.string("transferId");
         Transfer transfer;
         synchronized (this) {
@@ -142,7 +142,7 @@ public final class FileTransferController implements AutoCloseable {
             if (transfer != null && transfer.peer != peer) throw new IOException("Cancellation peer mismatch");
         }
         if (transfer != null) cancel(transfer, false);
-        peer.sendPacket(Packet.reply(FileType.CANCEL_ACK, packet.sequence(),
+        peer.sendPacket(Packet.reply(FileType.FILE_CANCEL_ACK, packet.sequence(),
                 Json.object("status", "OK", "transferId", id)));
     }
 
@@ -167,7 +167,7 @@ public final class FileTransferController implements AutoCloseable {
             // Give the remote chat reader time to mark CANCELED before closing the
             // independent data socket, whose EOF could otherwise win the race.
             try {
-                transfer.peer.sendPacket(Packet.json(FileType.CANCEL, Json.object("transferId", transfer.id())),
+                transfer.peer.sendPacket(Packet.json(FileType.FILE_CANCEL, Json.object("transferId", transfer.id())),
                         sequence -> { synchronized (this) { transfer.cancelSequence = sequence; } });
                 transfer.cancelAck.get(2, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
@@ -217,7 +217,7 @@ public final class FileTransferController implements AutoCloseable {
                     events.onFileOffer(new FileOffer(transfer.id(), null, meta, null, false, file.getAbsolutePath()));
                 }
                 Transfer offered = transfer;
-                peer.sendPacket(Packet.json(FileType.OFFER, body), sequence -> recordOfferSequence(offered, sequence));
+                peer.sendPacket(Packet.json(FileType.FILE_OFFER, body), sequence -> recordOfferSequence(offered, sequence));
             } catch (IOException | RuntimeException e) {
                 if (transfer != null) fail(transfer, e);
                 else events.onFileState("", ClientEvents.FileState.FAILED, message(e));
@@ -252,7 +252,7 @@ public final class FileTransferController implements AutoCloseable {
                     transfer.session.reject();
                     cancelTimeout(transfer);
                 }
-                response = Packet.reply(FileType.DECISION, transfer.offerSequence, body);
+                response = Packet.reply(FileType.FILE_DECISION, transfer.offerSequence, body);
             } catch (IOException | RuntimeException e) {
                 fail(transfer, e);
                 throw e;
@@ -282,8 +282,8 @@ public final class FileTransferController implements AutoCloseable {
             socket.connect(transfer.peer.peerAddress(), 10000);
             socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
             PacketChannel channel = new PacketChannel(socket);
-            long sequence = channel.send(Packet.json(FileType.TRANSFER_START, Json.object("transferId", transfer.id())));
-            Packet ready = PacketValidator.validateResponse(channel.read(), FileType.READY, sequence);
+            long sequence = channel.send(Packet.json(FileType.FILE_TRANSFER_START, Json.object("transferId", transfer.id())));
+            Packet ready = PacketValidator.validateResponse(channel.read(), FileType.FILE_READY, sequence);
             PacketValidator.requireSuccess(ready);
             if (!transfer.id().equals(ready.string("transferId"))) throw new IOException("File channel transfer ID mismatch");
             SessionKeys connectionKeys = connectionKeys(keys, ready.string("connectionNonce"));
@@ -305,7 +305,7 @@ public final class FileTransferController implements AutoCloseable {
         try {
             Socket socket = channel.socket();
             socket.setSoTimeout(TRANSFER_TIMEOUT_MS);
-            PacketValidator.validateRequest(hello, FileType.TRANSFER_START, 1, 256);
+            PacketValidator.validateRequest(hello, FileType.FILE_TRANSFER_START, 1, 256);
             SessionKeys baseKeys;
             synchronized (this) {
                 transfer = transfers.get(hello.string("transferId"));
@@ -320,7 +320,7 @@ public final class FileTransferController implements AutoCloseable {
             byte[] nonce = new byte[32];
             RANDOM.nextBytes(nonce);
             SessionKeys connectionKeys = connectionKeys(baseKeys, Base64.getEncoder().encodeToString(nonce));
-            channel.send(Packet.reply(FileType.READY, hello.sequence(),
+            channel.send(Packet.reply(FileType.FILE_READY, hello.sequence(),
                     Json.object("status", "OK", "transferId", transfer.id(),
                             "connectionNonce", Base64.getEncoder().encodeToString(nonce))));
             channel.confirmEncryption(connectionKeys, PacketChannel.Role.RESPONDER);

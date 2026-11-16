@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import protocols.type.*;
 
-class ProtocolV5Test {
+class ProtocolV6Test {
     private Packet read(String json) throws IOException {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
         return PacketCodec.read(new ByteArrayInputStream(ByteBuffer.allocate(4 + bytes.length)
@@ -92,10 +92,10 @@ class ProtocolV5Test {
     }
 
     @Test void fileDecisionRemainsCorrelatedAndEarlyFailureAllowsZero() throws Exception {
-        Packet decision = roundTrip(Packet.reply(FileType.DECISION, 9,
+        Packet decision = roundTrip(Packet.reply(FileType.FILE_DECISION, 9,
                 Json.object("transferId", "id", "decision", "ACCEPT")), 2);
         assertEquals(9, decision.replyTo());
-        assertThrows(IOException.class, () -> roundTrip(Packet.empty(FileType.DECISION), 2));
+        assertThrows(IOException.class, () -> roundTrip(Packet.empty(FileType.FILE_DECISION), 2));
         assertEquals(0, roundTrip(Packet.failure(0, "early failure"), 1).replyTo());
     }
 

@@ -33,7 +33,7 @@ public final class PacketValidator {
         }
         if (!packet.type().requiresReplyTo()) return;
         long replyTo = packet.replyTo();
-        boolean earlyFileFailure = packet.type() == FileType.RESULT && packet.status().equals("FAIL");
+        boolean earlyFileFailure = packet.type() == FileType.FILE_RESULT && packet.status().equals("FAIL");
         if (replyTo < 0 || (replyTo == 0 && !earlyFileFailure)) {
             throw new IOException("Invalid replyTo for " + packet.op() + "/" + packet.type());
         }

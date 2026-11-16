@@ -1,72 +1,90 @@
 \section{Kiến trúc hệ thống}
 \begingroup
-\setlength{\emergencystretch}{2em}
+\setstretch{1.15}
 
-\subsection{Mô hình và trách nhiệm}
-DL-Chat sử dụng kiến trúc lai Client--Server và Peer-to-Peer (P2P).
-Server xác thực tài khoản, theo dõi user online cùng IP/cổng listener, tra cứu peer,
-quản lý community và lưu file community. Tin nhắn riêng và file P2P đi trực tiếp
-giữa hai client; nội dung này không được chuyển tiếp qua server.
-Tin nhắn broadcast được phân phối tới thành viên online của community tương ứng.
+\subsection{Cách các thành phần tương tác}
+
+Server là đầu mối quản lý tài khoản đang đăng nhập, địa chỉ IP, cổng kết nối và
+thành viên của từng community. Mỗi client duy trì một kết nối TCP với server để
+gửi yêu cầu và nhận thông báo, chẳng hạn danh sách người dùng trực tuyến hoặc
+tin nhắn nhóm. Trong báo cáo, kết nối này được gọi là \emph{kết nối quản lý}.
+
+Khi gửi global chat, server chuyển tin đến mọi người đang trực tuyến, trừ người
+gửi. Với community, server kiểm tra người gửi có thuộc nhóm hay không, rồi chỉ
+chuyển tin đến các thành viên đang trực tuyến của nhóm đó. Nhờ vậy, một tin nhắn
+community không xuất hiện trong cuộc trò chuyện của người ngoài nhóm.
 
 \begin{figure}[H]
 \centering
-\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
-    box/.style={draw,rounded corners,align=center,minimum height=1.0cm,text width=3.5cm,fill=blue!5},
-    arr/.style={-{Stealth},thick}, both/.style={Stealth-Stealth,thick},
-    note/.style={font=\scriptsize,fill=white,align=center,inner sep=3pt}]
-\node[box] (a) at (-5,0) {Client A\\JavaFX / CLI\\ClientSession + PeerListener};
-\node[box,text width=4cm,fill=green!7] (s) at (0,0) {Application Server\\TCP 8080 / UDP 41234\\Auth, Presence, Community};
-\node[box] (b) at (5,0) {Client B\\JavaFX / CLI\\ClientSession + PeerListener};
-\node[box,fill=orange!8] (disk) at (0,-3.2) {FileStorageService\\File community\\Lưu trên đĩa server};
-\draw[both,blue] (a.east) -- node[note,above]{TCP control} (s.west);
-\draw[both,blue] (s.east) -- node[note,above]{TCP control} (b.west);
-\draw[both,red!65!black] (a.south) -- (-5,-1.8) -- node[note,pos=.75]{P2P trực tiếp: chat / file} (5,-1.8) -- (b.south);
-\draw[both] (s.south) -- (disk.north);
-\draw[arr,purple] (a.south west) to[out=-95,in=180] node[note,below]{TCP dữ liệu riêng: upload} (disk.west);
-\draw[arr,purple] (disk.east) to[out=0,in=-85] node[note,below]{TCP dữ liệu riêng: download} (b.south east);
-\end{tikzpicture}}
-\caption{Tương tác giữa server, hai client và kho file community. Các socket TCP được mã hóa sau handshake; UDP chỉ phục vụ discovery.}
+    box/.style={draw,rounded corners,align=center,text width=2.8cm,minimum height=1.1cm,fill=blue!4},
+    link/.style={Stealth-Stealth,thick},
+    note/.style={font=\small,fill=white,inner sep=3pt,align=center}]
+\node[box,fill=green!8] (s) at (0,0) {Server\\Đăng nhập, quản lý nhóm\\Phân phối tin nhắn};
+\node[box,fill=orange!10] (d) at (5,0) {Kho tập tin\\community\\trên server};
+\node[box] (a) at (-4,-3) {Client A\\Giao diện và\\xử lý kết nối};
+\node[box] (b) at (0,-3) {Client B\\Giao diện và\\xử lý kết nối};
+\node[box] (c) at (4,-3) {Client C\\Giao diện và\\xử lý kết nối};
+\draw[link] (s) -- node[note,above]{Đọc / ghi} (d);
+\draw[link,blue!65!black] (s) -- node[note,sloped,above]{TCP} (a);
+\draw[link,blue!65!black] (s) -- node[note,right]{TCP} (b);
+\draw[link,blue!65!black] (s) -- node[note,sloped,above]{TCP} (c);
+\draw[link,dashed,red!65!black] (a.south) -- (-4,-4.4) --
+    node[note,below]{P2P: tin nhắn và tập tin riêng} (0,-4.4) -- (b.south);
+\end{tikzpicture}
+\caption{Kiến trúc tổng quát. Các đường TCP đến server phục vụ quản lý và trao đổi theo nhóm; đường P2P phục vụ trao đổi riêng.}
 \label{fig:kientruc}
 \end{figure}
 
-\begin{description}[leftmargin=0cm,style=nextline]
-\item[Server và ClientHandler] Server nhận TCP và tạo virtual thread cho từng kết nối.
-Sau HELLO và xác nhận khóa, LOGIN\_\allowbreak{}REQUEST mở control session; các gói
-BROADCAST\_\allowbreak{}UPLOAD\_\allowbreak{}START hoặc BROADCAST\_\allowbreak{}DOWNLOAD\_\allowbreak{}START mở tác vụ file.
-\item[Registry và dịch vụ] UserSessionRegistry giữ user/IP/port; ChatSessionRegistry
-lưu metadata phiên P2P. CommunityRegistry, BroadcastFileRegistry và
-FileStorageService phục vụ thành viên, token và lưu file community.
-AuthService cung cấp 20 tài khoản demo: alice, bob, admin1 và user01--user17.
-\item[ClientSession và ServerConnection] Sở hữu trạng thái đăng nhập, các peer và
-listener. Một reader control nhận response lẫn sự kiện chủ động; request quản lý
-được tuần tự hóa và ghép theo type/replyTo. Reconnect thay control context,
-không đóng các peer còn sống.
-\item[PeerListener và PeerConnection] Listener ở cổng TCP động. Gói đầu
-PEER\_\allowbreak{}HELLO mở chat; FILE/TRANSFER\_\allowbreak{}START chọn transfer đã được chấp nhận.
-Mỗi peer có reader và heartbeat riêng.
-\item[Truyền file] FileTransferController và BroadcastFileController điều phối
-mỗi file trên socket dữ liệu và worker riêng. FileSender/FileReceiver xử lý byte,
-SHA-256, xác nhận cuối và file tạm. Hủy một file không đóng chat hoặc các file khác.
-\item[UI/CLI] ClientEvents chuyển sự kiện có cấu trúc từ network tới ConsoleEvents
-hoặc adapter JavaFX. Model/UI chỉ cập nhật trên FX thread; network không chặn
-luồng giao diện. GUI cung cấp tiến trình, tốc độ, ETA và icon hủy truyền.
-\end{description}
+Đối với tin nhắn riêng, client A hỏi server địa chỉ của client B và mở kết nối
+TCP trực tiếp đến B. Sau khi xác thực kết nối và thiết lập mã hóa, hai bên gửi
+tin cho nhau mà không chuyển nội dung qua server. Nếu gửi tập tin riêng, một
+kết nối TCP khác được mở để truyền dữ liệu file, tránh làm gián đoạn việc chat.
 
-\subsection{Đồng thời, vòng đời và lưu trữ}
-PacketChannel dùng một khóa ghi cho sequence và toàn bộ frame, tránh xen byte khi
-heartbeat, response và broadcast cùng ghi. TCP control và từng TCP chat P2P có
-heartbeat độc lập: ping mỗi 5 giây, chờ ACK tối đa 30 giây. UDP discovery chỉ tìm
-IP/cổng và kiểm tra phiên bản qua probe; xác thực server thực hiện khi đăng nhập.
+Tập tin community đi theo đường khác: người gửi tải file lên server một lần.
+Sau khi kiểm tra và lưu file, server thông báo cho các thành viên online.
+Mỗi người nhận chỉ bắt đầu tải khi bấm nút tải về và sử dụng một kết nối TCP
+riêng đến server. Vì server giữ bản file, người nhận vẫn có thể tải sau khi
+người gửi đã thoát, miễn là server còn hoạt động và quyền tải vẫn hợp lệ.
 
-Server giữ chỗ username để ngăn đăng nhập trùng, nhưng chỉ kích hoạt session sau
-khi gửi xong LOGIN\_\allowbreak{}RESPONSE. Vì vậy presence không xuất hiện trước ACK đăng nhập.
-Khi dừng bình thường, server đóng listener và các socket, chờ worker dọn tài nguyên
-trong thời gian hữu hạn. SIGKILL/mất điện không có bảo đảm cleanup tương tự.
+\subsection{Phân chia mã nguồn}
 
-Community, phiên và metadata file nằm trong RAM; restart server làm mất metadata,
-không tự xóa identity hoặc các file đã lưu trên đĩa. File nhận vào Downloads của
-tài khoản hệ điều hành; Linux đọc XDG\_\allowbreak{}DOWNLOAD\_\allowbreak{}DIR. File trùng tên có hậu tố riêng.
+Mã nguồn tách phần giao diện khỏi phần kết nối mạng và xử lý dữ liệu.
+Giao diện chỉ nhận thao tác của người dùng và hiển thị kết quả; việc gửi, nhận
+và truyền file được thực hiện ở các luồng riêng. Cách chia này giúp giao diện
+không bị đứng khi chờ phản hồi mạng hoặc khi truyền file lớn.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{p{3.2cm} >{\raggedright\arraybackslash}X}
+\toprule
+Thành phần & Trách nhiệm chính \\
+\midrule
+Server & Nhận kết nối, xác thực đăng nhập, quản lý người dùng và community, chuyển tin nhóm và lưu file community. \\
+Client & Giữ kết nối với server, thiết lập kết nối với người dùng khác và điều phối các thao tác gửi, nhận. \\
+Giao thức & Quy định cấu trúc thông điệp, loại yêu cầu, phản hồi và cách đọc dữ liệu từ socket. \\
+Xử lý tập tin & Đọc, ghi file theo từng khối; kiểm tra dữ liệu và dọn file đang tải dở khi có lỗi. \\
+Giao diện & Hiển thị cuộc trò chuyện, danh sách online, trạng thái kết nối và tiến trình truyền file. \\
+\bottomrule
+\end{tabularx}
+\caption{Các phần chính của ứng dụng và nhiệm vụ tương ứng.}
+\end{table}
+
+Server dùng các luồng nhẹ của Java, gọi là \emph{virtual thread}, để phục vụ
+nhiều kết nối cùng lúc. Mỗi kết nối được xử lý độc lập, vì vậy một client chờ
+nhập tin hoặc đang tải file không làm các client khác phải chờ theo.
+Những thao tác cùng ghi vào một socket được sắp thứ tự để dữ liệu không bị xen lẫn.
+
+\subsection{Kết nối, lưu trữ và phạm vi triển khai}
+
+UDP được dùng để tìm server trong mạng nội bộ. Server mặc định lắng nghe TCP ở
+cổng 8080 và nhận yêu cầu tìm kiếm UDP ở cổng 41234. Sau khi tìm được server,
+client dùng TCP cho đăng nhập, nhắn tin và truyền file. Các kết nối TCP còn gửi
+thông điệp kiểm tra định kỳ để phát hiện phía bên kia không còn phản hồi.
+
+Tài khoản hiện tại là các tài khoản mẫu phục vụ thử nghiệm. Danh sách online,
+community và thông tin quyền tải file được giữ trong bộ nhớ server. Các file
+community được lưu trên đĩa, nhưng khi server khởi động lại, thông tin nhóm và
+quyền tải cũ không được phục hồi tự động. Đây là giới hạn của bản triển khai hiện tại.
 
 \endgroup

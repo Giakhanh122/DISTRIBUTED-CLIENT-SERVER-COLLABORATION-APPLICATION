@@ -81,7 +81,7 @@ Trong CLI, dùng `/global <message>` để gửi tin tới tất cả user onlin
 /sendfile bob /đường/dẫn/tệp dữ liệu.bin
 ```
 
-Bob nhận được số thứ tự ngắn, ví dụ `[FILE OFFER #1]`, và chọn một trong hai lệnh:
+Bob nhận được số thứ tự ngắn, ví dụ `[FILE FILE_OFFER #1]`, và chọn một trong hai lệnh:
 
 ```text
 /accept 1
@@ -125,7 +125,8 @@ Chạy `./app.sh server` ở một terminal, sau đó chạy `./app.sh` ở term
 để mở JavaFX. Trên Windows dùng `app.ps1 server` và `app.ps1 ui` tương ứng.
 
 Ở file nhận, bấm icon tải xuống để bắt đầu; không có nút Accept/Reject trên GUI.
-File P2P chưa tải sẽ hết hạn sau 2 phút. Trong khi truyền có thanh tiến trình,
+File nhận có nút tải về (đồng ý) và nút từ chối đặt cạnh nhau.
+File P2P chưa tải sẽ hết hạn sau 5 phút. Trong khi truyền có thanh tiến trình,
 tốc độ, thời gian còn lại ước tính và nút × để hủy từng file. Hủy đóng socket dữ
 liệu riêng, xóa file tải dở rồi kết thúc; lỗi xóa được báo thay vì coi là đã dọn.
 File gốc và file đã hoàn tất không bị xóa. Các file khác và chat tiếp tục hoạt động.
@@ -175,13 +176,13 @@ Thông điệp điều khiển dùng `[len:4 byte big-endian][JSON UTF-8]`; len 
 byte JSON. Envelope gồm `opcode`, `sequence`, `body`. Mỗi chiều TCP đếm sequence
 riêng. ACK/response có `body.status` và `body.replyTo` trỏ tới sequence request.
 Giao thức dùng 8 nhóm opcode và `body.type` bắt buộc. Handshake trao đổi
-`protocolVersion = 5`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
+`protocolVersion = 6`, sau đó xác nhận khóa bằng `SYSTEM/KEY_CONFIRM` và
 `SYSTEM/KEY_CONFIRM_ACK` đã mã hóa. Server và client cần chạy cùng bản code;
-wire protocol phiên bản 5 không tương thích các phiên bản cũ.
+wire protocol phiên bản 6 không tương thích các phiên bản cũ.
 Không có magic bytes hoặc header JSON riêng.
 
-Socket file P2P mở bằng `FILE/TRANSFER_START` và `FILE/READY`, rồi xác nhận khóa
-qua `SYSTEM/KEY_CONFIRM/KEY_CONFIRM_ACK`. Nội dung file, `FILE/END` và `FILE/RESULT`
+Socket file P2P mở bằng `FILE_TRANSFER_START` và `FILE_READY`, rồi xác nhận khóa
+qua `SYSTEM/KEY_CONFIRM/KEY_CONFIRM_ACK`. Nội dung file, `FILE_END` và `FILE_RESULT`
 đều được mã hóa; receiver kiểm tra SHA-256 trước khi công bố file. Không dùng
 FILE_CHUNK. Xem [docs/protocol.md](docs/protocol.md) để biết luồng đầy đủ.
 
@@ -273,7 +274,7 @@ Bộ kiểm thử hiện tại xác minh trên localhost:
 - Hủy một lượt download dọn file tạm, không ảnh hưởng người nhận khác; kiểm tra lại
   membership trước khi cấp quyền download và cho phép từ chối offer.
 - Chat/file riêng vẫn truyền trực tiếp qua P2P, tiếp tục hoạt động khi mất server;
-  FILE/CANCEL_ACK xác nhận hủy trước khi đóng socket dữ liệu.
+  FILE_CANCEL_ACK xác nhận hủy trước khi đóng socket dữ liệu.
 - Tên community trùng (không phân biệt hoa/thường, bỏ khoảng trắng hai đầu) báo lỗi,
   giữ nguyên nhóm đang chọn và cho phép nhập tên khác.
 

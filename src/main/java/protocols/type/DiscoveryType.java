@@ -4,8 +4,8 @@ import protocols.OpCode;
 
 /** Operations in the DISCOVERY opcode group. */
 public enum DiscoveryType implements MessageType {
-    REQUEST,
-    RESPONSE(true);
+    DISCOVERY_REQUEST,
+    DISCOVERY_RESPONSE(true);
 
     private final boolean response;
 

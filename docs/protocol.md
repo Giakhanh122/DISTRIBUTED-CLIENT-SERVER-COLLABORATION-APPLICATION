@@ -1,7 +1,7 @@
 # DLP Gateway & Events
 
 Giao thức thời gian thực của ứng dụng: đăng nhập và thao tác community qua server,
-chat P2P, broadcast toàn cục/community và truyền file. Phiên bản hiện tại: **5**.
+chat P2P, broadcast toàn cục/community và truyền file. Phiên bản hiện tại: **6**.
 
 Tài liệu này mô tả các event ứng dụng gửi/nhận, cấu trúc payload và ví dụ JSON.
 Các ví dụ là payload trước khi mã hóa hoặc sau khi giải mã.
@@ -53,7 +53,7 @@ Trường duy nhất bắt buộc trong body của mọi event:
 | `type` | string | Tên thao tác trong nhóm opcode, viết HOA và nối bằng `_`. |
 
 `replyTo` và `status` thuộc schema của từng event: response/ACK có cả hai;
-FILE/DECISION có `replyTo` và `decision`, không có `status`. Xem Structure của
+FILE_DECISION có `replyTo` và `decision`, không có `status`. Xem Structure của
 từng event bên dưới.
 
 Mỗi chiều TCP có sequence riêng, bắt đầu từ 1 và tăng 1 theo từng event, kể cả
@@ -89,8 +89,8 @@ Type thiếu, không được định nghĩa hoặc không thuộc opcode tươn
 4. Client gửi SYSTEM/KEY_CONFIRM, server trả SYSTEM/KEY_CONFIRM_ACK dưới mã hóa.
 5. Client gửi AUTH/LOGIN_REQUEST; LOGIN_RESPONSE với status OK mở phiên quản lý.
 6. Hai bên duy trì SYSTEM/PING/PONG. Client gửi request quản lý, đồng thời nhận
-   response và các event chủ động như CHAT/BROADCAST, CHAT/GLOBAL_BROADCAST hoặc
-   FILE/BROADCAST_OFFER.
+   response và các event chủ động như CHAT/COMMUNITY_BROADCAST, CHAT/GLOBAL_BROADCAST hoặc
+   FILE_BROADCAST_OFFER.
 
 Hello/Hello ACK chưa mã hóa. Key Confirm và mọi event tiếp theo đều đi trong
 AES-GCM. Kết nối chỉ xử lý đăng nhập sau khi xác nhận khóa thành công.
@@ -103,7 +103,7 @@ AES-GCM. Kết nối chỉ xử lý đăng nhập sau khi xác nhận khóa thà
 4. Bob kiểm tra proof Alice, xin proof cho khóa của mình với cùng sessionId,
    rồi trả CONNECTION/PEER_HELLO_ACK.
 5. Alice kiểm tra proof Bob. Hai bên dẫn xuất khóa và trao đổi SYSTEM/KEY_CONFIRM/ACK.
-6. Công bố kết nối P2P, gửi CHAT/MESSAGE hoặc FILE/OFFER trực tiếp.
+6. Công bố kết nối P2P, gửi CHAT/MESSAGE hoặc FILE_OFFER trực tiếp.
 7. Reader hiện có xử lý SYSTEM/PING/PONG cho heartbeat riêng từng peer (5s/30s).
 
 Hai peer đều tin public key Ed25519 server đã pin. Server ký xác nhận danh tính
@@ -111,13 +111,13 @@ và public key; nội dung chat P2P không đi qua server.
 
 ### P2P File
 
-1. Sender gửi FILE/OFFER trên kênh chat đã mã hóa.
-2. Receiver trả FILE/DECISION với ACCEPT và public key file, hoặc REJECT.
+1. Sender gửi FILE_OFFER trên kênh chat đã mã hóa.
+2. Receiver trả FILE_DECISION với ACCEPT và public key file, hoặc REJECT.
 3. Sau ACCEPT, hai bên dẫn xuất khóa transfer. Sender mở TCP riêng và gửi
-   FILE/TRANSFER_START; receiver trả FILE/READY kèm connectionNonce mới.
+   FILE_TRANSFER_START; receiver trả FILE_READY kèm connectionNonce mới.
 4. Hai bên dẫn xuất khóa socket rồi trao đổi SYSTEM/KEY_CONFIRM/ACK.
-5. Receiver claim transfer; sender truyền đúng fileSize byte dữ liệu, rồi FILE/END.
-6. Receiver kiểm tra SHA-256, lưu file và trả FILE/RESULT. Sender chỉ hoàn tất khi
+5. Receiver claim transfer; sender truyền đúng fileSize byte dữ liệu, rồi FILE_END.
+6. Receiver kiểm tra SHA-256, lưu file và trả FILE_RESULT. Sender chỉ hoàn tất khi
    nhận status OK trả lời đúng End.
 
 Transfer Start/Ready chưa mã hóa. Từ Key Confirm trở đi dùng AES-GCM với khóa
@@ -125,13 +125,13 @@ riêng của socket file. File rỗng bỏ qua dữ liệu nhị phân và gửi
 
 ### Community File
 
-1. Sender xin FILE/BROADCAST_UPLOAD_REQUEST trên phiên quản lý và nhận uploadToken.
+1. Sender xin FILE_BROADCAST_UPLOAD_REQUEST trên phiên quản lý và nhận uploadToken.
 2. Sender mở socket server mới, thực hiện Hello/ACK và Key Confirm/ACK, gửi
-   FILE/BROADCAST_UPLOAD_START rồi truyền file, End và nhận Result.
-3. Server lưu file và phát FILE/BROADCAST_OFFER trên kênh quản lý của các người nhận.
-4. Receiver gửi FILE/BROADCAST_DECISION với ACCEPT và nhận downloadToken.
+   FILE_BROADCAST_UPLOAD_START rồi truyền file, End và nhận Result.
+3. Server lưu file và phát FILE_BROADCAST_OFFER trên kênh quản lý của các người nhận.
+4. Receiver gửi FILE_BROADCAST_DECISION với ACCEPT và nhận downloadToken.
 5. Receiver mở socket server mới, hoàn tất handshake/xác nhận khóa, gửi
-   FILE/BROADCAST_DOWNLOAD_START rồi nhận dữ liệu, End và trả Result.
+   FILE_BROADCAST_DOWNLOAD_START rồi nhận dữ liệu, End và trả Result.
 
 Socket dữ liệu dùng token một lần thay cho việc gửi lại password. Server đọc được
 nội dung file community và lưu xuống đĩa; chat/file P2P đi trực tiếp giữa hai peer.
@@ -160,20 +160,20 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [USER/PEER_KEY_REQUEST](#user-peer-key-request) | C → S | Xin server ký public key X25519 của một kết nối P2P. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
-| [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/COMMUNITY_BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/GLOBAL_BROADCAST](#chat-global-broadcast) | C → S → C | Gửi tin nhắn tới mọi user đang online qua server. |
 | [CHAT/SESSION_REPORT](#chat-session-report) | C → S | Báo trạng thái kết nối P2P để server theo dõi metadata phiên chat. |
 | [CHAT/SESSION_LIST_REQUEST](#chat-session-list-request) | C → S | Lấy danh sách metadata các phiên P2P mà server đang lưu. |
-| [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
-| [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
-| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
-| [FILE/CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
-| [FILE/TRANSFER_START](#file-transfer-start) | P sender → P receiver, socket file | Chọn transfer đã được chấp nhận trên socket dữ liệu mới. |
-| [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
-| [FILE/BROADCAST_UPLOAD_REQUEST](#file-broadcast-upload-request) | C → S, kênh quản lý | Xin upload file vào community mà người gửi là thành viên. |
-| [FILE/BROADCAST_UPLOAD_START](#file-broadcast-upload-start) | C → S, socket dữ liệu server | Bắt đầu upload bằng token đã nhận. |
-| [FILE/BROADCAST_DECISION](#file-broadcast-decision) | C → S, kênh quản lý | Chấp nhận hoặc từ chối tải file đã được server thông báo. |
-| [FILE/BROADCAST_DOWNLOAD_START](#file-broadcast-download-start) | C → S, socket dữ liệu server | Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa. |
+| [FILE_OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
+| [FILE_DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE_CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
+| [FILE_CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
+| [FILE_TRANSFER_START](#file-transfer-start) | P sender → P receiver, socket file | Chọn transfer đã được chấp nhận trên socket dữ liệu mới. |
+| [FILE_READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
+| [FILE_BROADCAST_UPLOAD_REQUEST](#file-broadcast-upload-request) | C → S, kênh quản lý | Xin upload file vào community mà người gửi là thành viên. |
+| [FILE_BROADCAST_UPLOAD_START](#file-broadcast-upload-start) | C → S, socket dữ liệu server | Bắt đầu upload bằng token đã nhận. |
+| [FILE_BROADCAST_DECISION](#file-broadcast-decision) | C → S, kênh quản lý | Chấp nhận hoặc từ chối tải file đã được server thông báo. |
+| [FILE_BROADCAST_DOWNLOAD_START](#file-broadcast-download-start) | C → S, socket dữ liệu server | Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa. |
 | [COMMUNITY/LIST_REQUEST](#community-list-request) | C → S | Lấy danh sách community và trạng thái membership của người gọi. |
 | [COMMUNITY/CREATE_REQUEST](#community-create-request) | C → S | Tạo community mới; người tạo trở thành owner và thành viên đầu tiên. |
 | [COMMUNITY/JOIN_REQUEST](#community-join-request) | C → S | Tham gia một community hiện có. |
@@ -181,7 +181,7 @@ Các event hệ thống hai chiều được mô tả riêng trong Event Referen
 | [COMMUNITY/SELECT_REQUEST](#community-select-request) | C → S | Kiểm tra và chọn một community đã tham gia làm đích thao tác của client. |
 | [COMMUNITY/MEMBERS_REQUEST](#community-members-request) | C → S | Lấy danh sách thành viên của community đã tham gia. |
 | [COMMUNITY/INFO_REQUEST](#community-info-request) | C → S | Lấy thông tin chi tiết một community theo ID. |
-| [DISCOVERY/REQUEST](#discovery-request) | C → LAN, UDP | Tìm server trên LAN bằng UDP port 41234. |
+| [DISCOVERY_REQUEST](#discovery-request) | C → LAN, UDP | Tìm server trên LAN bằng UDP port 41234. |
 
 ## Receive Events
 
@@ -203,20 +203,20 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [USER/PEER_KEY_RESPONSE](#user-peer-key-response) | S → C | Trả proof gắn danh tính người đăng nhập với sessionId và public key. |
 | [CHAT/MESSAGE](#chat-message) | P ↔ P | Gửi một tin nhắn trực tiếp trên kết nối chat P2P đã xác nhận khóa. |
 | [CHAT/RECEIPT](#chat-receipt) | P → P | Xác nhận đã nhận một tin nhắn; không biểu thị đã đọc. |
-| [CHAT/BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
+| [CHAT/COMMUNITY_BROADCAST](#chat-broadcast) | C → S → C trong community | Gửi tin nhắn tới các thành viên online của một community qua server. |
 | [CHAT/GLOBAL_BROADCAST](#chat-global-broadcast) | C → S → C | Server phát tin nhắn tới mọi user online, trừ người gửi. |
 | [CHAT/SESSION_REPORT_RESPONSE](#chat-session-report-response) | S → C | Trả kết quả tiếp nhận báo cáo phiên P2P. |
 | [CHAT/SESSION_LIST_RESPONSE](#chat-session-list-response) | S → C | Trả danh sách phiên, sắp xếp theo UUID. |
-| [FILE/OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
-| [FILE/DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
-| [FILE/CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
-| [FILE/CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
-| [FILE/READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
-| [FILE/END](#file-end) | Bên gửi file → bên nhận file | Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng. |
-| [FILE/RESULT](#file-result) | Bên nhận file → bên gửi file | Trả kết quả sau khi kiểm tra checksum và lưu file. |
-| [FILE/BROADCAST_UPLOAD_RESPONSE](#file-broadcast-upload-response) | S → C, kênh quản lý | Cấp fileId và token để upload trên socket dữ liệu riêng. |
-| [FILE/BROADCAST_OFFER](#file-broadcast-offer) | S → C, kênh quản lý | Thông báo file đã upload thành công cho các thành viên nhận trong community. |
-| [FILE/BROADCAST_DOWNLOAD_RESPONSE](#file-broadcast-download-response) | S → C, kênh quản lý | Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downloadToken. |
+| [FILE_OFFER](#file-offer) | P sender → P receiver, kênh chat | Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer. |
+| [FILE_DECISION](#file-decision) | P receiver → P sender, kênh chat | Chấp nhận hoặc từ chối File Offer. |
+| [FILE_CANCEL](#filecancel) | P ↔ P, kênh chat | Yêu cầu hủy transfer theo ID. |
+| [FILE_CANCEL_ACK](#file-cancel-ack) | P ↔ P, kênh chat | Xác nhận đã ghi nhận hủy trước khi bên yêu cầu đóng socket file. |
+| [FILE_READY](#file-ready) | P receiver → P sender, socket file | Trả nonce ngẫu nhiên mới cho lần kết nối socket file. |
+| [FILE_END](#file-end) | Bên gửi file → bên nhận file | Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng. |
+| [FILE_RESULT](#file-result) | Bên nhận file → bên gửi file | Trả kết quả sau khi kiểm tra checksum và lưu file. |
+| [FILE_BROADCAST_UPLOAD_RESPONSE](#file-broadcast-upload-response) | S → C, kênh quản lý | Cấp fileId và token để upload trên socket dữ liệu riêng. |
+| [FILE_BROADCAST_OFFER](#file-broadcast-offer) | S → C, kênh quản lý | Thông báo file đã upload thành công cho các thành viên nhận trong community. |
+| [FILE_BROADCAST_DOWNLOAD_RESPONSE](#file-broadcast-download-response) | S → C, kênh quản lý | Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downloadToken. |
 | [COMMUNITY/LIST_RESPONSE](#community-list-response) | S → C | Trả các Community Object hiện có. |
 | [COMMUNITY/CREATE_RESPONSE](#community-create-response) | S → C | Trả community vừa tạo và chọn community đó trên client. |
 | [COMMUNITY/JOIN_RESPONSE](#community-join-response) | S → C | Trả kết quả thao tác join community. |
@@ -224,7 +224,7 @@ ví dụ Broadcast và Broadcast File Offer. Chat/file P2P nhận trực tiếp 
 | [COMMUNITY/SELECT_RESPONSE](#community-select-response) | S → C | Trả kết quả thao tác select community. |
 | [COMMUNITY/MEMBERS_RESPONSE](#community-members-response) | S → C | Trả username và trạng thái online của các thành viên. |
 | [COMMUNITY/INFO_RESPONSE](#community-info-response) | S → C | Trả một Community Object. |
-| [DISCOVERY/RESPONSE](#discovery-response) | S → C, UDP | Thông báo TCP port mà server đang lắng nghe. |
+| [DISCOVERY_RESPONSE](#discovery-response) | S → C, UDP | Thông báo TCP port mà server đang lắng nghe. |
 
 ## Event Reference
 
@@ -401,7 +401,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 6. |
 | `serverVerificationChallenge` | string | Challenge ngẫu nhiên 32 byte, Base64. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 
@@ -413,7 +413,7 @@ Bắt đầu handshake Client–Server bằng public key X25519 mới và challe
   "sequence": 1,
   "body": {
     "type": "HELLO",
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "serverVerificationChallenge": "<32-byte-random-challenge-base64>",
     "publicKey": "<client-x25519-public-key-base64>"
   }
@@ -436,7 +436,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 6. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
 | `serverSignature` | string | Chữ ký Ed25519 của server, Base64. |
 
@@ -450,7 +450,7 @@ Server trả public key X25519 của kết nối và chữ ký Ed25519. Client k
     "type": "HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "publicKey": "<server-x25519-public-key-base64>",
     "serverSignature": "<ed25519-signature-base64>"
   }
@@ -471,7 +471,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 6. |
 | `username` | string | Tên tài khoản. |
 | `peerPort` | integer | Cổng TCP lắng nghe P2P, từ 1 đến 65535. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
@@ -486,7 +486,7 @@ Mở kết nối chat P2P. Peer khởi tạo gửi danh tính, cổng lắng ngh
   "sequence": 1,
   "body": {
     "type": "PEER_HELLO",
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "username": "alice",
     "peerPort": 9001,
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
@@ -512,7 +512,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
 | --- | --- | --- |
 | `replyTo` | integer | Sequence của request hoặc event mà phản hồi này trả lời. |
 | `status` | string | Kết quả xử lý: OK hoặc mã lỗi của event. |
-| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 5. |
+| `protocolVersion` | integer | Phiên bản giao thức; hiện tại là 6. |
 | `username` | string | Tên tài khoản. |
 | `sessionId` | string | UUID canonical của kết nối chat P2P. |
 | `publicKey` | string | Public key X25519, X.509 DER rồi Base64. |
@@ -528,7 +528,7 @@ Peer nhận trả proof của mình, cùng sessionId với Peer Hello.
     "type": "PEER_HELLO_ACK",
     "replyTo": 1,
     "status": "OK",
-    "protocolVersion": 5,
+    "protocolVersion": 6,
     "username": "bob",
     "sessionId": "8f38b564-4b4f-46ae-94c1-2a9d7b5f0011",
     "publicKey": "<bob-x25519-public-key-base64>",
@@ -889,7 +889,7 @@ Trả proof gắn danh tính người đăng nhập với sessionId và public k
 }
 ```
 
-Chữ ký bao phủ purpose=peer-public-key, protocolVersion=5, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
+Chữ ký bao phủ purpose=peer-public-key, protocolVersion=6, username, sessionId và publicKey. Request không hợp lệ trả INVALID_PEER_KEY.
 
 ### CHAT Events
 
@@ -998,7 +998,7 @@ UDP broadcast. Người gửi không nhận echo; tin nhắn không được lư
 
 #### Community Broadcast
 
-**Event:** `CHAT/BROADCAST` · **Opcode:** `4` · **Direction:** C → S → C trong community
+**Event:** `CHAT/COMMUNITY_BROADCAST` · **Opcode:** `4` · **Direction:** C → S → C trong community
 
 Gửi tin nhắn tới các thành viên online của một community qua server.
 
@@ -1016,7 +1016,7 @@ Gửi tin nhắn tới các thành viên online của một community qua server
   "opcode": 4,
   "sequence": 10,
   "body": {
-    "type": "BROADCAST",
+    "type": "COMMUNITY_BROADCAST",
     "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
     "content": "Nhóm mình bắt đầu nhé!"
   }
@@ -1030,7 +1030,7 @@ Gửi tin nhắn tới các thành viên online của một community qua server
   "opcode": 4,
   "sequence": 17,
   "body": {
-    "type": "BROADCAST",
+    "type": "COMMUNITY_BROADCAST",
     "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
     "sender": "alice",
     "content": "Nhóm mình bắt đầu nhé!"
@@ -1172,7 +1172,7 @@ state trả về là CONNECTED, DISCONNECTED hoặc UNKNOWN. UNKNOWN có thể x
 
 #### File Offer
 
-**Event:** `FILE/OFFER` · **Opcode:** `5` · **Direction:** P sender → P receiver, kênh chat
+**Event:** `FILE_OFFER` · **Opcode:** `5` · **Direction:** P sender → P receiver, kênh chat
 
 Đề nghị gửi file và trao đổi public key X25519 riêng cho transfer.
 
@@ -1195,7 +1195,7 @@ state trả về là CONNECTED, DISCONNECTED hoặc UNKNOWN. UNKNOWN có thể x
   "opcode": 5,
   "sequence": 10,
   "body": {
-    "type": "OFFER",
+    "type": "FILE_OFFER",
     "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "sender": "alice",
     "receiver": "bob",
@@ -1213,7 +1213,7 @@ Người nhận phải ACCEPT trước khi mở lượt truyền. Checksum ví d
 
 #### File Decision
 
-**Event:** `FILE/DECISION` · **Opcode:** `5` · **Direction:** P receiver → P sender, kênh chat
+**Event:** `FILE_DECISION` · **Opcode:** `5` · **Direction:** P receiver → P sender, kênh chat
 
 Chấp nhận hoặc từ chối File Offer.
 
@@ -1233,7 +1233,7 @@ Chấp nhận hoặc từ chối File Offer.
   "opcode": 5,
   "sequence": 17,
   "body": {
-    "type": "DECISION",
+    "type": "FILE_DECISION",
     "replyTo": 10,
     "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "decision": "ACCEPT",
@@ -1248,7 +1248,7 @@ replyTo trỏ tới sequence File Offer. Khi REJECT, bỏ publicKey. ACCEPT dùn
 
 #### File Transfer Start
 
-**Event:** `FILE/TRANSFER_START` · **Opcode:** `5` · **Direction:** P sender → P receiver, socket file
+**Event:** `FILE_TRANSFER_START` · **Opcode:** `5` · **Direction:** P sender → P receiver, socket file
 
 Chọn transfer đã được chấp nhận trên socket dữ liệu mới.
 
@@ -1265,7 +1265,7 @@ Chọn transfer đã được chấp nhận trên socket dữ liệu mới.
   "opcode": 5,
   "sequence": 1,
   "body": {
-    "type": "TRANSFER_START",
+    "type": "FILE_TRANSFER_START",
     "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10"
   }
 }
@@ -1277,7 +1277,7 @@ Chưa mã hóa. transferId phải khớp lời mời đang ACCEPTED của ngư�
 
 #### File Ready
 
-**Event:** `FILE/READY` · **Opcode:** `5` · **Direction:** P receiver → P sender, socket file
+**Event:** `FILE_READY` · **Opcode:** `5` · **Direction:** P receiver → P sender, socket file
 
 Trả nonce ngẫu nhiên mới cho lần kết nối socket file.
 
@@ -1297,7 +1297,7 @@ Trả nonce ngẫu nhiên mới cho lần kết nối socket file.
   "opcode": 5,
   "sequence": 1,
   "body": {
-    "type": "READY",
+    "type": "FILE_READY",
     "replyTo": 1,
     "status": "OK",
     "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
@@ -1312,7 +1312,7 @@ Chưa mã hóa. Hai bên dẫn xuất khóa socket từ khóa transfer và nonce
 
 #### File End
 
-**Event:** `FILE/END` · **Opcode:** `5` · **Direction:** Bên gửi file → bên nhận file
+**Event:** `FILE_END` · **Opcode:** `5` · **Direction:** Bên gửi file → bên nhận file
 
 Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng.
 
@@ -1330,7 +1330,7 @@ Kết thúc phần dữ liệu file và cung cấp checksum cuối cùng.
   "opcode": 5,
   "sequence": 3,
   "body": {
-    "type": "END",
+    "type": "FILE_END",
     "transferId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   }
@@ -1343,7 +1343,7 @@ Chỉ gửi sau đúng fileSize byte dữ liệu. File rỗng gửi End ngay sau
 
 #### File Result
 
-**Event:** `FILE/RESULT` · **Opcode:** `5` · **Direction:** Bên nhận file → bên gửi file
+**Event:** `FILE_RESULT` · **Opcode:** `5` · **Direction:** Bên nhận file → bên gửi file
 
 Trả kết quả sau khi kiểm tra checksum và lưu file.
 
@@ -1361,7 +1361,7 @@ Trả kết quả sau khi kiểm tra checksum và lưu file.
   "opcode": 5,
   "sequence": 3,
   "body": {
-    "type": "RESULT",
+    "type": "FILE_RESULT",
     "replyTo": 3,
     "status": "OK"
   }
@@ -1375,7 +1375,7 @@ Trả kết quả sau khi kiểm tra checksum và lưu file.
   "opcode": 5,
   "sequence": 3,
   "body": {
-    "type": "RESULT",
+    "type": "FILE_RESULT",
     "replyTo": 3,
     "status": "FAIL",
     "reason": "Checksum mismatch"
@@ -1389,7 +1389,7 @@ OK phải trả lời File End. FAIL có thêm reason:string; lỗi sớm có th
 
 #### Broadcast Upload Request
 
-**Event:** `FILE/BROADCAST_UPLOAD_REQUEST` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
+**Event:** `FILE_BROADCAST_UPLOAD_REQUEST` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
 
 Xin upload file vào community mà người gửi là thành viên.
 
@@ -1409,7 +1409,7 @@ Xin upload file vào community mà người gửi là thành viên.
   "opcode": 5,
   "sequence": 10,
   "body": {
-    "type": "BROADCAST_UPLOAD_REQUEST",
+    "type": "FILE_BROADCAST_UPLOAD_REQUEST",
     "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
     "fileName": "notes.txt",
     "fileSize": 0,
@@ -1422,7 +1422,7 @@ Xin upload file vào community mà người gửi là thành viên.
 
 #### Broadcast Upload Response
 
-**Event:** `FILE/BROADCAST_UPLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+**Event:** `FILE_BROADCAST_UPLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
 
 Cấp fileId và token để upload trên socket dữ liệu riêng.
 
@@ -1442,7 +1442,7 @@ Cấp fileId và token để upload trên socket dữ liệu riêng.
   "opcode": 5,
   "sequence": 17,
   "body": {
-    "type": "BROADCAST_UPLOAD_RESPONSE",
+    "type": "FILE_BROADCAST_UPLOAD_RESPONSE",
     "replyTo": 10,
     "status": "OK",
     "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
@@ -1457,7 +1457,7 @@ Token dùng một lần, hết hạn sau 5 phút. Các status: OK, INVALID_REQUE
 
 #### Broadcast Upload Start
 
-**Event:** `FILE/BROADCAST_UPLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
+**Event:** `FILE_BROADCAST_UPLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
 
 Bắt đầu upload bằng token đã nhận.
 
@@ -1475,20 +1475,20 @@ Bắt đầu upload bằng token đã nhận.
   "opcode": 5,
   "sequence": 3,
   "body": {
-    "type": "BROADCAST_UPLOAD_START",
+    "type": "FILE_BROADCAST_UPLOAD_START",
     "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "uploadToken": "<one-use-upload-token>"
   }
 }
 ```
 
-Socket này đã hoàn tất CONNECTION/HELLO/ACK và SYSTEM/KEY_CONFIRM/ACK. Không đăng nhập lại bằng password; token cấp quyền cho lượt upload. Tiếp theo là dữ liệu file, FILE/END và FILE/RESULT.
+Socket này đã hoàn tất CONNECTION/HELLO/ACK và SYSTEM/KEY_CONFIRM/ACK. Không đăng nhập lại bằng password; token cấp quyền cho lượt upload. Tiếp theo là dữ liệu file, FILE_END và FILE_RESULT.
 
 <a id="file-broadcast-offer"></a>
 
 #### Broadcast File Offer
 
-**Event:** `FILE/BROADCAST_OFFER` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+**Event:** `FILE_BROADCAST_OFFER` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
 
 Thông báo file đã upload thành công cho các thành viên nhận trong community.
 
@@ -1510,7 +1510,7 @@ Thông báo file đã upload thành công cho các thành viên nhận trong com
   "opcode": 5,
   "sequence": 17,
   "body": {
-    "type": "BROADCAST_OFFER",
+    "type": "FILE_BROADCAST_OFFER",
     "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "sender": "alice",
     "communityId": "1e09a4c8-b353-49ef-b49f-148fbd217c90",
@@ -1527,7 +1527,7 @@ Sự kiện chủ động, không có replyTo/status. Chỉ các thành viên on
 
 #### Broadcast File Decision
 
-**Event:** `FILE/BROADCAST_DECISION` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
+**Event:** `FILE_BROADCAST_DECISION` · **Opcode:** `5` · **Direction:** C → S, kênh quản lý
 
 Chấp nhận hoặc từ chối tải file đã được server thông báo.
 
@@ -1545,20 +1545,20 @@ Chấp nhận hoặc từ chối tải file đã được server thông báo.
   "opcode": 5,
   "sequence": 10,
   "body": {
-    "type": "BROADCAST_DECISION",
+    "type": "FILE_BROADCAST_DECISION",
     "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "decision": "ACCEPT"
   }
 }
 ```
 
-Đây là request mới, không mang replyTo. Server kiểm tra người dùng thuộc danh sách người nhận và vẫn là thành viên community; trả FILE/BROADCAST_DOWNLOAD_RESPONSE.
+Đây là request mới, không mang replyTo. Server kiểm tra người dùng thuộc danh sách người nhận và vẫn là thành viên community; trả FILE_BROADCAST_DOWNLOAD_RESPONSE.
 
 <a id="file-broadcast-download-response"></a>
 
 #### Broadcast Download Response
 
-**Event:** `FILE/BROADCAST_DOWNLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
+**Event:** `FILE_BROADCAST_DOWNLOAD_RESPONSE` · **Opcode:** `5` · **Direction:** S → C, kênh quản lý
 
 Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downloadToken.
 
@@ -1577,7 +1577,7 @@ Trả kết quả quyết định tải; ACCEPT hợp lệ được cấp downlo
   "opcode": 5,
   "sequence": 17,
   "body": {
-    "type": "BROADCAST_DOWNLOAD_RESPONSE",
+    "type": "FILE_BROADCAST_DOWNLOAD_RESPONSE",
     "replyTo": 10,
     "status": "OK",
     "downloadToken": "<one-use-download-token>"
@@ -1591,7 +1591,7 @@ Token dùng một lần, hết hạn sau 5 phút. Các status: OK, REJECTED, NOT
 
 #### Broadcast Download Start
 
-**Event:** `FILE/BROADCAST_DOWNLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
+**Event:** `FILE_BROADCAST_DOWNLOAD_START` · **Opcode:** `5` · **Direction:** C → S, socket dữ liệu server
 
 Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xác nhận khóa.
 
@@ -1609,14 +1609,14 @@ Bắt đầu tải bằng fileId và token sau khi hoàn tất handshake và xá
   "opcode": 5,
   "sequence": 3,
   "body": {
-    "type": "BROADCAST_DOWNLOAD_START",
+    "type": "FILE_BROADCAST_DOWNLOAD_START",
     "fileId": "286c5133-e7c4-46ba-91ef-43bc35b47a10",
     "downloadToken": "<one-use-download-token>"
   }
 }
 ```
 
-Server tiêu thụ token và kiểm tra lại quyền tải, rồi gửi dữ liệu file và FILE/END. Client lưu file, kiểm tra checksum và trả FILE/RESULT. Token sai/hết hạn nhận FILE/RESULT FAIL nếu kênh còn dùng được.
+Server tiêu thụ token và kiểm tra lại quyền tải, rồi gửi dữ liệu file và FILE_END. Client lưu file, kiểm tra checksum và trả FILE_RESULT. Token sai/hết hạn nhận FILE_RESULT FAIL nếu kênh còn dùng được.
 
 ### COMMUNITY Events
 
@@ -2068,7 +2068,7 @@ Community không tồn tại trả NOT_FOUND; isMember trong object thể hiện
 
 #### Discovery Request
 
-**Event:** `DISCOVERY/REQUEST` · **Opcode:** `7` · **Direction:** C → LAN, UDP
+**Event:** `DISCOVERY_REQUEST` · **Opcode:** `7` · **Direction:** C → LAN, UDP
 
 Tìm server trên LAN bằng UDP port 41234.
 
@@ -2081,7 +2081,7 @@ Body chỉ có `type`.
   "opcode": 7,
   "sequence": 1,
   "body": {
-    "type": "REQUEST"
+    "type": "DISCOVERY_REQUEST"
   }
 }
 ```
@@ -2092,7 +2092,7 @@ Chưa mã hóa. Client gửi qua broadcast của từng giao diện IPv4, tối 
 
 #### Discovery Response
 
-**Event:** `DISCOVERY/RESPONSE` · **Opcode:** `7` · **Direction:** S → C, UDP
+**Event:** `DISCOVERY_RESPONSE` · **Opcode:** `7` · **Direction:** S → C, UDP
 
 Thông báo TCP port mà server đang lắng nghe.
 
@@ -2111,7 +2111,7 @@ Thông báo TCP port mà server đang lắng nghe.
   "opcode": 7,
   "sequence": 1,
   "body": {
-    "type": "RESPONSE",
+    "type": "DISCOVERY_RESPONSE",
     "replyTo": 1,
     "status": "OK",
     "tcpPort": 8080
@@ -2164,7 +2164,7 @@ có thể kết thúc kết nối. Server không gửi lỗi plaintext sau khi �
 | Nội dung chat | Tối đa 64 KiB theo byte UTF-8. |
 | Tên community | Không rỗng, tối đa 100 ký tự. |
 | File | Tối đa 500 MiB; kiểm tra SHA-256 trước khi công bố file. |
-| File offer P2P | Hết hạn sau 2 phút nếu chưa có quyết định. |
+| File offer P2P | Hết hạn sau 5 phút nếu chưa có quyết định. |
 | Sau ACCEPT P2P | Chờ socket/xác nhận khóa tối đa 30 giây. |
 | Socket file P2P | Connect timeout 10 giây, read timeout 30 giây. |
 | Socket dữ liệu broadcast | Read timeout 60 giây khi truyền. |
@@ -2180,8 +2180,8 @@ ERROR, PRESENCE_UPDATE, RECEIPT và GLOBAL_BROADCAST hiện có luồng gửi/nh
 trong core và UI.
 Receipt chỉ xác nhận DELIVERED, không xác nhận đã đọc. Không có event FILE/CHUNK:
 dữ liệu file được truyền trực tiếp trên socket dữ liệu giữa Ready/Key Confirm và End.
-Luồng download community bắt đầu bằng FILE/BROADCAST_DECISION, sau đó dùng
-FILE/BROADCAST_DOWNLOAD_START trên socket dữ liệu; không có
+Luồng download community bắt đầu bằng FILE_BROADCAST_DECISION, sau đó dùng
+FILE_BROADCAST_DOWNLOAD_START trên socket dữ liệu; không có
 FILE/BROADCAST_DOWNLOAD_REQUEST.
 
 ## Implementation Notes
@@ -2190,7 +2190,7 @@ App dùng TCP cho kênh server và P2P, UDP cho Discovery. Payload trong tài li
 JSON ở lớp event; PacketCodec và PacketChannel xử lý đóng khung và mã hóa khi
 truyền. Đây là cách trình bày tài liệu theo event, không đổi app sang WebSocket.
 
-Phiên bản 5 không tương thích các phiên bản cũ; client và server phải cập nhật đồng thời.
+Phiên bản 6 không tương thích các phiên bản cũ; client và server phải cập nhật đồng thời.
 Các enum trong `src/main/java/protocols/*Type.java` xác định type theo từng nhóm.
 
 ## Documentation References
@@ -2202,18 +2202,18 @@ Các opcode, field, trạng thái và ví dụ trong tài liệu này mô tả �
 
 ## Hủy file, tiến trình và trạng thái hiện tại
 
-### FILE/CANCEL
+### FILE_CANCEL
 
 **Opcode:** `5` · **Direction:** một peer → peer còn lại, trên kênh chat P2P đã mã hóa.
 
 ```json
-{"opcode":5,"sequence":20,"body":{"type":"CANCEL","transferId":"8f38b564-4b4f-46ae-94c1-2a9d7b5f0011"}}
+{"opcode":5,"sequence":20,"body":{"type":"FILE_CANCEL","transferId":"8f38b564-4b4f-46ae-94c1-2a9d7b5f0011"}}
 ```
 
 Không phải ACK, không có `replyTo`. Chỉ áp dụng transfer thuộc đúng kết nối peer.
 Đóng transfer đã kết thúc không xóa file đã nhận hoàn chỉnh. Nếu transfer còn
 hoạt động, đổi session sang CANCELED, đóng socket dữ liệu riêng và dọn file tạm.
-FILE/CANCEL không đóng kênh chat. Hai peer phải chạy bản hỗ trợ event này.
+FILE_CANCEL không đóng kênh chat. Hai peer phải chạy bản hỗ trợ event này.
 
 Với community, hủy được thực hiện cục bộ theo ID tác vụ: đóng đúng socket upload
 hoặc download; không đóng control socket. Receiver xóa `.transfer-*.tmp`; server
@@ -2225,14 +2225,14 @@ bước mở socket dữ liệu kế tiếp, không ngắt reader quản lý dù
 Tiến trình tính bằng `transferred / total`. Tốc độ lấy từ chênh lệch byte theo
 `System.nanoTime`, làm mượt và cập nhật tối đa khoảng 4 lần/giây (ngoài mẫu đầu/cuối).
 ETA = byte còn lại / tốc độ ước tính. 100% byte chưa đồng nghĩa hoàn tất: vẫn cần
-checksum và FILE/RESULT hợp lệ. Các số đo là event nội bộ, không thêm frame progress.
+checksum và FILE_RESULT hợp lệ. Các số đo là event nội bộ, không thêm frame progress.
 
 <a id="file-cancel-ack"></a>
 
-### FILE/CANCEL_ACK
+### FILE_CANCEL_ACK
 
-Response trên chính kết nối P2P, gồm `replyTo` trỏ tới sequence của CANCEL,
-`status: "OK"` và `transferId`. Bên nhận CANCEL đánh dấu hủy và đóng socket file
+Response trên chính kết nối P2P, gồm `replyTo` trỏ tới sequence của FILE_CANCEL,
+`status: "OK"` và `transferId`. Bên nhận FILE_CANCEL đánh dấu hủy và đóng socket file
 trước khi trả ACK. Bên yêu cầu chờ ACK tối đa 2 giây, rồi dọn tài nguyên cục bộ.
 Xác nhận này tránh việc EOF trên socket file đến trước thông báo hủy trên kênh chat,
 khiến phía còn lại báo nhầm FAILED. Không áp dụng cho file community qua server.
@@ -2262,14 +2262,14 @@ hoạt, nên sự kiện chủ động không chen trước phản hồi đăng 
 ```mermaid
 stateDiagram-v2
     [*] --> OFFERED
-    OFFERED --> ACCEPTED: bấm tải / DECISION ACCEPT
-    OFFERED --> REJECTED: DECISION REJECT (CLI)
+    OFFERED --> ACCEPTED: bấm tải / FILE_DECISION ACCEPT
+    OFFERED --> REJECTED: FILE_DECISION REJECT (CLI)
     OFFERED --> FAILED: hết hạn / lỗi
     ACCEPTED --> TRANSFERRING: socket dữ liệu + key confirm
     TRANSFERRING --> COMPLETED: đủ byte + checksum + xác nhận
-    OFFERED --> CANCELED: CANCEL
-    ACCEPTED --> CANCELED: CANCEL
-    TRANSFERRING --> CANCELED: CANCEL + cleanup
+    OFFERED --> CANCELED: FILE_CANCEL
+    ACCEPTED --> CANCELED: FILE_CANCEL
+    TRANSFERRING --> CANCELED: FILE_CANCEL + cleanup
     ACCEPTED --> FAILED: timeout / lỗi
     TRANSFERRING --> FAILED: socket / checksum / cleanup lỗi
 ```

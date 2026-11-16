@@ -151,7 +151,7 @@ public class ChatController implements ClientEventListener {
         targetMetaLabel.managedProperty().bind(targetMetaLabel.visibleProperty());
         connectionView = new ConnectionStatusView(connectionStatusLabel, connectionStatusDot, reconnectBtn,
                 serverOfflineBanner, serverOfflineMessage, bannerReconnectBtn);
-        messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::cancelFileTransfer);
+        messageView = new ChatMessageView(messagesContainer, adapter::acceptFileOffer, adapter::rejectFileOffer, adapter::cancelFileTransfer);
 
         setupTitleBar();
         setupCurrentUserDisplay();

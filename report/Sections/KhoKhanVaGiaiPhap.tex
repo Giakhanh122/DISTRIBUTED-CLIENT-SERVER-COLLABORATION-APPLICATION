@@ -1,46 +1,53 @@
 \section{Khó khăn và giải pháp}
 \begingroup
 \small
-\setstretch{1.08}
-Phần khó nhất khi xây dựng ứng dụng không nằm ở việc mở socket, mà ở việc giữ
-thứ tự dữ liệu và vòng đời tài nguyên khi nhiều tác vụ hoạt động đồng thời.
-Bốn vấn đề dưới đây phản ánh các tình huống đã được xử lý và kiểm tra trong hệ thống.
+\setstretch{1.05}
 
-\paragraph{TCP chia nhỏ hoặc gộp dữ liệu.}
-Một lần gửi không tương ứng một lần đọc. Vì vậy, receiver không dựa vào số byte
-trả về của một lần read để suy ra ranh giới message. PacketCodec dùng length-prefix
-4 byte, kiểm tra giới hạn rồi đọc đủ JSON; dữ liệu file đọc đúng fileSize byte trước
-FILE/END. Kiểm thử chia frame thành từng byte, gộp hai frame, cắt ngắn luồng và sai
-checksum xác nhận parser không nhầm ranh giới và không công bố file lỗi.
+Trong quá trình xây dựng DL-Chat, việc mở được kết nối mới chỉ là bước đầu.
+Khó khăn chính xuất hiện khi nhiều dữ liệu đến cùng lúc, người dùng hủy thao tác
+hoặc một phía mất kết nối. Nhóm rút ra bốn vấn đề cần xử lý rõ ràng dưới đây.
 
-\paragraph{Tranh chấp ghi và thứ tự đăng nhập.}
-Response, heartbeat và broadcast có thể cùng ghi vào một socket. Mọi thao tác đi
-qua khóa ghi của PacketChannel, bao gồm cấp sequence và ghi trọn frame; đóng socket
-không đợi khóa này để tránh kẹt với writer. Kiểm thử 20 client còn phát hiện một
-race: PRESENCE\_UPDATE có thể tới trước LOGIN\_RESPONSE. Giải pháp là giữ chỗ
-username để chống đăng nhập trùng, nhưng chỉ kích hoạt session sau khi gửi xong
-ACK đăng nhập. Nhờ đó phản hồi đăng nhập luôn đi trước sự kiện chủ động trên phiên mới.
+\paragraph{Đọc đúng thông điệp từ TCP.}
+Ban đầu, rất dễ hiểu nhầm rằng một lần gửi sẽ tương ứng với một lần nhận.
+Thực tế, TCP có thể chia một thông điệp thành nhiều phần hoặc gộp nhiều thông
+điệp vào cùng lần đọc. Ứng dụng giải quyết bằng cách đặt độ dài 4 byte trước
+JSON và chỉ xử lý khi đã đọc đủ dữ liệu. Với file, bên nhận đọc đúng số byte
+được khai báo trước khi đọc thông điệp kết thúc. Nhờ vậy, ứng dụng phân biệt
+được ranh giới giữa các lệnh và dữ liệu file.
 
-\paragraph{Hủy file mà không để lại dữ liệu dở.}
-Chỉ đổi trạng thái UI không giải phóng read/write đang chờ. Controller phải đánh
-dấu session và đóng data socket riêng; worker kiểm tra trạng thái dưới khóa trước
-khi công bố file. File tạm được xóa trong finally, chỉ sau đó mới báo đã hủy;
-cleanup lỗi không bị nuốt thành thành công. Kiểm thử hủy cả P2P lẫn community,
-ngắt TCP giữa file và giữ một file cũ cùng tên chứng minh không xóa nhầm dữ liệu
-đã có. File khác và chat vẫn hoạt động vì không dùng chung data socket.
+\paragraph{Nhiều luồng cùng dùng một kết nối.}
+Server vừa trả lời yêu cầu, vừa gửi thông báo online và tin nhắn nhóm. Nếu các
+luồng tự ghi cùng lúc, byte của hai thông điệp có thể bị xen lẫn. Nhóm đưa thao
+tác ghi vào một phần xử lý có khóa, để mỗi thông điệp được ghi trọn vẹn trước
+khi thông điệp tiếp theo bắt đầu. Với đăng nhập, server cũng chỉ phát thông báo
+chủ động sau khi gửi xong phản hồi đăng nhập, tránh để client đọc nhầm loại
+thông điệp trong bước thiết lập phiên.
 
-\paragraph{Phân biệt mất server với mất peer.}
-Nếu gắn toàn bộ vòng đời P2P vào control socket, việc server dừng sẽ làm mất cả
-cuộc trò chuyện trực tiếp. ClientSession giữ các peer độc lập; mỗi control/chat
-socket có heartbeat riêng. Reconnect chỉ thay context server và xác thực lại,
-không lưu password hoặc tự gửi lại yêu cầu cũ. Thử nghiệm restart server, reconnect
-sai rồi đúng mật khẩu xác nhận P2P và cổng listener còn được giữ.
+\paragraph{Hủy file nhưng vẫn giữ các thao tác khác.}
+Chỉ đổi dòng trạng thái trên giao diện không dừng được thao tác đọc hoặc ghi
+socket. Vì vậy, mỗi file có kết nối dữ liệu riêng và được ghi vào file tạm.
+Khi hủy, chương trình đóng đúng socket đó và dọn dữ liệu dở, không đóng kết nối
+chat. Với file P2P, bên hủy còn chờ xác nhận hủy trước khi đóng socket dữ liệu;
+điều này tránh để bên kia thấy kết nối đứt trước khi biết người dùng đã hủy.
+Với community, việc hủy một lượt tải không được xóa file chung trên server.
 
-\paragraph{Kết quả và giới hạn.}
-Bộ 12 bài kiểm thử localhost đã qua, gồm 20 client đồng thời, file P2P và community
-200 MiB, file rỗng/Unicode, hủy, framing, checksum và xác thực/mã hóa bị sai.
-Bài học chính là phải gắn đồng bộ hóa với đúng tài nguyên, đồng thời phân biệt đủ
-byte, đã công bố file và đã được xác nhận. Chưa khẳng định kết quả trên nhiều máy,
-NAT/firewall hay mất điện; metadata vẫn ở RAM và file gián đoạn chưa resume theo offset.
+\paragraph{Phân biệt mất server với mất kết nối riêng.}
+Global và community phụ thuộc server, nhưng tin riêng đã có kết nối P2P không
+nhất thiết phải dừng theo. Nhóm quản lý trạng thái server và từng peer riêng,
+đồng thời dùng PING/PONG để phát hiện kết nối không phản hồi. Khi mất server,
+giao diện khóa các thao tác cần server và cho phép nhập lại mật khẩu để kết nối
+lại; những kết nối P2P còn sống vẫn được sử dụng. Ứng dụng không tự gửi lại yêu
+cầu cũ, nhằm tránh tạo thao tác trùng ngoài ý muốn của người dùng.
+
+\paragraph{Kết quả và bài học.}
+Bộ kiểm thử hiện tại có 18 bài đã chạy thành công trên localhost, gồm 10 bài
+kiểm tra giao thức, 2 bài kiểm tra global broadcast và 6 bài kiểm tra tích hợp.
+Các tình huống đã kiểm tra có gửi đúng người nhận, file community sau khi người
+gửi thoát, quyền tải khi rời nhóm, hủy download, chat/file riêng khi mất server
+và tên nhóm trùng. Kiểm thử tích hợp có file 8 MiB, file rỗng và tên Unicode;
+chưa thể dùng kết quả này để khẳng định đã kiểm thử file 500 MiB hoặc tải 10--20
+client đồng thời. Bài học của nhóm là phải xác định rõ trạng thái và phần dữ
+liệu thuộc từng kết nối. Hệ thống vẫn cần kiểm tra thêm trên nhiều máy; thông
+tin nhóm chưa được lưu bền vững và file gián đoạn phải truyền lại từ đầu.
 \par
 \endgroup

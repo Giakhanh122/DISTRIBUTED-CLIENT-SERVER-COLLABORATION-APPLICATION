@@ -35,7 +35,7 @@ public final class FileDataReader {
         }
 
         Packet end = channel.read();
-        if (end == null || end.type() != FileType.END) throw new IOException("Missing FILE_END");
+        if (end == null || end.type() != FileType.FILE_END) throw new IOException("Missing FILE_END");
         if (!end.string("transferId").equals(transferId)) {
             throw new IOException("FILE_END does not match transfer");
         }

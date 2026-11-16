@@ -1,111 +1,158 @@
-\section{Sequence Diagram}
-\usetikzlibrary{arrows.meta}
-Các sơ đồ ghi tên thao tác theo dạng nhóm/type của protocol version 3.
-Các mũi tên data thể hiện luồng logic; socket chat/control và socket file là các TCP riêng.
+\section{Trình tự trao đổi dữ liệu}
 
-Client B đã đăng nhập và mở PeerListener. Sau HELLO\_ACK, A kiểm tra chữ ký
-Ed25519 trước khi tạo shared secret và dẫn xuất khóa. Mỗi phiên P2P cũng phải kiểm
-tra proof hai phía và key confirmation trước khi gửi nội dung.
+Các sơ đồ sau mô tả thứ tự trao đổi giữa người gửi, server và người nhận.
+Mũi tên đi xuống theo thời gian; việc thiết lập mã hóa được gộp thành một bước
+để làm rõ luồng xử lý chính. Trên thực tế, mỗi kết nối TCP mới đều phải hoàn tất
+bước xác thực và xác nhận khóa trước khi truyền nội dung được bảo vệ.
 
-\subsection{Đăng nhập, thiết lập peer và gửi tin riêng}
-\begin{figure}[H]\centering
-\resizebox{\linewidth}{!}{%
-\begin{tikzpicture}[font=\scriptsize,actor/.style={draw,rounded corners,minimum width=2.8cm,minimum height=0.7cm,align=center,fill=gray!8},msg/.style={-{Stealth},thick}]
+\subsection{Đăng nhập và gửi tin nhắn riêng}
+
+Trước tiên, client A đăng nhập vào server. Khi muốn nhắn riêng cho B, A lấy địa
+chỉ của B từ server rồi mở kết nối P2P. Hai client kiểm tra danh tính của nhau
+thông qua xác nhận do server ký. Sau đó, tin nhắn được gửi trực tiếp từ A đến B.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    actor/.style={draw,rounded corners,minimum width=2.5cm,minimum height=.7cm,fill=gray!8},
+    msg/.style={-{Stealth},thick},
+    lab/.style={midway,above,fill=white,inner sep=2pt,font=\footnotesize}]
 \node[actor] at (0,0) {Client A};
-\draw[dashed,gray] (0,-0.35) -- (0,-9.82);
 \node[actor] at (5,0) {Server};
-\draw[dashed,gray] (5,-0.35) -- (5,-9.82);
-\node[actor] at (10,0) {Client B (online)};
-\draw[dashed,gray] (10,-0.35) -- (10,-9.82);
-\draw[msg] (0,-0.80) -- (5,-0.80) node[midway,above,fill=white,inner sep=2pt] {CONNECTION/HELLO};
-\draw[msg] (5,-1.29) -- (0,-1.29) node[midway,above,fill=white,inner sep=2pt] {HELLO\_ACK + chữ ký server};
-\draw[msg] (0,-1.78) -- (5,-1.78) node[midway,above,fill=white,inner sep=2pt] {SYSTEM/KEY\_CONFIRM (mã hóa)};
-\draw[msg] (5,-2.27) -- (0,-2.27) node[midway,above,fill=white,inner sep=2pt] {KEY\_CONFIRM\_ACK};
-\draw[msg] (0,-2.76) -- (5,-2.76) node[midway,above,fill=white,inner sep=2pt] {AUTH/LOGIN\_REQUEST};
-\draw[msg] (5,-3.25) -- (0,-3.25) node[midway,above,fill=white,inner sep=2pt] {LOGIN\_RESPONSE OK};
-\draw[msg] (0,-3.74) -- (5,-3.74) node[midway,above,fill=white,inner sep=2pt] {USER/PEER\_LOOKUP\_REQUEST};
-\draw[msg] (5,-4.23) -- (0,-4.23) node[midway,above,fill=white,inner sep=2pt] {PEER\_LOOKUP\_RESPONSE: địa chỉ B};
-\draw[msg] (0,-4.72) -- (5,-4.72) node[midway,above,fill=white,inner sep=2pt] {USER/PEER\_KEY\_REQUEST};
-\draw[msg] (5,-5.21) -- (0,-5.21) node[midway,above,fill=white,inner sep=2pt] {PEER\_KEY\_RESPONSE: proof khóa A};
-\draw[msg] (0,-5.70) -- (10,-5.70) node[midway,above,fill=white,inner sep=2pt] {CONNECTION/PEER\_HELLO + proof};
-\draw[msg] (10,-6.19) -- (5,-6.19) node[midway,above,fill=white,inner sep=2pt] {USER/PEER\_KEY\_REQUEST};
-\draw[msg] (5,-6.68) -- (10,-6.68) node[midway,above,fill=white,inner sep=2pt] {Proof khóa B};
-\draw[msg] (10,-7.17) -- (0,-7.17) node[midway,above,fill=white,inner sep=2pt] {PEER\_HELLO\_ACK + proof};
-\draw[msg] (0,-7.66) -- (10,-7.66) node[midway,above,fill=white,inner sep=2pt] {SYSTEM/KEY\_CONFIRM};
-\draw[msg] (10,-8.15) -- (0,-8.15) node[midway,above,fill=white,inner sep=2pt] {KEY\_CONFIRM\_ACK};
-\draw[msg] (0,-8.64) -- (10,-8.64) node[midway,above,fill=white,inner sep=2pt] {CHAT/MESSAGE: messageId, content};
-\draw[msg] (10,-9.13) -- (0,-9.13) node[midway,above,fill=white,inner sep=2pt] {CHAT/RECEIPT: DELIVERED};
-\end{tikzpicture}}
-\caption{Đăng nhập, thiết lập peer và gửi tin riêng}
-\label{fig:seq-p2p}
+\node[actor] at (10,0) {Client B};
+\foreach \x in {0,5,10} \draw[dashed,gray] (\x,-.35) -- (\x,-6.05);
+\draw[msg] (0,-.9) -- (5,-.9) node[lab]{Mở TCP, thiết lập mã hóa};
+\draw[msg] (0,-1.6) -- (5,-1.6) node[lab]{LOGIN\_REQUEST};
+\draw[msg] (5,-2.3) -- (0,-2.3) node[lab]{LOGIN\_RESPONSE: OK};
+\draw[msg] (0,-3) -- (5,-3) node[lab]{Hỏi địa chỉ kết nối của B};
+\draw[msg] (5,-3.7) -- (0,-3.7) node[lab]{Trả IP và cổng của B};
+\draw[Stealth-Stealth,thick] (0,-4.4) -- (10,-4.4) node[lab]{Mở P2P, xác thực hai phía và thiết lập mã hóa};
+\draw[msg] (0,-5.1) -- (10,-5.1) node[lab]{CHAT/MESSAGE: mã tin và nội dung};
+\draw[msg] (10,-5.8) -- (0,-5.8) node[lab]{CHAT/RECEIPT: đã nhận tin};
+\end{tikzpicture}
+\caption{Đăng nhập và gửi tin nhắn riêng. Client B đã đăng nhập trước khi A tìm địa chỉ.}
+\label{fig:seq-private-message}
 \end{figure}
-Receipt xác nhận ứng dụng nhận được tin, không phải đã đọc. Server chỉ hỗ trợ
-tra cứu và ký proof; không relay nội dung chat riêng.
+
+B chỉ gửi xác nhận khi ứng dụng đã nhận được tin nhắn. Server không chuyển tiếp
+nội dung tin riêng. Nếu kết nối P2P đã có sẵn, hai client sử dụng lại kết nối đó,
+không cần thực hiện lại toàn bộ các bước thiết lập.
 
 \clearpage
-\subsection{Truyền file P2P trên socket dữ liệu riêng}
-\begin{figure}[H]\centering
-\resizebox{\linewidth}{!}{%
-\begin{tikzpicture}[font=\scriptsize,actor/.style={draw,rounded corners,minimum width=2.8cm,minimum height=0.7cm,align=center,fill=gray!8},msg/.style={-{Stealth},thick}]
-\node[actor] at (0,0) {Sender};
-\draw[dashed,gray] (0,-0.35) -- (0,-5.95);
-\node[actor] at (8,0) {Receiver};
-\draw[dashed,gray] (8,-0.35) -- (8,-5.95);
-\draw[msg] (0,-0.80) -- (8,-0.80) node[midway,above,fill=white,inner sep=2pt] {FILE/OFFER: metadata, publicKey};
-\draw[msg] (8,-1.35) -- (0,-1.35) node[midway,above,fill=white,inner sep=2pt] {Bấm tải: FILE/DECISION ACCEPT + publicKey};
-\draw[msg] (0,-1.90) -- (8,-1.90) node[midway,above,fill=white,inner sep=2pt] {TCP dữ liệu mới: FILE/TRANSFER\_START};
-\draw[msg] (8,-2.45) -- (0,-2.45) node[midway,above,fill=white,inner sep=2pt] {FILE/READY: status, connectionNonce};
-\draw[msg] (0,-3.00) -- (8,-3.00) node[midway,above,fill=white,inner sep=2pt] {SYSTEM/KEY\_CONFIRM (khóa file)};
-\draw[msg] (8,-3.55) -- (0,-3.55) node[midway,above,fill=white,inner sep=2pt] {KEY\_CONFIRM\_ACK};
-\draw[msg] (0,-4.10) -- (8,-4.10) node[midway,above,fill=white,inner sep=2pt] {Dữ liệu AES-GCM: khối 64 KiB, đủ fileSize byte};
-\draw[msg] (0,-4.65) -- (8,-4.65) node[midway,above,fill=white,inner sep=2pt] {FILE/END: transferId, SHA-256};
-\draw[msg] (8,-5.20) -- (0,-5.20) node[midway,above,fill=white,inner sep=2pt] {Sau kiểm checksum và lưu file: FILE/RESULT OK};
-\end{tikzpicture}}
-\caption{Truyền file P2P trên socket dữ liệu riêng}
-\label{fig:seq-file-p2p}
-\end{figure}
-Offer/decision nằm trên chat P2P đã mã hóa. TRANSFER\_START và READY mở data
-socket trước khi bật mã hóa; khóa socket được dẫn xuất từ khóa transfer và nonce mới.
-File rỗng không có phần data, nhưng vẫn có END/RESULT.
+\subsection{Gửi tin nhắn global và community}
 
-\paragraph{Nhánh hủy hoặc lỗi.}
-Trước khi hoàn tất, một peer có thể gửi FILE/CANCEL trên chat để hủy transferId.
-Controller đóng data socket; receiver không công bố file dở và dọn file tạm.
-Nếu cancel tới sau khi file đã được lưu hoàn chỉnh, kết quả hoàn tất được giữ.
-Sai checksum trả FILE/RESULT với status=FAIL và reason; nếu socket đã đứt, phản hồi
-lỗi có thể không gửi được nhưng cleanup vẫn chạy. Chat và file khác tiếp tục hoạt động.
+Tin nhắn global và community đều đi qua server, nhưng khác phạm vi nhận.
+Community cần mã nhóm và kiểm tra quyền thành viên; global được phân phối tới
+mọi tài khoản đang trực tuyến. Sơ đồ dưới đây dùng B để đại diện cho một người
+nhận hợp lệ trong mỗi trường hợp.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    actor/.style={draw,rounded corners,minimum width=2.5cm,minimum height=.7cm,fill=gray!8},
+    msg/.style={-{Stealth},thick},
+    lab/.style={midway,above,fill=white,inner sep=2pt,font=\footnotesize}]
+\node[actor] at (0,0) {Client A};
+\node[actor] at (5,0) {Server};
+\node[actor] at (10,0) {Client B};
+\foreach \x in {0,5,10} \draw[dashed,gray] (\x,-.35) -- (\x,-5.3);
+\draw[msg] (0,-1) -- (5,-1) node[lab]{COMMUNITY\_BROADCAST: mã nhóm, nội dung};
+\node[draw,fill=green!6,align=center,font=\footnotesize,text width=3cm] at (5,-1.95) {Kiểm tra A thuộc nhóm;\\lấy thành viên online};
+\draw[msg] (5,-2.9) -- (10,-2.9) node[lab]{COMMUNITY\_BROADCAST: nhóm, người gửi, nội dung};
+\draw[msg] (0,-4) -- (5,-4) node[lab]{GLOBAL\_BROADCAST: nội dung};
+\draw[msg] (5,-5) -- (10,-5) node[lab]{Gửi tới từng user online, trừ A};
+\end{tikzpicture}
+\caption{Hai cách phân phối tin nhắn qua server. Hai lượt gửi trong hình là độc lập.}
+\label{fig:seq-broadcast}
+\end{figure}
+
+Server lấy danh tính A từ phiên đăng nhập, sau đó gửi riêng thông điệp đến từng
+người nhận qua kết nối TCP đang có. Từ ``broadcast'' ở đây chỉ việc phân phối
+một nội dung cho nhiều người ở tầng ứng dụng, không phải gửi tin chat bằng UDP.
+Người gửi thấy tin của mình ngay trên giao diện; server không gửi bản sao ngược
+lại cho chính người đó. Trạng thái \textit{Sent} cho biết client đã gửi qua kết
+nối, chưa khẳng định mọi người nhận đã nhận hoặc đọc tin.
 
 \clearpage
-\subsection{Upload và download file community}
-\begin{figure}[H]\centering
-\resizebox{\linewidth}{!}{%
-\begin{tikzpicture}[font=\scriptsize,actor/.style={draw,rounded corners,minimum width=2.8cm,minimum height=0.7cm,align=center,fill=gray!8},msg/.style={-{Stealth},thick}]
-\node[actor] at (0,0) {Sender};
-\draw[dashed,gray] (0,-0.35) -- (0,-8.15);
+\subsection{Truyền tập tin riêng qua P2P}
+
+Hai client đã có kết nối chat trước khi gửi file. Lời mời nhận file đi trên kết
+nối chat này; socket dữ liệu chỉ được mở sau khi người nhận chấp nhận. Do đó,
+việc bấm gửi không lập tức truyền toàn bộ file hoặc tạo socket file khi bên kia
+chưa đồng ý.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    actor/.style={draw,rounded corners,minimum width=3cm,minimum height=.7cm,fill=gray!8},
+    msg/.style={-{Stealth},thick},
+    lab/.style={midway,above,fill=white,inner sep=2pt,font=\footnotesize}]
+\node[actor] at (0,0) {Client gửi};
+\node[actor] at (10,0) {Client nhận};
+\foreach \x in {0,10} \draw[dashed,gray] (\x,-.35) -- (\x,-6.5);
+\draw[msg] (0,-.9) -- (10,-.9) node[lab]{FILE\_OFFER: tên, kích thước, mã kiểm tra file};
+\draw[msg] (10,-1.65) -- (0,-1.65) node[lab]{Bấm tải về: FILE\_DECISION ACCEPT};
+\draw[msg] (0,-2.4) -- (10,-2.4) node[lab]{Mở TCP riêng, gửi FILE\_TRANSFER\_START};
+\draw[msg] (10,-3.15) -- (0,-3.15) node[lab]{FILE\_READY};
+\draw[Stealth-Stealth,thick] (0,-3.9) -- (10,-3.9) node[lab]{Xác nhận khóa mã hóa trên socket file};
+\draw[msg] (0,-4.65) -- (10,-4.65) node[lab]{Truyền dữ liệu theo khối, đủ fileSize byte};
+\draw[msg] (0,-5.4) -- (10,-5.4) node[lab]{FILE\_END: kết thúc và mã kiểm tra};
+\draw[msg] (10,-6.15) -- (0,-6.15) node[lab]{Kiểm tra, lưu file rồi trả FILE\_RESULT OK};
+\end{tikzpicture}
+\caption{Vòng đời một lượt truyền file P2P được chấp nhận.}
+\label{fig:seq-file-private}
+\end{figure}
+
+Bên nhận ghi dữ liệu vào file tạm trong lúc tải. Chỉ sau khi nhận đủ số byte và
+kiểm tra SHA-256 đúng, file mới được lưu thành bản hoàn chỉnh. Bên gửi chỉ kết
+luận truyền thành công khi nhận được \texttt{FILE\_RESULT OK}. Nếu người nhận từ chối,
+quá trình kết thúc ở bước \texttt{FILE\_DECISION REJECT}, không mở socket dữ liệu.
+
+Nếu một phía hủy giữa chừng, thông điệp \texttt{FILE\_CANCEL} được gửi trên kết nối
+chat và phía kia trả \texttt{FILE\_CANCEL\_ACK}. Ứng dụng đóng socket file và xóa dữ
+liệu đang tải dở. Kết nối chat và các lượt truyền file khác vẫn được giữ.
+Nếu có lỗi kiểm tra dữ liệu, bên nhận không lưu file như một lượt tải thành công.
+
+\clearpage
+\subsection{Tải lên và tải về tập tin community}
+
+Với community, server giữ vai trò nhận và lưu file. Người gửi chỉ upload một
+lần; mỗi thành viên tự chọn thời điểm tải về. Sơ đồ tách hai giai đoạn này để
+phân biệt việc người gửi đã upload thành công với việc người nhận đã tải xong.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    actor/.style={draw,rounded corners,minimum width=2.7cm,minimum height=.7cm,fill=gray!8},
+    msg/.style={-{Stealth},thick},
+    lab/.style={midway,above,fill=white,inner sep=2pt,font=\footnotesize}]
+\node[actor] at (0,0) {Client gửi};
 \node[actor] at (5,0) {Server};
-\draw[dashed,gray] (5,-0.35) -- (5,-8.15);
-\node[actor] at (10,0) {Receiver};
-\draw[dashed,gray] (10,-0.35) -- (10,-8.15);
-\draw[msg] (0,-0.80) -- (5,-0.80) node[midway,above,fill=white,inner sep=2pt] {FILE/BROADCAST\_UPLOAD\_REQUEST};
-\draw[msg] (5,-1.35) -- (0,-1.35) node[midway,above,fill=white,inner sep=2pt] {UPLOAD\_RESPONSE: fileId, uploadToken};
-\draw[msg] (0,-1.90) -- (5,-1.90) node[midway,above,fill=white,inner sep=2pt] {TCP mới: HELLO/ACK + KEY\_CONFIRM/ACK};
-\draw[msg] (0,-2.45) -- (5,-2.45) node[midway,above,fill=white,inner sep=2pt] {FILE/BROADCAST\_UPLOAD\_START + token};
-\draw[msg] (0,-3.00) -- (5,-3.00) node[midway,above,fill=white,inner sep=2pt] {Dữ liệu AES-GCM + FILE/END};
-\draw[msg] (5,-3.55) -- (0,-3.55) node[midway,above,fill=white,inner sep=2pt] {Sau kiểm checksum và lưu: FILE/RESULT OK};
-\draw[msg] (5,-4.10) -- (10,-4.10) node[midway,above,fill=white,inner sep=2pt] {FILE/BROADCAST\_OFFER};
-\draw[msg] (10,-4.65) -- (5,-4.65) node[midway,above,fill=white,inner sep=2pt] {Bấm tải: BROADCAST\_DECISION ACCEPT};
-\draw[msg] (5,-5.20) -- (10,-5.20) node[midway,above,fill=white,inner sep=2pt] {DOWNLOAD\_RESPONSE + downloadToken};
-\draw[msg] (10,-5.75) -- (5,-5.75) node[midway,above,fill=white,inner sep=2pt] {TCP mới: HELLO/ACK + KEY\_CONFIRM/ACK};
-\draw[msg] (10,-6.30) -- (5,-6.30) node[midway,above,fill=white,inner sep=2pt] {FILE/BROADCAST\_DOWNLOAD\_START + token};
-\draw[msg] (5,-6.85) -- (10,-6.85) node[midway,above,fill=white,inner sep=2pt] {Dữ liệu AES-GCM + FILE/END};
-\draw[msg] (10,-7.40) -- (5,-7.40) node[midway,above,fill=white,inner sep=2pt] {Sau kiểm checksum và lưu: FILE/RESULT OK};
-\end{tikzpicture}}
-\caption{Upload và download file community}
+\node[actor] at (10,0) {Client nhận};
+\foreach \x in {0,5,10} \draw[dashed,gray] (\x,-.35) -- (\x,-8.4);
+\draw[msg] (0,-.9) -- (5,-.9) node[lab]{Xin upload file vào nhóm};
+\draw[msg] (5,-1.65) -- (0,-1.65) node[lab]{Kiểm tra quyền; cấp fileId và token};
+\draw[msg] (0,-2.4) -- (5,-2.4) node[lab]{Mở TCP riêng, mã hóa, upload file};
+\draw[msg] (0,-3.15) -- (5,-3.15) node[lab]{FILE\_END};
+\draw[msg] (5,-3.9) -- (0,-3.9) node[lab]{Kiểm tra, lưu file; FILE\_RESULT OK};
+\draw[msg] (5,-4.65) -- (10,-4.65) node[lab]{FILE\_BROADCAST\_OFFER: có file để tải};
+\draw[msg] (10,-5.4) -- (5,-5.4) node[lab]{Bấm tải: FILE\_BROADCAST\_DECISION};
+\draw[msg] (5,-6.15) -- (10,-6.15) node[lab]{Kiểm tra lại quyền; cấp token tải};
+\draw[msg] (10,-6.9) -- (5,-6.9) node[lab]{Mở TCP riêng, mã hóa, xin tải};
+\draw[msg] (5,-7.65) -- (10,-7.65) node[lab]{Dữ liệu file và FILE\_END};
+\draw[msg] (10,-8.4) -- (5,-8.4) node[lab]{Kiểm tra, lưu file; FILE\_RESULT OK};
+\end{tikzpicture}
+\caption{Hai giai đoạn upload và download file community qua server.}
 \label{fig:seq-file-community}
 \end{figure}
-Hai cặp HELLO/ACK và KEY\_CONFIRM/ACK trong hình community được rút gọn thành
-một bước cho mỗi socket; trao đổi thực tế có hai chiều như hình đăng nhập.
-Token cấp qua control socket đăng nhập, chỉ dùng một lần trên data socket đã bảo mật.
-Server chỉ phát offer tới thành viên online của community. Hủy community đóng đúng
-data socket cục bộ, không phát FILE/CANCEL tới server; upload lỗi được dọn ở server,
-download lỗi được dọn ở receiver. File gốc dùng chung không bị xóa khi một người hủy tải.
+
+Server chỉ gửi offer sau khi đã nhận và lưu file hợp lệ. Khi người nhận bấm tải,
+server kiểm tra lại quyền, nên một người đã rời nhóm không còn được tải bằng
+offer cũ. Các thành viên khác tải trên những socket riêng, vì vậy việc một người
+hủy download không làm mất file dùng chung hay dừng lượt tải của người khác.
+Trên giao diện, mỗi lần gửi file vào community chỉ xuất hiện một thẻ ở phía gửi;
+phía nhận có trạng thái chờ tải, đang tải và đã tải riêng.

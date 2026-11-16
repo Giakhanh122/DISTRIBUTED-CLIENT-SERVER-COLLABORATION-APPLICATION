@@ -91,7 +91,7 @@ public class FileReceiver {
             }
             tempFile = null;
             try {
-                channel.send(Packet.status(FileType.RESULT, channel.lastReceivedSequence(), "OK"));
+                channel.send(Packet.status(FileType.FILE_RESULT, channel.lastReceivedSequence(), "OK"));
             } catch (IOException e) {
                 // Local save is committed. Sender still needs this ACK to confirm delivery.
                 System.err.println("File saved; confirmation failed: " + e.getMessage());
